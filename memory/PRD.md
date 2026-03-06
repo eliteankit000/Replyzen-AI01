@@ -56,6 +56,27 @@ Build Replyzen AI - an AI-powered Gmail follow-up automation platform that detec
 - Billing with plan cards + checkout buttons
 - Settings (profile, email accounts, silence rules, notifications, auto-send)
 
+### Iteration 2: Plan Enforcement & UI Polish (2026-03-06)
+- **Central plan permissions**: Backend plan_permissions.py with all plan limits
+- **Updated pricing**: Free (30/mo), Pro (2500/mo), Business (unlimited)
+- **Backend validation**: All routes check plan limits before executing
+  - Followup generation: checks monthly quota + tone permissions
+  - Email accounts: checks max account limit
+  - Auto-send: checks plan allows it
+  - Analytics charts: Pro-only access
+- **Frontend plan gating**: 
+  - Usage bars on Follow-up Queue and Billing
+  - Locked tones in dropdown for Free users
+  - Analytics paywall for non-Pro users
+  - Auto-send upgrade prompt for Free users
+  - Account limit warnings in Settings
+- **Sidebar redesign**: 
+  - Expand/collapse with smooth transition
+  - Tooltips on collapsed icons
+  - Mobile hamburger menu with slide-out drawer
+  - Lock icon on gated features
+  - User plan label
+
 ## Prioritized Backlog
 ### P0 (Critical)
 - [x] Auth system
