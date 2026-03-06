@@ -88,6 +88,14 @@ export default function Billing() {
           return;
         }
         try {
+          // Initialize Paddle if not already initialized
+          if (!window.Paddle.Initialized) {
+            // For production, replace with actual Paddle client token
+            // Token should be passed from backend or environment
+            window.Paddle.Setup && window.Paddle.Setup({ 
+              seller: parseInt(res.data.seller_id || "0") || undefined 
+            });
+          }
           window.Paddle.Checkout.open({
             items: [{ priceId: res.data.price_id, quantity: 1 }],
             customData: { user_id: res.data.user_id, plan: planId },

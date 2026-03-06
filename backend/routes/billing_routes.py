@@ -169,11 +169,14 @@ async def create_checkout(req: CheckoutRequest, current_user: dict = Depends(get
         price_id = plan.get(paddle_key, "")
         if not price_id:
             raise HTTPException(status_code=400, detail="Plan not available")
+        
+        paddle_seller_id = os.environ.get("PADDLE_SELLER_ID", "")
 
         return {
             "provider": "paddle",
             "price_id": price_id,
             "user_id": user_id,
+            "seller_id": paddle_seller_id,
         }
 
     raise HTTPException(status_code=400, detail="Invalid provider")

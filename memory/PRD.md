@@ -77,17 +77,38 @@ Build Replyzen AI - an AI-powered Gmail follow-up automation platform that detec
   - Lock icon on gated features
   - User plan label
 
+### Iteration 3: Branding & Payment Fixes (2026-03-06)
+- **Rebranding completed:**
+  - Removed "Made with Emergent" badge via JavaScript
+  - Updated page title to "Replyzen AI"
+  - Sidebar shows "Replyzen AI" logo
+  - All Emergent references removed
+- **Sidebar fixes:**
+  - Fixed height to viewport (h-screen, position: fixed)
+  - Collapse/expand toggle works correctly (260px/68px)
+  - Mobile responsive with hamburger menu
+- **Payment integration fixes:**
+  - Razorpay SDK loaded and checkout flow functional
+  - Paddle SDK loaded and checkout flow functional
+  - Better error messages for invalid plan IDs
+  - Frontend .env fixed (was missing newline)
+- **NOTE:** Payments require valid Razorpay plan IDs and Paddle price IDs from user's accounts
+
 ## Prioritized Backlog
 ### P0 (Critical)
 - [x] Auth system
 - [x] Email thread detection
 - [x] AI follow-up generation
 - [x] Core dashboard
+- [x] Rebranding to Replyzen AI
+- [x] Sidebar UI fixes
 
 ### P1 (Important)
 - [ ] Real Gmail OAuth integration (replace mocks)
 - [ ] Auto-send automation with cron
 - [ ] Brevo email notifications (daily digest, weekly report)
+- [ ] Configure valid Razorpay plan IDs
+- [ ] Configure valid Paddle price IDs and seller ID
 
 ### P2 (Nice to Have)
 - [ ] Team collaboration features
@@ -97,8 +118,28 @@ Build Replyzen AI - an AI-powered Gmail follow-up automation platform that detec
 - [ ] Domain exclusion rules enforcement
 
 ## Next Tasks
-1. Replace mock Gmail data with real Gmail OAuth flow
-2. Implement auto-send cron job system
-3. Add Brevo email notifications (daily digest)
-4. Add real response tracking when reply received
-5. Implement usage limits per plan
+1. Configure valid Razorpay plan IDs in backend/.env
+2. Configure valid Paddle price IDs and PADDLE_SELLER_ID in backend/.env
+3. Replace mock Gmail data with real Gmail OAuth flow
+4. Implement auto-send cron job system
+5. Add Brevo email notifications (daily digest)
+
+## Payment Configuration Required
+For payments to work, add these to `/app/backend/.env`:
+
+**Razorpay (create plans in Razorpay Dashboard):**
+```
+RAZORPAY_PLAN_PRO_MONTHLY=plan_xxx
+RAZORPAY_PLAN_PRO_YEARLY=plan_xxx
+RAZORPAY_PLAN_BUSINESS_MONTHLY=plan_xxx
+RAZORPAY_PLAN_BUSINESS_YEARLY=plan_xxx
+```
+
+**Paddle (get IDs from Paddle Dashboard):**
+```
+PADDLE_SELLER_ID=your_seller_id
+PADDLE_PRICE_PRO_MONTHLY=pri_xxx
+PADDLE_PRICE_PRO_YEARLY=pri_xxx
+PADDLE_PRICE_BUSINESS_MONTHLY=pri_xxx
+PADDLE_PRICE_BUSINESS_YEARLY=pri_xxx
+```
