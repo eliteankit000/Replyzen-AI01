@@ -37,11 +37,15 @@ export const authAPI = {
   register: (data) => api.post("/auth/register", data),
   login: (data) => api.post("/auth/login", data),
   getMe: () => api.get("/auth/me"),
+  getGoogleAuthUrl: (redirectUri) => api.get("/auth/google/url", { params: { redirect_uri: redirectUri } }),
+  googleCallback: (code, redirectUri) => api.post("/auth/google/callback", { code, redirect_uri: redirectUri }),
 };
 
 // Emails
 export const emailAPI = {
   connectGmail: (email) => api.post("/emails/connect-gmail", { email }),
+  getGmailAuthUrl: () => api.get("/emails/gmail/auth-url"),
+  gmailCallback: (code, state) => api.post("/emails/gmail/callback", { code, state }, { params: { code, state } }),
   getAccounts: () => api.get("/emails/accounts"),
   syncEmails: () => api.post("/emails/sync"),
   getThreads: (params) => api.get("/emails/threads", { params }),

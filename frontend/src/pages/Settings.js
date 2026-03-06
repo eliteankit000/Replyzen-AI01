@@ -99,20 +99,42 @@ export default function Settings() {
   };
 
   const handleConnectGmail = async () => {
-    if (!connectEmail) return;
     setConnecting(true);
     try {
-      await emailAPI.connectGmail(connectEmail);
-      toast.success("Gmail connected! Mock emails synced.");
-      setConnectDialog(false);
-      setConnectEmail("");
-      loadData();
+      // Try to get OAuth URL first
+      const response = await emailAPI.getGmailAuthUrl();
+      if (response.data?.auth_url) {
+        // Redirect to Google OAuth
+        window.location.href = response.data.auth_url;
+        return;
+      }
+      
+      // Fallback to demo mode if OAuth not configured
+      if (connectEmail) {
+        await emailAPI.connectGmail(connectEmail);
+        toast.success("Demo Gmail account connected!");
+        setConnectDialog(false);
+        setConnectEmail("");
+        loadData();
+      }
     } catch (err) {
       const detail = err.response?.data?.detail;
-      if (err.response?.status === 403 && detail) {
+      // If OAuth not configured, try demo mode
+      if (err.response?.status === 500 && connectEmail) {
+        try {
+          await emailAPI.connectGmail(connectEmail);
+          toast.success("Demo Gmail account connected!");
+          setConnectDialog(false);
+          setConnectEmail("");
+          loadData();
+          return;
+        } catch (demoErr) {
+          toast.error(demoErr.response?.data?.detail || "Failed to connect");
+        }
+      } else if (err.response?.status === 403 && detail) {
         toast.error(detail);
       } else {
-        toast.error(detail || "Failed to connect");
+        toast.error(detail || "Failed to connect Gmail");
       }
     } finally {
       setConnecting(false);
@@ -416,12 +438,29 @@ export default function Settings() {
           <DialogHeader>
             <DialogTitle>Connect Gmail Account</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
+          <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Enter your Gmail address to connect. Mock email data will be generated for demo purposes.
+              Connect your Gmail account to sync emails and detect silent conversations.
             </p>
+            <Button 
+              onClick={handleConnectGmail} 
+              disabled={connecting} 
+              className="w-full bg-primary hover:bg-primary/90 text-white"
+              data-testid="google-oauth-btn"
+            >
+              {connecting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Mail className="w-4 h-4 mr-2" />}
+              Sign in with Google
+            </Button>
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center text-xs">
+                <span className="bg-background px-2 text-muted-foreground">or use demo mode</span>
+              </div>
+            </div>
             <div>
-              <Label className="text-sm">Gmail Address</Label>
+              <Label className="text-sm">Email for Demo</Label>
               <Input
                 type="email"
                 placeholder="you@gmail.com"
@@ -430,13 +469,19 @@ export default function Settings() {
                 className="mt-1.5"
                 data-testid="connect-email-input"
               />
+              <p className="text-xs text-muted-foreground mt-1">Demo mode creates sample email data</p>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConnectDialog(false)}>Cancel</Button>
-            <Button onClick={handleConnectGmail} disabled={connecting || !connectEmail} className="bg-primary hover:bg-primary/90 text-white" data-testid="confirm-connect-btn">
-              {connecting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Mail className="w-4 h-4 mr-2" />}
-              Connect
+            <Button 
+              onClick={handleConnectGmail} 
+              disabled={connecting || !connectEmail} 
+              variant="outline"
+              data-testid="confirm-connect-btn"
+            >
+              {connecting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+              Connect Demo
             </Button>
           </DialogFooter>
         </DialogContent>

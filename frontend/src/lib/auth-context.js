@@ -42,6 +42,21 @@ export function AuthProvider({ children }) {
     return userData;
   }, []);
 
+  const loginWithGoogle = useCallback(async (code, redirectUri) => {
+    const res = await authAPI.googleCallback(code, redirectUri);
+    const { token: newToken, user: userData } = res.data;
+    localStorage.setItem("replyzen_token", newToken);
+    localStorage.setItem("replyzen_user", JSON.stringify(userData));
+    setToken(newToken);
+    setUser(userData);
+    return { user: userData, isNewUser: res.data.is_new_user };
+  }, []);
+
+  const getGoogleAuthUrl = useCallback(async (redirectUri) => {
+    const res = await authAPI.getGoogleAuthUrl(redirectUri);
+    return res.data.auth_url;
+  }, []);
+
   const logout = useCallback(() => {
     localStorage.removeItem("replyzen_token");
     localStorage.removeItem("replyzen_user");
@@ -60,7 +75,12 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, register, logout, refreshUser, isAuthenticated: !!token }}>
+    <AuthContext.Provider value={{ 
+      user, token, loading, 
+      login, register, logout, refreshUser, 
+      loginWithGoogle, getGoogleAuthUrl,
+      isAuthenticated: !!token 
+    }}>
       {children}
     </AuthContext.Provider>
   );

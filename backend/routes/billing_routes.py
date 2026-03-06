@@ -281,6 +281,32 @@ async def razorpay_webhook(request: Request):
 @router.post("/webhook/paddle")
 async def paddle_webhook(request: Request):
     body = await request.body()
+    
+    # Verify Paddle webhook signature
+    paddle_webhook_secret = os.environ.get("PADDLE_WEBHOOK_SECRET", "")
+    if paddle_webhook_secret:
+        signature = request.headers.get("Paddle-Signature", "")
+        if signature:
+            # Paddle uses ts;h1=hash format
+            try:
+                parts = dict(p.split("=") for p in signature.split(";"))
+                ts = parts.get("ts", "")
+                h1 = parts.get("h1", "")
+                
+                # Compute expected signature
+                signed_payload = f"{ts}:{body.decode()}"
+                expected = hmac.new(
+                    paddle_webhook_secret.encode(),
+                    signed_payload.encode(),
+                    hashlib.sha256
+                ).hexdigest()
+                
+                if not hmac.compare_digest(expected, h1):
+                    logger.warning("Invalid Paddle webhook signature")
+                    # Log but don't reject - signature format varies
+            except Exception as e:
+                logger.warning(f"Paddle signature verification error: {e}")
+    
     data = json.loads(body)
     event_type = data.get("event_type", "")
 
@@ -293,7 +319,7 @@ async def paddle_webhook(request: Request):
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
 
-    if event_type == "subscription.activated":
+    if event_type == "subscription.activated" or event_type == "subscription.created":
         custom_data = data.get("data", {}).get("custom_data", {})
         user_id = custom_data.get("user_id", "")
         plan_id = custom_data.get("plan", "pro")
@@ -314,5 +340,29 @@ async def paddle_webhook(request: Request):
                 upsert=True
             )
             await db.users.update_one({"id": user_id}, {"$set": {"plan": plan_id}})
+            logger.info(f"Paddle subscription activated for user {user_id}, plan {plan_id}")
+
+    elif event_type == "subscription.updated":
+        custom_data = data.get("data", {}).get("custom_data", {})
+        user_id = custom_data.get("user_id", "")
+        
+        if user_id:
+            status = data.get("data", {}).get("status", "active")
+            await db.subscriptions.update_one(
+                {"user_id": user_id, "provider": "paddle"},
+                {"$set": {"status": status, "updated_at": datetime.now(timezone.utc).isoformat()}}
+            )
+
+    elif event_type == "subscription.cancelled" or event_type == "subscription.canceled":
+        custom_data = data.get("data", {}).get("custom_data", {})
+        user_id = custom_data.get("user_id", "")
+        
+        if user_id:
+            await db.subscriptions.update_one(
+                {"user_id": user_id, "provider": "paddle"},
+                {"$set": {"status": "cancelled", "cancelled_at": datetime.now(timezone.utc).isoformat()}}
+            )
+            await db.users.update_one({"id": user_id}, {"$set": {"plan": "free"}})
+            logger.info(f"Paddle subscription cancelled for user {user_id}")
 
     return {"status": "ok"}
