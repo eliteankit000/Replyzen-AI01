@@ -1,18 +1,27 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { analyticsAPI } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
+import { isAnalyticsAllowed } from "@/lib/plan-utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { BarChart3, TrendingUp, Send, Zap, Users } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, Area, AreaChart } from "recharts";
+import { BarChart3, TrendingUp, Send, Zap, Users, Lock, ArrowUpRight } from "lucide-react";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 export default function Analytics() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const [overview, setOverview] = useState(null);
   const [chartData, setChartData] = useState([]);
   const [topContacts, setTopContacts] = useState([]);
   const [period, setPeriod] = useState("30");
   const [loading, setLoading] = useState(true);
+
+  const userPlan = user?.plan || "free";
+  const allowed = isAnalyticsAllowed(userPlan);
 
   useEffect(() => {
     loadData();
@@ -21,14 +30,17 @@ export default function Analytics() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [overviewRes, chartRes, contactsRes] = await Promise.all([
-        analyticsAPI.getOverview(),
-        analyticsAPI.getFollowupsOverTime(parseInt(period)),
-        analyticsAPI.getTopContacts(),
-      ]);
+      const overviewRes = await analyticsAPI.getOverview();
       setOverview(overviewRes.data);
-      setChartData(chartRes.data || []);
-      setTopContacts(contactsRes.data || []);
+
+      if (allowed) {
+        const [chartRes, contactsRes] = await Promise.all([
+          analyticsAPI.getFollowupsOverTime(parseInt(period)),
+          analyticsAPI.getTopContacts(),
+        ]);
+        setChartData(chartRes.data || []);
+        setTopContacts(contactsRes.data || []);
+      }
     } catch (err) {
       console.error("Failed to load analytics:", err);
     } finally {
@@ -37,11 +49,54 @@ export default function Analytics() {
   };
 
   const statCards = [
-    { label: "Follow-ups Sent", value: overview?.followups_sent || 0, icon: Send, trend: "+12%", color: "text-emerald-600" },
+    { label: "Follow-ups Sent", value: overview?.followups_sent || 0, icon: Send, trend: null, color: "text-emerald-600" },
     { label: "Pending Drafts", value: overview?.followups_pending || 0, icon: Zap, trend: null, color: "text-amber-600" },
-    { label: "Response Rate", value: `${overview?.response_rate || 0}%`, icon: TrendingUp, trend: "+5%", color: "text-primary" },
+    { label: "Response Rate", value: `${overview?.response_rate || 0}%`, icon: TrendingUp, trend: null, color: "text-primary" },
     { label: "Threads Tracked", value: overview?.total_threads || 0, icon: BarChart3, trend: null, color: "text-blue-600" },
   ];
+
+  // Paywall overlay for non-Pro users
+  if (!allowed) {
+    return (
+      <div className="space-y-8" data-testid="analytics-page">
+        <div>
+          <h1 className="text-2xl font-bold" data-testid="analytics-heading">Analytics</h1>
+          <p className="text-sm text-muted-foreground mt-1">Track your follow-up performance</p>
+        </div>
+
+        {/* Basic stats still visible */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {statCards.map((s, i) => (
+            <Card key={s.label} className="animate-fade-in" style={{ animationDelay: `${i * 0.1}s` }} data-testid={`analytics-stat-${i}`}>
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between mb-2">
+                  <s.icon className={`w-5 h-5 ${s.color}`} />
+                </div>
+                {loading ? <Skeleton className="h-8 w-20" /> : <p className="text-2xl font-bold">{s.value}</p>}
+                <p className="text-xs text-muted-foreground mt-1">{s.label}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        {/* Upgrade prompt */}
+        <Card className="border-dashed border-2 border-primary/30 bg-accent/20" data-testid="analytics-upgrade-prompt">
+          <CardContent className="py-12 text-center">
+            <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-5">
+              <Lock className="w-7 h-7 text-primary" />
+            </div>
+            <h3 className="text-lg font-semibold mb-2">Unlock Advanced Analytics</h3>
+            <p className="text-sm text-muted-foreground max-w-md mx-auto mb-6">
+              Upgrade to the Pro plan to access detailed charts, follow-up trends over time, top contacts analysis, and performance insights.
+            </p>
+            <Button onClick={() => navigate("/billing")} className="bg-primary hover:bg-primary/90 text-white" data-testid="upgrade-analytics-btn">
+              Upgrade to Pro <ArrowUpRight className="w-4 h-4 ml-2" />
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8" data-testid="analytics-page">
@@ -69,7 +124,6 @@ export default function Analytics() {
             <CardContent className="pt-6">
               <div className="flex items-center justify-between mb-2">
                 <s.icon className={`w-5 h-5 ${s.color}`} />
-                {s.trend && <Badge variant="outline" className="text-xs text-emerald-600 border-emerald-200">{s.trend}</Badge>}
               </div>
               {loading ? <Skeleton className="h-8 w-20" /> : <p className="text-2xl font-bold">{s.value}</p>}
               <p className="text-xs text-muted-foreground mt-1">{s.label}</p>

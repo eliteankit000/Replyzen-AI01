@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from database import db
 from auth import get_current_user
 from services.openai_service import generate_followup_draft
+from plan_permissions import check_followup_limit, get_user_plan, check_tone_allowed
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -25,6 +26,22 @@ class UpdateDraftRequest(BaseModel):
 @router.post("/generate")
 async def generate_followup(req: GenerateRequest, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
+
+    # Plan limit check: followup quota
+    limit_check = await check_followup_limit(user_id)
+    if not limit_check["allowed"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"You have reached your monthly follow-up limit ({limit_check['limit']}). Upgrade your plan to continue."
+        )
+
+    # Plan limit check: tone
+    plan = limit_check["plan"]
+    if not check_tone_allowed(plan, req.tone):
+        raise HTTPException(
+            status_code=403,
+            detail=f"The '{req.tone}' tone is not available on your current plan. Upgrade to Pro or Business to unlock advanced tones."
+        )
 
     thread = await db.email_threads.find_one(
         {"id": req.thread_id, "user_id": user_id}, {"_id": 0}

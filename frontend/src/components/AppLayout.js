@@ -1,129 +1,206 @@
-import { useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useState, useEffect, useCallback } from "react";
+import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/lib/auth-context";
+import { isAnalyticsAllowed } from "@/lib/plan-utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuSeparator, DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
-import { Separator } from "@/components/ui/separator";
+import {
+  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger
+} from "@/components/ui/tooltip";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
   LayoutDashboard, MessageSquare, BarChart3, CreditCard,
-  Settings, LogOut, Mail, ChevronLeft, ChevronRight, User
+  Settings, LogOut, Mail, ChevronLeft, ChevronRight, User, Menu, Lock
 } from "lucide-react";
 
 const NAV_ITEMS = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { path: "/followups", label: "Follow-ups", icon: MessageSquare },
-  { path: "/analytics", label: "Analytics", icon: BarChart3 },
+  { path: "/analytics", label: "Analytics", icon: BarChart3, gated: true },
   { path: "/billing", label: "Billing", icon: CreditCard },
   { path: "/settings", label: "Settings", icon: Settings },
 ];
 
-export default function AppLayout() {
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
-  const [collapsed, setCollapsed] = useState(false);
+function SidebarNav({ collapsed, items, userPlan, onNavigate }) {
+  return (
+    <nav className="flex-1 px-2 py-4 space-y-1">
+      {items.map((item) => {
+        const locked = item.gated && !isAnalyticsAllowed(userPlan);
+        return (
+          <Tooltip key={item.path} delayDuration={collapsed ? 100 : 999999}>
+            <TooltipTrigger asChild>
+              <NavLink
+                to={item.path}
+                onClick={(e) => {
+                  if (onNavigate) onNavigate();
+                }}
+                className={({ isActive }) =>
+                  `sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 ${
+                    isActive
+                      ? "bg-accent text-primary font-medium"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                  } ${collapsed ? "justify-center" : ""} ${locked ? "opacity-60" : ""}`
+                }
+                data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
+              >
+                <item.icon className="w-[18px] h-[18px] shrink-0" />
+                {!collapsed && (
+                  <span className="flex-1">{item.label}</span>
+                )}
+                {!collapsed && locked && (
+                  <Lock className="w-3.5 h-3.5 text-muted-foreground" />
+                )}
+              </NavLink>
+            </TooltipTrigger>
+            {collapsed && (
+              <TooltipContent side="right" className="text-xs">
+                {item.label} {locked && "(Pro)"}
+              </TooltipContent>
+            )}
+          </Tooltip>
+        );
+      })}
+    </nav>
+  );
+}
 
-  const handleLogout = () => {
-    logout();
-    navigate("/");
-  };
+function SidebarBrand({ collapsed }) {
+  return (
+    <div className="h-16 flex items-center px-4 border-b border-border shrink-0">
+      <div className={`flex items-center gap-2.5 transition-all duration-200 ${collapsed ? "justify-center w-full" : ""}`}>
+        <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
+          <Mail className="w-4 h-4 text-white" />
+        </div>
+        <span className={`text-base font-bold tracking-tight transition-all duration-200 ${collapsed ? "hidden" : "block"}`}>
+          Replyzen AI
+        </span>
+      </div>
+    </div>
+  );
+}
 
+function SidebarUserMenu({ collapsed, user, onLogout, navigate }) {
   const initials = user?.full_name
     ? user.full_name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
     : "U";
 
   return (
-    <div className="min-h-screen flex" data-testid="app-layout">
-      {/* Sidebar */}
-      <aside className={`${collapsed ? "w-16" : "w-60"} shrink-0 bg-card border-r border-border flex flex-col transition-all duration-200`} data-testid="sidebar">
-        {/* Logo */}
-        <div className="h-16 flex items-center px-4 border-b border-border">
-          {!collapsed && (
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-                <Mail className="w-4 h-4 text-white" />
-              </div>
-              <span className="text-base font-bold tracking-tight">Replyzen AI</span>
-            </div>
-          )}
-          {collapsed && (
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center mx-auto">
-              <Mail className="w-4 h-4 text-white" />
-            </div>
-          )}
-        </div>
-
-        {/* Nav */}
-        <nav className="flex-1 px-2 py-4 space-y-1">
-          {NAV_ITEMS.map((item) => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              className={({ isActive }) =>
-                `sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
-                  isActive ? "active" : "text-muted-foreground hover:text-foreground"
-                } ${collapsed ? "justify-center" : ""}`
-              }
-              data-testid={`nav-${item.label.toLowerCase()}`}
-            >
-              <item.icon className="w-5 h-5 shrink-0" />
-              {!collapsed && <span>{item.label}</span>}
-            </NavLink>
-          ))}
-        </nav>
-
-        {/* Collapse toggle */}
-        <div className="px-2 py-2">
+    <div className="px-2 py-3 border-t border-border shrink-0">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
           <button
-            onClick={() => setCollapsed(!collapsed)}
-            className="w-full flex items-center justify-center py-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-            data-testid="sidebar-toggle"
+            className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted/60 transition-colors ${collapsed ? "justify-center" : ""}`}
+            data-testid="user-menu-trigger"
           >
-            {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+            <Avatar className="w-8 h-8 shrink-0">
+              <AvatarFallback className="bg-primary/10 text-primary text-xs font-medium">{initials}</AvatarFallback>
+            </Avatar>
+            {!collapsed && (
+              <div className="text-left min-w-0 flex-1">
+                <p className="text-sm font-medium truncate">{user?.full_name || "User"}</p>
+                <p className="text-xs text-muted-foreground truncate capitalize">{user?.plan || "free"} plan</p>
+              </div>
+            )}
           </button>
-        </div>
-
-        {/* User */}
-        <div className="px-2 py-3 border-t border-border">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted transition-colors ${collapsed ? "justify-center" : ""}`} data-testid="user-menu-trigger">
-                <Avatar className="w-8 h-8">
-                  <AvatarFallback className="bg-primary/10 text-primary text-xs font-medium">{initials}</AvatarFallback>
-                </Avatar>
-                {!collapsed && (
-                  <div className="text-left min-w-0 flex-1">
-                    <p className="text-sm font-medium truncate">{user?.full_name || "User"}</p>
-                    <p className="text-xs text-muted-foreground truncate">{user?.email || ""}</p>
-                  </div>
-                )}
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuItem onClick={() => navigate("/settings")} data-testid="menu-profile">
-                <User className="w-4 h-4 mr-2" /> Profile
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => navigate("/billing")} data-testid="menu-billing">
-                <CreditCard className="w-4 h-4 mr-2" /> Billing
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={handleLogout} className="text-destructive" data-testid="menu-logout">
-                <LogOut className="w-4 h-4 mr-2" /> Log out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </aside>
-
-      {/* Main Content */}
-      <main className="flex-1 min-w-0">
-        <div className="p-8 max-w-6xl">
-          <Outlet />
-        </div>
-      </main>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem onClick={() => navigate("/settings")} data-testid="menu-profile">
+            <User className="w-4 h-4 mr-2" /> Profile
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => navigate("/billing")} data-testid="menu-billing">
+            <CreditCard className="w-4 h-4 mr-2" /> Billing
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={onLogout} className="text-destructive" data-testid="menu-logout">
+            <LogOut className="w-4 h-4 mr-2" /> Log out
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
+  );
+}
+
+export default function AppLayout() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const userPlan = user?.plan || "free";
+
+  // Close mobile sheet on route change
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
+
+  const handleLogout = useCallback(() => {
+    logout();
+    navigate("/");
+  }, [logout, navigate]);
+
+  return (
+    <TooltipProvider>
+      <div className="min-h-screen flex" data-testid="app-layout">
+        {/* Desktop Sidebar */}
+        <aside
+          className={`hidden md:flex flex-col ${collapsed ? "w-[68px]" : "w-60"} shrink-0 bg-card border-r border-border transition-[width] duration-200 ease-in-out`}
+          data-testid="sidebar"
+        >
+          <SidebarBrand collapsed={collapsed} />
+          <SidebarNav collapsed={collapsed} items={NAV_ITEMS} userPlan={userPlan} />
+          {/* Collapse toggle */}
+          <div className="px-2 py-1 shrink-0">
+            <button
+              onClick={() => setCollapsed(!collapsed)}
+              className="w-full flex items-center justify-center py-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+              data-testid="sidebar-toggle"
+            >
+              {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+            </button>
+          </div>
+          <SidebarUserMenu collapsed={collapsed} user={user} onLogout={handleLogout} navigate={navigate} />
+        </aside>
+
+        {/* Mobile */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          {/* Mobile top bar */}
+          <header className="md:hidden h-14 flex items-center justify-between px-4 border-b border-border bg-card shrink-0">
+            <div className="flex items-center gap-2">
+              <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+                <SheetTrigger asChild>
+                  <Button variant="ghost" size="icon" className="shrink-0" data-testid="mobile-menu-btn">
+                    <Menu className="w-5 h-5" />
+                  </Button>
+                </SheetTrigger>
+                <SheetContent side="left" className="w-60 p-0">
+                  <div className="flex flex-col h-full">
+                    <SidebarBrand collapsed={false} />
+                    <SidebarNav collapsed={false} items={NAV_ITEMS} userPlan={userPlan} onNavigate={() => setMobileOpen(false)} />
+                    <SidebarUserMenu collapsed={false} user={user} onLogout={handleLogout} navigate={navigate} />
+                  </div>
+                </SheetContent>
+              </Sheet>
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-md bg-primary flex items-center justify-center">
+                  <Mail className="w-3.5 h-3.5 text-white" />
+                </div>
+                <span className="text-sm font-bold">Replyzen AI</span>
+              </div>
+            </div>
+          </header>
+
+          {/* Main Content */}
+          <main className="flex-1 overflow-auto">
+            <div className="p-4 sm:p-6 lg:p-8 max-w-6xl">
+              <Outlet />
+            </div>
+          </main>
+        </div>
+      </div>
+    </TooltipProvider>
   );
 }

@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { settingsAPI, emailAPI } from "@/lib/api";
+import { settingsAPI, emailAPI, billingAPI } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
+import { isAutoSendAllowed } from "@/lib/plan-utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -9,7 +10,6 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -17,22 +17,25 @@ import {
 } from "@/components/ui/dialog";
 import {
   User, Mail, Bell, Clock, Shield, Trash2, Plus, Save,
-  Loader2, CheckCircle2
+  Loader2, CheckCircle2, Lock, ArrowUpRight
 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Settings() {
+  const navigate = useNavigate();
   const { user, refreshUser } = useAuth();
   const [settings, setSettings] = useState(null);
   const [accounts, setAccounts] = useState([]);
+  const [planLimits, setPlanLimits] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [connectDialog, setConnectDialog] = useState(false);
   const [connectEmail, setConnectEmail] = useState("");
   const [connecting, setConnecting] = useState(false);
-
-  // Profile state
   const [fullName, setFullName] = useState("");
+
+  const userPlan = user?.plan || "free";
+  const autoSendAllowed = isAutoSendAllowed(userPlan);
 
   useEffect(() => {
     loadData();
@@ -41,12 +44,14 @@ export default function Settings() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [settingsRes, accountsRes] = await Promise.all([
+      const [settingsRes, accountsRes, limitsRes] = await Promise.all([
         settingsAPI.get(),
         emailAPI.getAccounts(),
+        billingAPI.getPlanLimits(),
       ]);
       setSettings(settingsRes.data);
       setAccounts(accountsRes.data || []);
+      setPlanLimits(limitsRes.data);
       setFullName(user?.full_name || "");
     } catch (err) {
       console.error("Failed to load settings:", err);
@@ -74,7 +79,12 @@ export default function Settings() {
       setSettings((prev) => ({ ...prev, [field]: value }));
       toast.success("Settings saved");
     } catch (err) {
-      toast.error("Failed to save");
+      const detail = err.response?.data?.detail;
+      if (err.response?.status === 403 && detail) {
+        toast.error(detail);
+      } else {
+        toast.error("Failed to save");
+      }
     }
   };
 
@@ -98,7 +108,12 @@ export default function Settings() {
       setConnectEmail("");
       loadData();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to connect");
+      const detail = err.response?.data?.detail;
+      if (err.response?.status === 403 && detail) {
+        toast.error(detail);
+      } else {
+        toast.error(detail || "Failed to connect");
+      }
     } finally {
       setConnecting(false);
     }
@@ -113,6 +128,8 @@ export default function Settings() {
       toast.error("Failed to disconnect");
     }
   };
+
+  const accountLimitReached = planLimits && accounts.length >= planLimits.max_email_accounts;
 
   if (loading) {
     return (
@@ -154,7 +171,7 @@ export default function Settings() {
           <div>
             <Label className="text-sm">Plan</Label>
             <div className="mt-1.5">
-              <Badge className="capitalize bg-primary/10 text-primary border-primary/20">{user?.plan || "free"}</Badge>
+              <Badge className="capitalize bg-primary/10 text-primary border-primary/20">{userPlan}</Badge>
             </div>
           </div>
           <Button size="sm" onClick={handleSaveProfile} disabled={saving} data-testid="save-profile-btn" className="bg-primary hover:bg-primary/90 text-white">
@@ -167,14 +184,41 @@ export default function Settings() {
       {/* Email Accounts */}
       <Card data-testid="email-accounts-card">
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Mail className="w-4 h-4" /> Connected Email Accounts
-          </CardTitle>
-          <Button size="sm" variant="outline" onClick={() => setConnectDialog(true)} data-testid="connect-gmail-settings-btn">
-            <Plus className="w-4 h-4 mr-1.5" /> Connect Gmail
+          <div>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Mail className="w-4 h-4" /> Connected Email Accounts
+            </CardTitle>
+            {planLimits && (
+              <p className="text-xs text-muted-foreground mt-1">
+                {accounts.length} / {planLimits.max_email_accounts} accounts used
+              </p>
+            )}
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setConnectDialog(true)}
+            disabled={accountLimitReached}
+            data-testid="connect-gmail-settings-btn"
+          >
+            {accountLimitReached ? (
+              <><Lock className="w-4 h-4 mr-1.5" /> Limit Reached</>
+            ) : (
+              <><Plus className="w-4 h-4 mr-1.5" /> Connect Gmail</>
+            )}
           </Button>
         </CardHeader>
         <CardContent>
+          {accountLimitReached && (
+            <div className="mb-4 p-3 rounded-lg bg-accent/50 border border-primary/20 flex items-center justify-between" data-testid="account-limit-msg">
+              <p className="text-xs text-muted-foreground">
+                You've reached your email account limit ({planLimits?.max_email_accounts}). Upgrade to connect more.
+              </p>
+              <Button size="sm" variant="link" className="text-primary h-auto p-0 shrink-0 ml-3" onClick={() => navigate("/billing")}>
+                Upgrade <ArrowUpRight className="w-3 h-3 ml-1" />
+              </Button>
+            </div>
+          )}
           {accounts.length === 0 ? (
             <div className="text-center py-6">
               <Mail className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
@@ -296,57 +340,71 @@ export default function Settings() {
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
             <Shield className="w-4 h-4" /> Auto-Send
+            {!autoSendAllowed && <Badge variant="outline" className="text-xs text-muted-foreground"><Lock className="w-3 h-3 mr-1" /> Pro+</Badge>}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium">Enable Auto-Send</p>
-              <p className="text-xs text-muted-foreground">Automatically send approved follow-ups within your send window</p>
+          {!autoSendAllowed ? (
+            <div className="text-center py-4">
+              <p className="text-sm text-muted-foreground mb-3">
+                Auto-send is available on Pro and Business plans.
+              </p>
+              <Button size="sm" onClick={() => navigate("/billing")} className="bg-primary hover:bg-primary/90 text-white" data-testid="upgrade-autosend-btn">
+                Upgrade Plan <ArrowUpRight className="w-3.5 h-3.5 ml-1.5" />
+              </Button>
             </div>
-            <Switch
-              checked={settings?.auto_send ?? false}
-              onCheckedChange={(v) => handleSaveSettings("auto_send", v)}
-              data-testid="auto-send-switch"
-            />
-          </div>
-          {settings?.auto_send && (
+          ) : (
             <>
-              <Separator />
-              <div className="grid grid-cols-2 gap-4">
+              <div className="flex items-center justify-between">
                 <div>
-                  <Label className="text-sm">Send Window Start</Label>
-                  <Input
-                    type="time"
-                    value={settings?.send_window_start || "09:00"}
-                    onChange={(e) => handleSaveSettings("send_window_start", e.target.value)}
-                    className="mt-1.5"
-                    data-testid="send-start-input"
-                  />
+                  <p className="text-sm font-medium">Enable Auto-Send</p>
+                  <p className="text-xs text-muted-foreground">Automatically send approved follow-ups within your send window</p>
                 </div>
-                <div>
-                  <Label className="text-sm">Send Window End</Label>
-                  <Input
-                    type="time"
-                    value={settings?.send_window_end || "18:00"}
-                    onChange={(e) => handleSaveSettings("send_window_end", e.target.value)}
-                    className="mt-1.5"
-                    data-testid="send-end-input"
-                  />
-                </div>
-              </div>
-              <div>
-                <Label className="text-sm">Daily Send Limit</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={settings?.daily_send_limit || 20}
-                  onChange={(e) => handleSaveSettings("daily_send_limit", parseInt(e.target.value) || 20)}
-                  className="mt-1.5 max-w-[120px]"
-                  data-testid="daily-limit-input"
+                <Switch
+                  checked={settings?.auto_send ?? false}
+                  onCheckedChange={(v) => handleSaveSettings("auto_send", v)}
+                  data-testid="auto-send-switch"
                 />
               </div>
+              {settings?.auto_send && (
+                <>
+                  <Separator />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-sm">Send Window Start</Label>
+                      <Input
+                        type="time"
+                        value={settings?.send_window_start || "09:00"}
+                        onChange={(e) => handleSaveSettings("send_window_start", e.target.value)}
+                        className="mt-1.5"
+                        data-testid="send-start-input"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-sm">Send Window End</Label>
+                      <Input
+                        type="time"
+                        value={settings?.send_window_end || "18:00"}
+                        onChange={(e) => handleSaveSettings("send_window_end", e.target.value)}
+                        className="mt-1.5"
+                        data-testid="send-end-input"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <Label className="text-sm">Daily Send Limit</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={settings?.daily_send_limit || 20}
+                      onChange={(e) => handleSaveSettings("daily_send_limit", parseInt(e.target.value) || 20)}
+                      className="mt-1.5 max-w-[120px]"
+                      data-testid="daily-limit-input"
+                    />
+                  </div>
+                </>
+              )}
             </>
           )}
         </CardContent>

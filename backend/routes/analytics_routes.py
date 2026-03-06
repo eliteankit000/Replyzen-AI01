@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, HTTPException, Depends
 from database import db
 from auth import get_current_user
+from plan_permissions import get_user_plan, check_analytics_allowed
 from datetime import datetime, timezone, timedelta
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
@@ -10,6 +11,7 @@ router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 async def get_overview(current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
 
+    # Basic overview stats available to all plans
     total_threads = await db.email_threads.count_documents({"user_id": user_id})
     silent_threads = await db.email_threads.count_documents({"user_id": user_id, "is_silent": True})
     followups_sent = await db.followup_suggestions.count_documents({"user_id": user_id, "status": "sent"})
@@ -18,9 +20,9 @@ async def get_overview(current_user: dict = Depends(get_current_user)):
     total_followups = followups_sent + followups_pending + followups_dismissed
 
     response_rate = round((followups_sent / total_followups * 100) if total_followups > 0 else 0, 1)
-
     accounts_count = await db.email_accounts.count_documents({"user_id": user_id})
 
+    plan = await get_user_plan(user_id)
     return {
         "total_threads": total_threads,
         "silent_threads": silent_threads,
@@ -29,12 +31,22 @@ async def get_overview(current_user: dict = Depends(get_current_user)):
         "followups_dismissed": followups_dismissed,
         "response_rate": response_rate,
         "accounts_connected": accounts_count,
+        "plan": plan,
+        "analytics_allowed": check_analytics_allowed(plan),
     }
 
 
 @router.get("/followups-over-time")
 async def followups_over_time(days: int = 30, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
+
+    # Plan gate: only Pro has analytics charts
+    plan = await get_user_plan(user_id)
+    if not check_analytics_allowed(plan):
+        raise HTTPException(
+            status_code=403,
+            detail="Analytics is available on the Pro plan. Upgrade to access detailed analytics."
+        )
     now = datetime.now(timezone.utc)
     start_date = now - timedelta(days=days)
 

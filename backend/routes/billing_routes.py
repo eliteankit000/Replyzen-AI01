@@ -29,20 +29,38 @@ PLANS = {
         "id": "free",
         "name": "Free",
         "description": "Get started with basic follow-ups",
-        "features": ["5 follow-ups/month", "1 email account", "Basic AI drafts", "Manual sending only"],
+        "features": [
+            "30 follow-ups per month",
+            "1 email account connection",
+            "Basic AI follow-up drafts",
+            "Manual follow-up sending",
+            "Inbox scan for silent conversations",
+            "Follow-up queue dashboard",
+            "Basic settings",
+        ],
         "price_monthly": 0,
         "price_yearly": 0,
-        "followup_limit": 5,
+        "followup_limit": 30,
         "account_limit": 1,
     },
     "pro": {
         "id": "pro",
         "name": "Pro",
         "description": "For professionals who mean business",
-        "features": ["100 follow-ups/month", "3 email accounts", "Advanced AI tones", "Auto-send", "Analytics", "Priority support"],
+        "features": [
+            "2,500 follow-ups per month",
+            "Connect up to 3 email accounts",
+            "Advanced AI tones",
+            "Manual sending",
+            "Auto-send automation",
+            "Analytics dashboard",
+            "Inbox scanning",
+            "Follow-up detection",
+            "Priority support",
+        ],
         "price_monthly": 19,
         "price_yearly": 190,
-        "followup_limit": 100,
+        "followup_limit": 2500,
         "account_limit": 3,
         "razorpay_monthly": os.environ.get("RAZORPAY_PLAN_PRO_MONTHLY", ""),
         "razorpay_yearly": os.environ.get("RAZORPAY_PLAN_PRO_YEARLY", ""),
@@ -53,7 +71,16 @@ PLANS = {
         "id": "business",
         "name": "Business",
         "description": "For teams that scale",
-        "features": ["Unlimited follow-ups", "10 email accounts", "All AI tones", "Auto-send", "Advanced analytics", "Team collaboration", "API access", "Dedicated support"],
+        "features": [
+            "Unlimited follow-ups",
+            "Connect up to 10 email accounts",
+            "All AI tones",
+            "Manual sending",
+            "Auto-send automation",
+            "Inbox scanning",
+            "Follow-up detection",
+            "Dedicated support",
+        ],
         "price_monthly": 49,
         "price_yearly": 490,
         "followup_limit": -1,
@@ -79,6 +106,27 @@ async def get_plans():
         safe = {k: v for k, v in plan.items() if not k.startswith("razorpay_") and not k.startswith("paddle_")}
         safe_plans.append(safe)
     return safe_plans
+
+
+@router.get("/plan-limits")
+async def get_plan_limits_endpoint(current_user: dict = Depends(get_current_user)):
+    from plan_permissions import get_user_plan, get_plan_limits, get_monthly_followup_count, get_email_account_count
+    user_id = current_user["user_id"]
+    plan = await get_user_plan(user_id)
+    limits = get_plan_limits(plan)
+    used_followups = await get_monthly_followup_count(user_id)
+    current_accounts = await get_email_account_count(user_id)
+    return {
+        "plan": plan,
+        "followups_per_month": limits["followups_per_month"],
+        "followups_used": used_followups,
+        "max_email_accounts": limits["max_email_accounts"],
+        "current_email_accounts": current_accounts,
+        "auto_send": limits["auto_send"],
+        "analytics": limits["analytics"],
+        "ai_tones": limits["ai_tones"],
+        "support_tier": limits["support_tier"],
+    }
 
 
 @router.post("/checkout")

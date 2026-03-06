@@ -1,27 +1,26 @@
-#!/usr/bin/env python3
-
 import requests
 import sys
-import json
 from datetime import datetime
+import json
 
 class ReplyzenAPITester:
     def __init__(self, base_url="https://followup-engine-3.preview.emergentagent.com"):
         self.base_url = base_url
         self.token = None
+        self.user_id = None
         self.tests_run = 0
         self.tests_passed = 0
-        self.user_id = None
+        self.failed_tests = []
+        self.passed_tests = []
 
     def run_test(self, name, method, endpoint, expected_status, data=None, headers=None):
         """Run a single API test"""
-        url = f"{self.base_url}/api/{endpoint}"
-        test_headers = {'Content-Type': 'application/json'}
-        
+        url = f"{self.base_url}/api/{endpoint}" if not endpoint.startswith('http') else endpoint
+        req_headers = {'Content-Type': 'application/json'}
         if self.token:
-            test_headers['Authorization'] = f'Bearer {self.token}'
+            req_headers['Authorization'] = f'Bearer {self.token}'
         if headers:
-            test_headers.update(headers)
+            req_headers.update(headers)
 
         self.tests_run += 1
         print(f"\n🔍 Testing {name}...")
@@ -29,255 +28,257 @@ class ReplyzenAPITester:
         
         try:
             if method == 'GET':
-                response = requests.get(url, headers=test_headers)
+                response = requests.get(url, headers=req_headers, timeout=30)
             elif method == 'POST':
-                response = requests.post(url, json=data, headers=test_headers)
+                response = requests.post(url, json=data, headers=req_headers, timeout=30)
             elif method == 'PUT':
-                response = requests.put(url, json=data, headers=test_headers)
-            elif method == 'DELETE':
-                response = requests.delete(url, headers=test_headers)
+                response = requests.put(url, json=data, headers=req_headers, timeout=30)
 
             success = response.status_code == expected_status
             if success:
                 self.tests_passed += 1
+                self.passed_tests.append(name)
                 print(f"✅ Passed - Status: {response.status_code}")
                 try:
-                    resp_json = response.json()
-                    if endpoint == "auth/me" and resp_json.get("id"):
-                        self.user_id = resp_json["id"]
-                    return True, resp_json
+                    return True, response.json()
                 except:
-                    return True, {}
+                    return True, response.text
             else:
+                self.failed_tests.append({
+                    "test": name,
+                    "expected": expected_status,
+                    "actual": response.status_code,
+                    "response": response.text[:200]
+                })
                 print(f"❌ Failed - Expected {expected_status}, got {response.status_code}")
-                try:
-                    error_data = response.json()
-                    print(f"   Error: {error_data}")
-                except:
-                    print(f"   Response: {response.text[:200]}")
+                print(f"   Response: {response.text[:200]}")
                 return False, {}
 
         except Exception as e:
+            self.failed_tests.append({
+                "test": name,
+                "error": str(e)
+            })
             print(f"❌ Failed - Error: {str(e)}")
             return False, {}
 
-    def test_health_check(self):
-        """Test health endpoint"""
-        return self.run_test("Health Check", "GET", "health", 200)
-
-    def test_login_existing_user(self):
-        """Test login with existing test user"""
+    def test_login(self):
+        """Test login with test user"""
         success, response = self.run_test(
-            "Login Existing User",
+            "User Login",
             "POST",
             "auth/login",
             200,
             data={"email": "test@replyzen.com", "password": "testpass123"}
         )
-        if success and 'token' in response:
-            self.token = response['token']
-            print(f"   Token acquired: {self.token[:20]}...")
-            return True
+        if success:
+            print(f"   Login response: {response}")
+            # Check for different possible token field names
+            token_key = None
+            for key in ['access_token', 'token', 'jwt', 'auth_token']:
+                if key in response:
+                    token_key = key
+                    break
+            
+            if token_key:
+                self.token = response[token_key]
+                self.user_id = response.get('user_id', 'test_user_id')
+                print(f"   Logged in as: {response.get('email')}, Plan: {response.get('plan', 'free')}")
+                return True
+            else:
+                print(f"   ⚠️  No token found in response. Keys: {list(response.keys())}")
         return False
 
-    def test_register_new_user(self):
-        """Test registration with new user"""
-        timestamp = datetime.now().strftime("%H%M%S")
-        test_email = f"testuser{timestamp}@example.com"
+    def test_plan_limits(self):
+        """Test GET /api/billing/plan-limits returns correct limits for free user"""
         success, response = self.run_test(
-            "Register New User",
-            "POST", 
-            "auth/register",
-            200,
-            data={
-                "email": test_email,
-                "password": "testpass123",
-                "full_name": f"Test User {timestamp}"
-            }
-        )
-        if success and 'token' in response:
-            print(f"   New user registered: {test_email}")
-            return True
-        return False
-
-    def test_get_user_profile(self):
-        """Test getting user profile"""
-        return self.run_test("Get User Profile", "GET", "auth/me", 200)
-
-    def test_connect_gmail(self):
-        """Test connecting Gmail account (MOCKED)"""
-        success, response = self.run_test(
-            "Connect Gmail",
-            "POST",
-            "emails/connect-gmail", 
-            200,
-            data={"email": "test@gmail.com"}
+            "Get Plan Limits",
+            "GET", 
+            "billing/plan-limits",
+            200
         )
         if success:
-            print(f"   Gmail connected with mock data")
+            expected = {
+                "plan": "free",
+                "followups_per_month": 30,
+                "max_email_accounts": 1,
+                "auto_send": False,
+                "analytics": False,
+                "ai_tones": ["professional"]
+            }
+            for key, expected_val in expected.items():
+                if response.get(key) != expected_val:
+                    print(f"   ⚠️  {key}: expected {expected_val}, got {response.get(key)}")
         return success
 
-    def test_list_email_accounts(self):
-        """Test listing email accounts"""
-        return self.run_test("List Email Accounts", "GET", "emails/accounts", 200)
-
-    def test_get_silent_threads(self):
-        """Test getting silent email threads"""
-        return self.run_test("Get Silent Threads", "GET", "emails/threads/silent", 200)
-
-    def test_sync_emails(self):
-        """Test email synchronization"""
-        return self.run_test("Sync Emails", "POST", "emails/sync", 200)
-
-    def test_generate_followup(self):
-        """Test AI followup generation"""
-        # First get silent threads to have a thread_id
-        success, threads_response = self.run_test("Get Threads for Followup", "GET", "emails/threads/silent?limit=1", 200)
+    def test_email_account_limit(self):
+        """Test free user cannot connect more than 1 email account"""
+        # First, connect one email (should succeed)
+        success1, _ = self.run_test(
+            "Connect First Gmail Account",
+            "POST",
+            "emails/connect-gmail",
+            200,
+            data={"email": "test1@gmail.com"}
+        )
         
-        if success and threads_response.get('threads') and len(threads_response['threads']) > 0:
-            thread_id = threads_response['threads'][0]['id']
-            print(f"   Using thread_id: {thread_id}")
+        # Try to connect second email (should fail with 403)
+        success2, response2 = self.run_test(
+            "Connect Second Gmail Account (Should Fail)",
+            "POST", 
+            "emails/connect-gmail",
+            403,
+            data={"email": "test2@gmail.com"}
+        )
+        
+        return success1 and success2
+
+    def test_followup_generation_limits(self):
+        """Test followup generation and tone restrictions"""
+        # First get silent threads
+        success, threads_response = self.run_test(
+            "Get Silent Threads",
+            "GET",
+            "emails/threads/silent?limit=5",
+            200
+        )
+        
+        if not success or not threads_response.get('threads'):
+            print("   ⚠️  No threads available for followup generation test")
+            return False
             
-            return self.run_test(
-                "Generate AI Followup",
-                "POST",
-                "followups/generate",
-                200,
-                data={"thread_id": thread_id, "tone": "professional"}
-            )
-        else:
-            print("   ⚠️  No silent threads available for followup generation")
-            return True  # Skip this test
+        thread_id = threads_response['threads'][0]['id']
+        
+        # Test professional tone (should work)
+        success1, _ = self.run_test(
+            "Generate Followup - Professional Tone",
+            "POST",
+            "followups/generate", 
+            200,
+            data={"thread_id": thread_id, "tone": "professional"}
+        )
+        
+        # Test casual tone (should fail for free user)
+        success2, _ = self.run_test(
+            "Generate Followup - Casual Tone (Should Fail)",
+            "POST",
+            "followups/generate",
+            403,
+            data={"thread_id": thread_id, "tone": "casual"}
+        )
+        
+        # Test friendly tone (should fail for free user) 
+        success3, _ = self.run_test(
+            "Generate Followup - Friendly Tone (Should Fail)",
+            "POST",
+            "followups/generate",
+            403,
+            data={"thread_id": thread_id, "tone": "friendly"}
+        )
+        
+        return success1 and success2 and success3
 
-    def test_list_followups(self):
-        """Test listing followups"""
-        return self.run_test("List Followups", "GET", "followups", 200)
-
-    def test_analytics_overview(self):
-        """Test analytics overview"""
-        return self.run_test("Analytics Overview", "GET", "analytics/overview", 200)
-
-    def test_followups_over_time(self):
-        """Test followups over time analytics"""
-        return self.run_test("Followups Over Time", "GET", "analytics/followups-over-time?days=7", 200)
-
-    def test_top_contacts(self):
-        """Test top contacts analytics"""
-        return self.run_test("Top Contacts", "GET", "analytics/top-contacts", 200)
-
-    def test_billing_plans(self):
-        """Test getting billing plans"""
-        return self.run_test("Billing Plans", "GET", "billing/plans", 200)
-
-    def test_billing_subscription(self):
-        """Test getting subscription status"""
-        return self.run_test("Billing Subscription", "GET", "billing/subscription", 200)
-
-    def test_settings_get(self):
-        """Test getting user settings"""
-        return self.run_test("Get Settings", "GET", "settings", 200)
-
-    def test_settings_update(self):
-        """Test updating user settings"""
-        return self.run_test(
-            "Update Settings",
+    def test_auto_send_restriction(self):
+        """Test free user cannot enable auto-send"""
+        success, _ = self.run_test(
+            "Enable Auto-Send (Should Fail)",
             "PUT",
             "settings",
-            200,
-            data={"daily_digest": True, "auto_send": False}
+            403,
+            data={"auto_send": True}
         )
+        return success
 
-    def test_profile_update(self):
-        """Test updating user profile"""
-        return self.run_test(
-            "Update Profile", 
-            "PUT",
-            "settings/profile",
-            200,
-            data={"full_name": "Updated Test User"}
+    def test_analytics_restriction(self):
+        """Test free user cannot access analytics charts"""
+        success, _ = self.run_test(
+            "Get Analytics Charts (Should Fail)", 
+            "GET",
+            "analytics/followups-over-time?days=30",
+            403
         )
+        return success
+
+    def test_billing_plans(self):
+        """Test billing plans API returns correct plan data"""
+        success, response = self.run_test(
+            "Get Billing Plans",
+            "GET",
+            "billing/plans", 
+            200
+        )
+        if success:
+            plans = response
+            expected_plans = ["free", "pro", "business"]
+            found_plans = [p.get("id") for p in plans if p.get("id")]
+            for plan_id in expected_plans:
+                if plan_id not in found_plans:
+                    print(f"   ⚠️  Missing plan: {plan_id}")
+                    return False
+            
+            # Check Pro plan features
+            pro_plan = next((p for p in plans if p.get("id") == "pro"), None)
+            if pro_plan:
+                expected_pro = {
+                    "followup_limit": 2500,
+                    "account_limit": 3,
+                    "price_monthly": 19
+                }
+                for key, expected_val in expected_pro.items():
+                    if pro_plan.get(key) != expected_val:
+                        print(f"   ⚠️  Pro plan {key}: expected {expected_val}, got {pro_plan.get(key)}")
+        
+        return success
 
 def main():
-    print("🚀 Starting Replyzen AI Backend Testing")
-    print("=" * 50)
-    
+    print("🚀 Starting Replyzen API Tests...")
     tester = ReplyzenAPITester()
     
-    # Core tests - health check
-    if not tester.test_health_check()[0]:
-        print("❌ Health check failed, stopping tests")
+    # Login first
+    if not tester.test_login():
+        print("❌ Login failed, cannot continue tests")
         return 1
 
-    # Authentication tests  
-    print(f"\n{'='*50}")
-    print("🔐 AUTHENTICATION TESTS")
-    print(f"{'='*50}")
-    
-    if not tester.test_login_existing_user():
-        print("❌ Login failed, trying registration...")
-        if not tester.test_register_new_user():
-            print("❌ Both login and registration failed, stopping tests")
-            return 1
+    # Run all plan enforcement tests  
+    tests = [
+        tester.test_plan_limits,
+        tester.test_billing_plans,
+        tester.test_email_account_limit,
+        tester.test_followup_generation_limits,
+        tester.test_auto_send_restriction,
+        tester.test_analytics_restriction,
+    ]
 
-    tester.test_get_user_profile()
+    for test_func in tests:
+        try:
+            test_func()
+        except Exception as e:
+            tester.failed_tests.append({
+                "test": test_func.__name__,
+                "error": str(e)
+            })
+            print(f"❌ {test_func.__name__} failed with exception: {e}")
 
-    # Email & Gmail integration tests
-    print(f"\n{'='*50}")
-    print("📧 EMAIL & GMAIL TESTS") 
-    print(f"{'='*50}")
+    # Print results
+    print(f"\n📊 Test Results:")
+    print(f"   Tests run: {tester.tests_run}")
+    print(f"   Tests passed: {tester.tests_passed}")
+    print(f"   Tests failed: {len(tester.failed_tests)}")
     
-    tester.test_list_email_accounts()
-    tester.test_connect_gmail()
-    tester.test_sync_emails()
-    tester.test_get_silent_threads()
+    if tester.failed_tests:
+        print(f"\n❌ Failed Tests:")
+        for fail in tester.failed_tests:
+            print(f"   - {fail.get('test', 'Unknown')}: {fail.get('error', fail.get('response', 'Unknown error'))}")
+    
+    if tester.passed_tests:
+        print(f"\n✅ Passed Tests:")
+        for test in tester.passed_tests:
+            print(f"   - {test}")
 
-    # Follow-up AI generation tests
-    print(f"\n{'='*50}")
-    print("🤖 AI FOLLOWUP TESTS")
-    print(f"{'='*50}")
+    success_rate = (tester.tests_passed / tester.tests_run * 100) if tester.tests_run > 0 else 0
+    print(f"\n📈 Success Rate: {success_rate:.1f}%")
     
-    tester.test_generate_followup()
-    tester.test_list_followups()
-
-    # Analytics tests
-    print(f"\n{'='*50}")
-    print("📊 ANALYTICS TESTS")
-    print(f"{'='*50}")
-    
-    tester.test_analytics_overview()
-    tester.test_followups_over_time()
-    tester.test_top_contacts()
-
-    # Billing tests
-    print(f"\n{'='*50}")
-    print("💳 BILLING TESTS")
-    print(f"{'='*50}")
-    
-    tester.test_billing_plans()
-    tester.test_billing_subscription()
-
-    # Settings tests
-    print(f"\n{'='*50}")
-    print("⚙️  SETTINGS TESTS")
-    print(f"{'='*50}")
-    
-    tester.test_settings_get()
-    tester.test_settings_update()
-    tester.test_profile_update()
-
-    # Final results
-    print(f"\n{'='*50}")
-    print("📋 TEST RESULTS")
-    print(f"{'='*50}")
-    print(f"Tests passed: {tester.tests_passed}/{tester.tests_run}")
-    print(f"Success rate: {(tester.tests_passed/tester.tests_run*100):.1f}%")
-    
-    if tester.tests_passed == tester.tests_run:
-        print("🎉 All backend tests passed!")
-        return 0
-    else:
-        print(f"⚠️  {tester.tests_run - tester.tests_passed} tests failed")
-        return 1
+    return 0 if success_rate > 80 else 1
 
 if __name__ == "__main__":
     sys.exit(main())

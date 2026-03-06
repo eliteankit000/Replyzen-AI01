@@ -2,20 +2,21 @@ import { useState, useEffect } from "react";
 import { billingAPI } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter
 } from "@/components/ui/dialog";
-import { Check, CreditCard, Zap, Crown, Loader2 } from "lucide-react";
+import { Check, CreditCard, Zap, Crown, Loader2, ArrowUpRight } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Billing() {
   const { user, refreshUser } = useAuth();
   const [plans, setPlans] = useState([]);
   const [subscription, setSubscription] = useState(null);
+  const [planLimits, setPlanLimits] = useState(null);
   const [cycle, setCycle] = useState("monthly");
   const [loading, setLoading] = useState(true);
   const [checkingOut, setCheckingOut] = useState(null);
@@ -29,12 +30,14 @@ export default function Billing() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [plansRes, subRes] = await Promise.all([
+      const [plansRes, subRes, limitsRes] = await Promise.all([
         billingAPI.getPlans(),
         billingAPI.getSubscription(),
+        billingAPI.getPlanLimits(),
       ]);
       setPlans(plansRes.data || []);
       setSubscription(subRes.data);
+      setPlanLimits(limitsRes.data);
     } catch (err) {
       console.error("Failed to load billing:", err);
     } finally {
@@ -52,20 +55,18 @@ export default function Billing() {
       });
 
       if (res.data.provider === "razorpay") {
-        // Open Razorpay checkout
         const options = {
           key: res.data.key_id,
           subscription_id: res.data.subscription_id,
           name: "Replyzen AI",
           description: `${planId.charAt(0).toUpperCase() + planId.slice(1)} Plan - ${cycle}`,
-          handler: function (response) {
+          handler: function () {
             toast.success("Subscription activated!");
             refreshUser();
             loadData();
           },
           theme: { color: "#ea580c" },
         };
-
         if (window.Razorpay) {
           const rzp = new window.Razorpay(options);
           rzp.open();
@@ -110,9 +111,9 @@ export default function Billing() {
       {/* Current Plan */}
       <Card data-testid="current-plan-card">
         <CardContent className="py-6">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-xl bg-accent flex items-center justify-center">
+              <div className="w-12 h-12 rounded-xl bg-accent flex items-center justify-center shrink-0">
                 {(() => { const Icon = planIcons[currentPlan] || CreditCard; return <Icon className="w-6 h-6 text-primary" />; })()}
               </div>
               <div>
@@ -125,6 +126,19 @@ export default function Billing() {
                 <p className="text-sm text-muted-foreground">
                   {currentPlan === "free" ? "Upgrade to unlock more features" : "Your plan renews automatically"}
                 </p>
+                {planLimits && planLimits.followups_per_month !== -1 && (
+                  <div className="mt-2">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span>{planLimits.followups_used} / {planLimits.followups_per_month} follow-ups used this month</span>
+                    </div>
+                    <div className="w-48 h-1.5 bg-muted rounded-full overflow-hidden mt-1">
+                      <div
+                        className="h-full rounded-full bg-primary transition-all"
+                        style={{ width: `${Math.min((planLimits.followups_used / planLimits.followups_per_month) * 100, 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
             {currentPlan !== "free" && (
@@ -151,16 +165,14 @@ export default function Billing() {
       {/* Plans Grid */}
       {loading ? (
         <div className="grid md:grid-cols-3 gap-6">
-          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-80" />)}
+          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-96" />)}
         </div>
       ) : (
         <div className="grid md:grid-cols-3 gap-6">
           {plans.map((plan) => {
             const isCurrent = plan.id === currentPlan;
             const isPopular = plan.id === "pro";
-            const price = cycle === "yearly"
-              ? plan.price_yearly
-              : plan.price_monthly;
+            const price = cycle === "yearly" ? plan.price_yearly : plan.price_monthly;
             const priceLabel = price === 0
               ? "$0"
               : cycle === "yearly"
@@ -174,7 +186,7 @@ export default function Billing() {
                 data-testid={`billing-plan-${plan.id}`}
               >
                 {isPopular && (
-                  <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-white">Recommended</Badge>
+                  <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-white">Most Popular</Badge>
                 )}
                 <CardContent className="pt-8 pb-6">
                   <h3 className="text-lg font-semibold">{plan.name}</h3>
@@ -213,7 +225,7 @@ export default function Billing() {
                         disabled={checkingOut === plan.id}
                         data-testid={`checkout-paddle-${plan.id}`}
                       >
-                        Pay with Paddle (International)
+                        Pay with Paddle (Intl)
                       </Button>
                     </div>
                   )}

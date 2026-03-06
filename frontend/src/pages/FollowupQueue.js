@@ -1,5 +1,8 @@
 import { useState, useEffect } from "react";
-import { emailAPI, followupAPI } from "@/lib/api";
+import { useNavigate } from "react-router-dom";
+import { emailAPI, followupAPI, billingAPI } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
+import { isToneAllowed } from "@/lib/plan-utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,11 +15,13 @@ import {
 } from "@/components/ui/dialog";
 import {
   Zap, Send, X, Clock, Edit3, Mail, RefreshCw,
-  MessageSquare, CheckCircle2, XCircle, Loader2
+  MessageSquare, CheckCircle2, XCircle, Loader2, Lock, ArrowUpRight
 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function FollowupQueue() {
+  const navigate = useNavigate();
+  const { user } = useAuth();
   const [threads, setThreads] = useState([]);
   const [followups, setFollowups] = useState([]);
   const [tab, setTab] = useState("silent");
@@ -27,10 +32,26 @@ export default function FollowupQueue() {
   const [editDraft, setEditDraft] = useState("");
   const [tone, setTone] = useState("professional");
   const [syncing, setSyncing] = useState(false);
+  const [planLimits, setPlanLimits] = useState(null);
+
+  const userPlan = user?.plan || "free";
+
+  useEffect(() => {
+    loadPlanLimits();
+  }, []);
 
   useEffect(() => {
     loadData();
   }, [tab]);
+
+  const loadPlanLimits = async () => {
+    try {
+      const res = await billingAPI.getPlanLimits();
+      setPlanLimits(res.data);
+    } catch (err) {
+      console.error("Failed to load plan limits:", err);
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -52,11 +73,17 @@ export default function FollowupQueue() {
   const handleGenerate = async (threadId) => {
     setGenerating((prev) => ({ ...prev, [threadId]: true }));
     try {
-      const res = await followupAPI.generate(threadId, tone);
+      await followupAPI.generate(threadId, tone);
       toast.success("AI draft generated!");
+      await loadPlanLimits();
       setTab("pending");
     } catch (err) {
-      toast.error("Failed to generate draft");
+      const detail = err.response?.data?.detail || "Failed to generate draft";
+      if (err.response?.status === 403) {
+        toast.error(detail);
+      } else {
+        toast.error(detail);
+      }
     } finally {
       setGenerating((prev) => ({ ...prev, [threadId]: false }));
     }
@@ -115,6 +142,8 @@ export default function FollowupQueue() {
     return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
   };
 
+  const limitReached = planLimits && planLimits.followups_per_month !== -1 && planLimits.followups_used >= planLimits.followups_per_month;
+
   return (
     <div className="space-y-6" data-testid="followup-queue-page">
       {/* Header */}
@@ -130,8 +159,12 @@ export default function FollowupQueue() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="professional">Professional</SelectItem>
-              <SelectItem value="friendly">Friendly</SelectItem>
-              <SelectItem value="casual">Casual</SelectItem>
+              <SelectItem value="friendly" disabled={!isToneAllowed(userPlan, "friendly")}>
+                Friendly {!isToneAllowed(userPlan, "friendly") && "(Pro)"}
+              </SelectItem>
+              <SelectItem value="casual" disabled={!isToneAllowed(userPlan, "casual")}>
+                Casual {!isToneAllowed(userPlan, "casual") && "(Pro)"}
+              </SelectItem>
             </SelectContent>
           </Select>
           <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing} data-testid="sync-queue-btn">
@@ -140,6 +173,35 @@ export default function FollowupQueue() {
           </Button>
         </div>
       </div>
+
+      {/* Plan usage bar */}
+      {planLimits && planLimits.followups_per_month !== -1 && (
+        <Card className={limitReached ? "border-destructive/50 bg-destructive/5" : ""} data-testid="usage-bar">
+          <CardContent className="py-3">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-medium text-muted-foreground">
+                Monthly Follow-ups: {planLimits.followups_used} / {planLimits.followups_per_month}
+              </span>
+              {limitReached && (
+                <Button size="sm" variant="link" className="text-primary h-auto p-0" onClick={() => navigate("/billing")} data-testid="upgrade-from-queue">
+                  Upgrade <ArrowUpRight className="w-3 h-3 ml-1" />
+                </Button>
+              )}
+            </div>
+            <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-300 ${limitReached ? "bg-destructive" : "bg-primary"}`}
+                style={{ width: `${Math.min((planLimits.followups_used / planLimits.followups_per_month) * 100, 100)}%` }}
+              />
+            </div>
+            {limitReached && (
+              <p className="text-xs text-destructive mt-1.5" data-testid="limit-reached-msg">
+                You have reached your monthly follow-up limit. Upgrade your plan to continue.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab}>
@@ -185,12 +247,14 @@ export default function FollowupQueue() {
                       <Button
                         size="sm"
                         onClick={() => handleGenerate(t.id)}
-                        disabled={generating[t.id]}
+                        disabled={generating[t.id] || limitReached}
                         className="shrink-0 bg-primary hover:bg-primary/90 text-white"
                         data-testid={`generate-btn-${t.id}`}
                       >
                         {generating[t.id] ? (
                           <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Generating...</>
+                        ) : limitReached ? (
+                          <><Lock className="w-3.5 h-3.5 mr-1.5" /> Limit</>
                         ) : (
                           <><Zap className="w-3.5 h-3.5 mr-1.5" /> Generate</>
                         )}

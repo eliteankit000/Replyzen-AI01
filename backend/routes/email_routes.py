@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from database import db
 from auth import get_current_user
 from services.mock_gmail import generate_mock_threads
+from plan_permissions import check_account_limit
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -17,6 +18,14 @@ class ConnectGmailRequest(BaseModel):
 @router.post("/connect-gmail")
 async def connect_gmail(req: ConnectGmailRequest, current_user: dict = Depends(get_current_user)):
     user_id = current_user["user_id"]
+
+    # Plan limit check: email accounts
+    account_check = await check_account_limit(user_id)
+    if not account_check["allowed"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"You have reached your email account limit ({account_check['limit']}). Upgrade your plan to connect more accounts."
+        )
 
     existing = await db.email_accounts.find_one(
         {"user_id": user_id, "email": req.email}, {"_id": 0}

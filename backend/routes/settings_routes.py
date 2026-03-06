@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from database import db
 from auth import get_current_user
+from plan_permissions import get_user_plan, check_auto_send_allowed, get_plan_limits, check_account_limit
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -76,6 +77,15 @@ async def update_settings(req: SettingsUpdateRequest, current_user: dict = Depen
     update = {}
     for field, value in req.model_dump(exclude_none=True).items():
         update[field] = value
+
+    # Plan gate: auto_send
+    if "auto_send" in update and update["auto_send"]:
+        plan = await get_user_plan(current_user["user_id"])
+        if not check_auto_send_allowed(plan):
+            raise HTTPException(
+                status_code=403,
+                detail="Auto-send is available on Pro and Business plans. Upgrade to enable auto-send."
+            )
 
     if not update:
         raise HTTPException(status_code=400, detail="No fields to update")
