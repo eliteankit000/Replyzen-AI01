@@ -159,7 +159,10 @@ async def create_checkout(req: CheckoutRequest, current_user: dict = Depends(get
             }
         except Exception as e:
             logger.error(f"Razorpay checkout error: {e}")
-            raise HTTPException(status_code=500, detail="Failed to create checkout")
+            error_msg = str(e)
+            if "does not exist" in error_msg:
+                raise HTTPException(status_code=400, detail="Invalid Razorpay plan configuration. Please contact support.")
+            raise HTTPException(status_code=500, detail="Failed to create checkout. Please try again.")
 
     elif req.provider == "paddle":
         paddle_key = f"paddle_{req.billing_cycle}"

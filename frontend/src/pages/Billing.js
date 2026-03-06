@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter
 } from "@/components/ui/dialog";
-import { Check, CreditCard, Zap, Crown, Loader2, ArrowUpRight } from "lucide-react";
+import { Check, CreditCard, Zap, Crown, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Billing() {
@@ -40,13 +40,14 @@ export default function Billing() {
       setPlanLimits(limitsRes.data);
     } catch (err) {
       console.error("Failed to load billing:", err);
+      toast.error("Failed to load billing information.");
     } finally {
       setLoading(false);
     }
   };
 
   const handleCheckout = async (planId, provider = "razorpay") => {
-    setCheckingOut(planId);
+    setCheckingOut(`${planId}-${provider}`);
     try {
       const res = await billingAPI.createCheckout({
         plan_id: planId,
@@ -55,29 +56,59 @@ export default function Billing() {
       });
 
       if (res.data.provider === "razorpay") {
+        if (typeof window.Razorpay === "undefined") {
+          toast.error("Razorpay SDK not loaded. Please refresh the page and try again.");
+          return;
+        }
         const options = {
           key: res.data.key_id,
           subscription_id: res.data.subscription_id,
           name: "Replyzen AI",
           description: `${planId.charAt(0).toUpperCase() + planId.slice(1)} Plan - ${cycle}`,
-          handler: function () {
-            toast.success("Subscription activated!");
+          handler: function (response) {
+            toast.success("Payment successful! Your plan has been activated.");
             refreshUser();
             loadData();
           },
+          modal: {
+            ondismiss: function () {
+              toast.info("Payment was cancelled.");
+            },
+          },
           theme: { color: "#ea580c" },
         };
-        if (window.Razorpay) {
-          const rzp = new window.Razorpay(options);
-          rzp.open();
-        } else {
-          toast.error("Razorpay SDK not loaded. Please refresh and try again.");
+        const rzp = new window.Razorpay(options);
+        rzp.on("payment.failed", function (response) {
+          toast.error("Payment failed. Please try again.");
+        });
+        rzp.open();
+      } else if (res.data.provider === "paddle") {
+        if (typeof window.Paddle === "undefined") {
+          toast.error("Paddle SDK not loaded. Please refresh the page and try again.");
+          return;
         }
-      } else {
-        toast.info("Paddle checkout will open in a new window");
+        try {
+          window.Paddle.Checkout.open({
+            items: [{ priceId: res.data.price_id, quantity: 1 }],
+            customData: { user_id: res.data.user_id, plan: planId },
+            settings: {
+              theme: "light",
+              successUrl: window.location.href,
+            },
+          });
+        } catch (paddleErr) {
+          toast.error("Unable to open Paddle checkout. Please try Razorpay instead.");
+          console.error("Paddle error:", paddleErr);
+        }
       }
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Checkout failed");
+      if (err.response?.data?.detail) {
+        toast.error(err.response.data.detail);
+      } else if (err.message === "Network Error") {
+        toast.error("Unable to create checkout session. Please check your connection.");
+      } else {
+        toast.error("Payment failed. Please try again.");
+      }
     } finally {
       setCheckingOut(null);
     }
@@ -87,12 +118,12 @@ export default function Billing() {
     setCancelling(true);
     try {
       await billingAPI.cancelSubscription();
-      toast.success("Subscription cancelled");
+      toast.success("Subscription cancelled successfully.");
       setCancelDialog(false);
       refreshUser();
       loadData();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Cancellation failed");
+      toast.error(err.response?.data?.detail || "Cancellation failed. Please try again.");
     } finally {
       setCancelling(false);
     }
@@ -108,7 +139,7 @@ export default function Billing() {
         <p className="text-sm text-muted-foreground mt-1">Manage your subscription and billing</p>
       </div>
 
-      {/* Current Plan */}
+      {/* Current Plan Summary */}
       <Card data-testid="current-plan-card">
         <CardContent className="py-6">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -124,7 +155,9 @@ export default function Billing() {
                   </Badge>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  {currentPlan === "free" ? "Upgrade to unlock more features" : "Your plan renews automatically"}
+                  {currentPlan === "free"
+                    ? "Upgrade to unlock more features"
+                    : "Your plan renews automatically"}
                 </p>
                 {planLimits && planLimits.followups_per_month !== -1 && (
                   <div className="mt-2">
@@ -139,6 +172,9 @@ export default function Billing() {
                     </div>
                   </div>
                 )}
+                {planLimits && planLimits.followups_per_month === -1 && (
+                  <p className="text-xs text-muted-foreground mt-1">Unlimited follow-ups</p>
+                )}
               </div>
             </div>
             {currentPlan !== "free" && (
@@ -151,7 +187,7 @@ export default function Billing() {
       </Card>
 
       {/* Billing Cycle Toggle */}
-      <div className="flex items-center justify-center gap-4">
+      <div className="flex items-center justify-center">
         <Tabs value={cycle} onValueChange={setCycle}>
           <TabsList data-testid="billing-cycle-tabs">
             <TabsTrigger value="monthly">Monthly</TabsTrigger>
@@ -165,7 +201,7 @@ export default function Billing() {
       {/* Plans Grid */}
       {loading ? (
         <div className="grid md:grid-cols-3 gap-6">
-          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-96" />)}
+          {[1, 2, 3].map((i) => <Skeleton key={i} className="h-[420px]" />)}
         </div>
       ) : (
         <div className="grid md:grid-cols-3 gap-6">
@@ -178,6 +214,9 @@ export default function Billing() {
               : cycle === "yearly"
               ? `$${Math.round(plan.price_yearly / 12)}`
               : `$${plan.price_monthly}`;
+            const isCheckingRzp = checkingOut === `${plan.id}-razorpay`;
+            const isCheckingPdl = checkingOut === `${plan.id}-paddle`;
+            const isChecking = isCheckingRzp || isCheckingPdl;
 
             return (
               <Card
@@ -206,26 +245,27 @@ export default function Billing() {
                       Current Plan
                     </Button>
                   ) : plan.id === "free" ? (
-                    <Button disabled className="w-full mb-6" variant="outline">Free</Button>
+                    <Button disabled className="w-full mb-6" variant="outline">Free Forever</Button>
                   ) : (
                     <div className="space-y-2 mb-6">
                       <Button
                         className="w-full bg-primary hover:bg-primary/90 text-white"
                         onClick={() => handleCheckout(plan.id, "razorpay")}
-                        disabled={checkingOut === plan.id}
+                        disabled={!!checkingOut}
                         data-testid={`checkout-razorpay-${plan.id}`}
                       >
-                        {checkingOut === plan.id ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CreditCard className="w-4 h-4 mr-2" />}
-                        Pay with Razorpay
+                        {isCheckingRzp ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CreditCard className="w-4 h-4 mr-2" />}
+                        {isCheckingRzp ? "Processing..." : "Pay with Razorpay"}
                       </Button>
                       <Button
                         variant="outline"
                         className="w-full"
                         onClick={() => handleCheckout(plan.id, "paddle")}
-                        disabled={checkingOut === plan.id}
+                        disabled={!!checkingOut}
                         data-testid={`checkout-paddle-${plan.id}`}
                       >
-                        Pay with Paddle (Intl)
+                        {isCheckingPdl ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                        {isCheckingPdl ? "Processing..." : "Pay with Paddle (Intl)"}
                       </Button>
                     </div>
                   )}
@@ -248,13 +288,15 @@ export default function Billing() {
       <Dialog open={cancelDialog} onOpenChange={setCancelDialog}>
         <DialogContent data-testid="cancel-dialog">
           <DialogHeader>
-            <DialogTitle>Cancel Subscription</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-destructive" /> Cancel Subscription
+            </DialogTitle>
             <DialogDescription>
-              Are you sure you want to cancel? You'll lose access to premium features at the end of your billing period.
+              Are you sure you want to cancel your {currentPlan} plan? You'll lose access to premium features at the end of your current billing period.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCancelDialog(false)}>Keep Plan</Button>
+            <Button variant="outline" onClick={() => setCancelDialog(false)}>Keep My Plan</Button>
             <Button variant="destructive" onClick={handleCancel} disabled={cancelling} data-testid="confirm-cancel-btn">
               {cancelling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
               Yes, Cancel

@@ -27,7 +27,7 @@ const NAV_ITEMS = [
 
 function SidebarNav({ collapsed, items, userPlan, onNavigate }) {
   return (
-    <nav className="flex-1 px-2 py-4 space-y-1">
+    <nav className="flex-1 overflow-y-auto px-2 py-4 space-y-1">
       {items.map((item) => {
         const locked = item.gated && !isAnalyticsAllowed(userPlan);
         return (
@@ -35,9 +35,7 @@ function SidebarNav({ collapsed, items, userPlan, onNavigate }) {
             <TooltipTrigger asChild>
               <NavLink
                 to={item.path}
-                onClick={(e) => {
-                  if (onNavigate) onNavigate();
-                }}
+                onClick={() => { if (onNavigate) onNavigate(); }}
                 className={({ isActive }) =>
                   `sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 ${
                     isActive
@@ -48,12 +46,8 @@ function SidebarNav({ collapsed, items, userPlan, onNavigate }) {
                 data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
               >
                 <item.icon className="w-[18px] h-[18px] shrink-0" />
-                {!collapsed && (
-                  <span className="flex-1">{item.label}</span>
-                )}
-                {!collapsed && locked && (
-                  <Lock className="w-3.5 h-3.5 text-muted-foreground" />
-                )}
+                {!collapsed && <span className="flex-1">{item.label}</span>}
+                {!collapsed && locked && <Lock className="w-3.5 h-3.5 text-muted-foreground" />}
               </NavLink>
             </TooltipTrigger>
             {collapsed && (
@@ -71,13 +65,15 @@ function SidebarNav({ collapsed, items, userPlan, onNavigate }) {
 function SidebarBrand({ collapsed }) {
   return (
     <div className="h-16 flex items-center px-4 border-b border-border shrink-0">
-      <div className={`flex items-center gap-2.5 transition-all duration-200 ${collapsed ? "justify-center w-full" : ""}`}>
+      <div className={`flex items-center gap-2.5 transition-all duration-200 overflow-hidden ${collapsed ? "justify-center w-full" : ""}`}>
         <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shrink-0">
           <Mail className="w-4 h-4 text-white" />
         </div>
-        <span className={`text-base font-bold tracking-tight transition-all duration-200 ${collapsed ? "hidden" : "block"}`}>
-          Replyzen AI
-        </span>
+        {!collapsed && (
+          <span className="text-base font-bold tracking-tight whitespace-nowrap">
+            Replyzen AI
+          </span>
+        )}
       </div>
     </div>
   );
@@ -132,7 +128,6 @@ export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const userPlan = user?.plan || "free";
 
-  // Close mobile sheet on route change
   useEffect(() => {
     setMobileOpen(false);
   }, [location.pathname]);
@@ -142,17 +137,19 @@ export default function AppLayout() {
     navigate("/");
   }, [logout, navigate]);
 
+  const sidebarWidth = collapsed ? "w-[68px]" : "w-[260px]";
+  const sidebarMargin = collapsed ? "md:ml-[68px]" : "md:ml-[260px]";
+
   return (
     <TooltipProvider>
-      <div className="min-h-screen flex" data-testid="app-layout">
-        {/* Desktop Sidebar */}
+      <div className="min-h-screen" data-testid="app-layout">
+        {/* Desktop Sidebar - FIXED position, viewport height */}
         <aside
-          className={`hidden md:flex flex-col ${collapsed ? "w-[68px]" : "w-60"} shrink-0 bg-card border-r border-border transition-[width] duration-200 ease-in-out`}
+          className={`hidden md:flex flex-col fixed top-0 left-0 h-screen ${sidebarWidth} bg-card border-r border-border transition-[width] duration-200 ease-in-out z-30`}
           data-testid="sidebar"
         >
           <SidebarBrand collapsed={collapsed} />
           <SidebarNav collapsed={collapsed} items={NAV_ITEMS} userPlan={userPlan} />
-          {/* Collapse toggle */}
           <div className="px-2 py-1 shrink-0">
             <button
               onClick={() => setCollapsed(!collapsed)}
@@ -165,10 +162,10 @@ export default function AppLayout() {
           <SidebarUserMenu collapsed={collapsed} user={user} onLogout={handleLogout} navigate={navigate} />
         </aside>
 
-        {/* Mobile */}
-        <div className="flex-1 min-w-0 flex flex-col">
+        {/* Main content area - offset by sidebar width */}
+        <div className={`flex flex-col min-h-screen transition-[margin-left] duration-200 ease-in-out ${sidebarMargin}`}>
           {/* Mobile top bar */}
-          <header className="md:hidden h-14 flex items-center justify-between px-4 border-b border-border bg-card shrink-0">
+          <header className="md:hidden h-14 flex items-center justify-between px-4 border-b border-border bg-card sticky top-0 z-20 shrink-0">
             <div className="flex items-center gap-2">
               <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
                 <SheetTrigger asChild>
@@ -176,7 +173,7 @@ export default function AppLayout() {
                     <Menu className="w-5 h-5" />
                   </Button>
                 </SheetTrigger>
-                <SheetContent side="left" className="w-60 p-0">
+                <SheetContent side="left" className="w-[260px] p-0">
                   <div className="flex flex-col h-full">
                     <SidebarBrand collapsed={false} />
                     <SidebarNav collapsed={false} items={NAV_ITEMS} userPlan={userPlan} onNavigate={() => setMobileOpen(false)} />
@@ -193,8 +190,8 @@ export default function AppLayout() {
             </div>
           </header>
 
-          {/* Main Content */}
-          <main className="flex-1 overflow-auto">
+          {/* Page content */}
+          <main className="flex-1">
             <div className="p-4 sm:p-6 lg:p-8 max-w-6xl">
               <Outlet />
             </div>
