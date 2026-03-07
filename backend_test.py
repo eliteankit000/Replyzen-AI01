@@ -4,7 +4,7 @@ from datetime import datetime
 import json
 
 class ReplyzenAPITester:
-    def __init__(self, base_url="https://ai-followup-engine.preview.emergentagent.com"):
+    def __init__(self, base_url="https://replyzen-auto-send.preview.emergentagent.com"):
         self.base_url = base_url
         self.token = None
         self.user_id = None
