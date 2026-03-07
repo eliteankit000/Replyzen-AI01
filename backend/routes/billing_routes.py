@@ -38,8 +38,10 @@ PLANS = {
             "Follow-up queue dashboard",
             "Basic settings",
         ],
-        "price_monthly": 0,
-        "price_yearly": 0,
+        "price_monthly_usd": 0,
+        "price_yearly_usd": 0,
+        "price_monthly_inr": 0,
+        "price_yearly_inr": 0,
         "followup_limit": 30,
         "account_limit": 1,
     },
@@ -58,8 +60,10 @@ PLANS = {
             "Follow-up detection",
             "Priority support",
         ],
-        "price_monthly": 19,
-        "price_yearly": 190,
+        "price_monthly_usd": 19,
+        "price_yearly_usd": 190,
+        "price_monthly_inr": 1599,
+        "price_yearly_inr": 15990,
         "followup_limit": 2500,
         "account_limit": 3,
         "razorpay_monthly": os.environ.get("RAZORPAY_PLAN_PRO_MONTHLY", ""),
@@ -81,8 +85,10 @@ PLANS = {
             "Follow-up detection",
             "Dedicated support",
         ],
-        "price_monthly": 49,
-        "price_yearly": 490,
+        "price_monthly_usd": 49,
+        "price_yearly_usd": 490,
+        "price_monthly_inr": 3999,
+        "price_yearly_inr": 39990,
         "followup_limit": -1,
         "account_limit": 10,
         "razorpay_monthly": os.environ.get("RAZORPAY_PLAN_BUSINESS_MONTHLY", ""),
@@ -99,11 +105,48 @@ class CheckoutRequest(BaseModel):
     provider: str = "razorpay"
 
 
+@router.get("/detect-location")
+async def detect_location(request: Request):
+    """Detect user's country based on IP address."""
+    # Try to get IP from X-Forwarded-For header (common behind proxies/load balancers)
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    client_ip = forwarded_for.split(",")[0].strip() if forwarded_for else (request.client.host if request.client else "")
+    
+    country = "US"  # Default
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"http://ip-api.com/json/{client_ip}?fields=countryCode")
+            if resp.status_code == 200:
+                data = resp.json()
+                country = data.get("countryCode", "US")
+    except Exception as e:
+        logger.warning(f"Location detection failed: {e}")
+    
+    is_india = country == "IN"
+    return {
+        "country": country,
+        "currency": "INR" if is_india else "USD",
+        "payment_provider": "razorpay" if is_india else "paddle",
+    }
+
+
 @router.get("/plans")
-async def get_plans():
+async def get_plans(currency: Optional[str] = None):
+    """Get plans with pricing in the specified currency."""
     safe_plans = []
     for plan in PLANS.values():
         safe = {k: v for k, v in plan.items() if not k.startswith("razorpay_") and not k.startswith("paddle_")}
+        # Add currency-specific pricing for backward compatibility
+        if currency == "INR":
+            safe["price_monthly"] = safe.get("price_monthly_inr", 0)
+            safe["price_yearly"] = safe.get("price_yearly_inr", 0)
+            safe["currency"] = "INR"
+            safe["currency_symbol"] = "₹"
+        else:
+            safe["price_monthly"] = safe.get("price_monthly_usd", 0)
+            safe["price_yearly"] = safe.get("price_yearly_usd", 0)
+            safe["currency"] = "USD"
+            safe["currency_symbol"] = "$"
         safe_plans.append(safe)
     return safe_plans
 
@@ -170,13 +213,14 @@ async def create_checkout(req: CheckoutRequest, current_user: dict = Depends(get
         if not price_id:
             raise HTTPException(status_code=400, detail="Plan not available")
         
-        paddle_seller_id = os.environ.get("PADDLE_SELLER_ID", "")
+        paddle_vendor_id = os.environ.get("PADDLE_VENDOR_ID", "")
 
         return {
             "provider": "paddle",
             "price_id": price_id,
             "user_id": user_id,
-            "seller_id": paddle_seller_id,
+            "seller_id": paddle_vendor_id,
+            "vendor_id": paddle_vendor_id,
         }
 
     raise HTTPException(status_code=400, detail="Invalid provider")

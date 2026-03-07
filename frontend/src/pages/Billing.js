@@ -22,6 +22,7 @@ export default function Billing() {
   const [checkingOut, setCheckingOut] = useState(null);
   const [cancelDialog, setCancelDialog] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [locationInfo, setLocationInfo] = useState({ currency: "USD", payment_provider: "paddle", country: "US" });
 
   useEffect(() => {
     loadData();
@@ -30,8 +31,18 @@ export default function Billing() {
   const loadData = async () => {
     setLoading(true);
     try {
+      // Detect location first
+      let locInfo = { currency: "USD", payment_provider: "paddle", country: "US" };
+      try {
+        const locRes = await billingAPI.detectLocation();
+        locInfo = locRes.data;
+      } catch (e) {
+        console.warn("Location detection failed, defaulting to USD/Paddle");
+      }
+      setLocationInfo(locInfo);
+
       const [plansRes, subRes, limitsRes] = await Promise.all([
-        billingAPI.getPlans(),
+        billingAPI.getPlans(locInfo.currency),
         billingAPI.getSubscription(),
         billingAPI.getPlanLimits(),
       ]);
@@ -46,7 +57,8 @@ export default function Billing() {
     }
   };
 
-  const handleCheckout = async (planId, provider = "razorpay") => {
+  const handleCheckout = async (planId) => {
+    const provider = locationInfo.payment_provider;
     setCheckingOut(`${planId}-${provider}`);
     try {
       const res = await billingAPI.createCheckout({
@@ -88,12 +100,11 @@ export default function Billing() {
           return;
         }
         try {
-          // Initialize Paddle if not already initialized
+          const vendorId = process.env.REACT_APP_PADDLE_VENDOR_ID || res.data.vendor_id;
           if (!window.Paddle.Initialized) {
-            // For production, replace with actual Paddle client token
-            // Token should be passed from backend or environment
+            window.Paddle.Environment.set && window.Paddle.Environment.set("production");
             window.Paddle.Setup && window.Paddle.Setup({ 
-              seller: parseInt(res.data.seller_id || "0") || undefined 
+              seller: parseInt(vendorId || "0") || undefined 
             });
           }
           window.Paddle.Checkout.open({
@@ -105,7 +116,7 @@ export default function Billing() {
             },
           });
         } catch (paddleErr) {
-          toast.error("Unable to open Paddle checkout. Please try Razorpay instead.");
+          toast.error("Unable to open checkout. Please try again.");
           console.error("Paddle error:", paddleErr);
         }
       }
@@ -115,7 +126,7 @@ export default function Billing() {
       } else if (err.message === "Network Error") {
         toast.error("Unable to create checkout session. Please check your connection.");
       } else {
-        toast.error("Payment failed. Please try again.");
+        toast.error("Unable to create checkout session. Please try again.");
       }
     } finally {
       setCheckingOut(null);
@@ -139,6 +150,8 @@ export default function Billing() {
 
   const currentPlan = user?.plan || subscription?.plan || "free";
   const planIcons = { free: CreditCard, pro: Zap, business: Crown };
+  const currencySymbol = locationInfo.currency === "INR" ? "₹" : "$";
+  const providerLabel = locationInfo.payment_provider === "razorpay" ? "Razorpay" : "Paddle";
 
   return (
     <div className="space-y-8" data-testid="billing-page">
@@ -194,6 +207,13 @@ export default function Billing() {
         </CardContent>
       </Card>
 
+      {/* Location indicator */}
+      <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+        <span>Showing prices in {locationInfo.currency === "INR" ? "₹ INR" : "$ USD"}</span>
+        <span className="text-muted-foreground/50">•</span>
+        <span>Paying via {providerLabel}</span>
+      </div>
+
       {/* Billing Cycle Toggle */}
       <div className="flex items-center justify-center">
         <Tabs value={cycle} onValueChange={setCycle}>
@@ -218,13 +238,11 @@ export default function Billing() {
             const isPopular = plan.id === "pro";
             const price = cycle === "yearly" ? plan.price_yearly : plan.price_monthly;
             const priceLabel = price === 0
-              ? "$0"
+              ? `${currencySymbol}0`
               : cycle === "yearly"
-              ? `$${Math.round(plan.price_yearly / 12)}`
-              : `$${plan.price_monthly}`;
-            const isCheckingRzp = checkingOut === `${plan.id}-razorpay`;
-            const isCheckingPdl = checkingOut === `${plan.id}-paddle`;
-            const isChecking = isCheckingRzp || isCheckingPdl;
+              ? `${currencySymbol}${Math.round(plan.price_yearly / 12)}`
+              : `${currencySymbol}${plan.price_monthly}`;
+            const isChecking = checkingOut === `${plan.id}-${locationInfo.payment_provider}`;
 
             return (
               <Card
@@ -244,7 +262,7 @@ export default function Billing() {
                       {price === 0 ? " forever" : "/month"}
                     </span>
                     {cycle === "yearly" && price > 0 && (
-                      <p className="text-xs text-muted-foreground mt-1">Billed ${plan.price_yearly}/year</p>
+                      <p className="text-xs text-muted-foreground mt-1">Billed {currencySymbol}{plan.price_yearly}/year</p>
                     )}
                   </div>
 
@@ -258,22 +276,12 @@ export default function Billing() {
                     <div className="space-y-2 mb-6">
                       <Button
                         className="w-full bg-primary hover:bg-primary/90 text-white"
-                        onClick={() => handleCheckout(plan.id, "razorpay")}
+                        onClick={() => handleCheckout(plan.id)}
                         disabled={!!checkingOut}
-                        data-testid={`checkout-razorpay-${plan.id}`}
+                        data-testid={`checkout-${plan.id}`}
                       >
-                        {isCheckingRzp ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CreditCard className="w-4 h-4 mr-2" />}
-                        {isCheckingRzp ? "Processing..." : "Pay with Razorpay"}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        className="w-full"
-                        onClick={() => handleCheckout(plan.id, "paddle")}
-                        disabled={!!checkingOut}
-                        data-testid={`checkout-paddle-${plan.id}`}
-                      >
-                        {isCheckingPdl ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                        {isCheckingPdl ? "Processing..." : "Pay with Paddle (Intl)"}
+                        {isChecking ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CreditCard className="w-4 h-4 mr-2" />}
+                        {isChecking ? "Processing..." : `Upgrade to ${plan.name}`}
                       </Button>
                     </div>
                   )}

@@ -108,6 +108,7 @@ def get_config_status() -> Dict:
         },
         "paddle": {
             "PADDLE_API_KEY": bool(os.environ.get("PADDLE_API_KEY")),
+            "PADDLE_VENDOR_ID": bool(os.environ.get("PADDLE_VENDOR_ID")),
             "PADDLE_PRICE_PRO_MONTHLY": bool(os.environ.get("PADDLE_PRICE_PRO_MONTHLY")),
             "PADDLE_PRICE_PRO_YEARLY": bool(os.environ.get("PADDLE_PRICE_PRO_YEARLY")),
             "PADDLE_PRICE_BUSINESS_MONTHLY": bool(os.environ.get("PADDLE_PRICE_BUSINESS_MONTHLY")),

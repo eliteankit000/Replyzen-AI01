@@ -126,7 +126,7 @@ async def gmail_oauth_callback(
 
 @router.post("/connect-gmail")
 async def connect_gmail(req: ConnectGmailRequest, current_user: dict = Depends(get_current_user)):
-    """Legacy endpoint - redirects to OAuth flow or creates mock account for demo."""
+    """Connect Gmail account via OAuth. Redirects to Google OAuth flow."""
     user_id = current_user["user_id"]
     
     # Plan limit check: email accounts
@@ -143,97 +143,15 @@ async def connect_gmail(req: ConnectGmailRequest, current_user: dict = Depends(g
     if existing:
         raise HTTPException(status_code=400, detail="Account already connected")
     
-    # If Gmail OAuth is configured, return auth URL
-    if GMAIL_CLIENT_ID:
-        return {
-            "message": "Please complete Gmail OAuth",
-            "requires_oauth": True,
-            "auth_url": get_auth_url(state=user_id)
-        }
+    # Gmail OAuth is required - return auth URL
+    if not GMAIL_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="Gmail OAuth not configured. Please contact support.")
     
-    # Fallback: Create demo account without real OAuth (for testing)
-    account_id = str(uuid.uuid4())
-    account = {
-        "id": account_id,
-        "user_id": user_id,
-        "email": req.email,
-        "provider": "gmail",
-        "status": "connected",
-        "access_token_encrypted": "",
-        "refresh_token_encrypted": "",
-        "connected_at": datetime.now(timezone.utc).isoformat(),
-        "last_synced": None,
-        "is_demo": True,  # Mark as demo account
+    return {
+        "message": "Please complete Gmail OAuth",
+        "requires_oauth": True,
+        "auth_url": get_auth_url(state=user_id)
     }
-    await db.email_accounts.insert_one(account)
-    
-    # Generate sample threads for demo account
-    await generate_demo_threads(user_id, account_id, req.email)
-    
-    return {"message": "Demo Gmail account connected", "account_id": account_id, "is_demo": True}
-
-
-async def generate_demo_threads(user_id: str, account_id: str, user_email: str):
-    """Generate realistic demo email threads for testing."""
-    import random
-    
-    contacts = [
-        {"name": "Sarah Chen", "email": "sarah.chen@acme.co"},
-        {"name": "James Wilson", "email": "james.w@techstart.io"},
-        {"name": "Emily Rodriguez", "email": "emily.r@designhub.com"},
-        {"name": "Michael Park", "email": "m.park@cloudnine.dev"},
-        {"name": "Lisa Thompson", "email": "lisa.t@marketwise.co"},
-        {"name": "David Kumar", "email": "david.k@finova.in"},
-    ]
-    
-    subjects = [
-        "Partnership opportunity discussion",
-        "Q1 Budget proposal review",
-        "Follow up: Product demo feedback",
-        "Re: Contract renewal terms",
-        "Meeting notes from Tuesday",
-        "Proposal for new integration",
-    ]
-    
-    snippets = [
-        "Thanks for sharing the proposal. I'll review it with the team and get back to you by end of week.",
-        "The demo looked great! Let me discuss internally and circle back on next steps.",
-        "I've attached the updated pricing sheet. Let me know your thoughts when you get a chance.",
-        "Great meeting today. I'll send over the action items and timeline shortly.",
-        "Sounds good! I'll check with our legal team and confirm the terms.",
-        "Really appreciate the detailed breakdown. Need a few days to run the numbers.",
-    ]
-    
-    threads = []
-    now = datetime.now(timezone.utc)
-    
-    for i in range(min(6, len(contacts))):
-        contact = contacts[i]
-        days_ago = random.randint(2, 10)
-        is_silent = i < 4  # First 4 are silent
-        
-        thread = {
-            "id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "account_id": account_id,
-            "subject": subjects[i],
-            "participants": [user_email, contact["email"]],
-            "participant_names": [contact["name"]],
-            "last_message_at": (now - timedelta(days=days_ago)).isoformat(),
-            "last_sender": user_email if is_silent else contact["email"],
-            "is_silent": is_silent,
-            "days_silent": days_ago if is_silent else 0,
-            "snippet": snippets[i],
-            "category": "primary",
-            "message_count": random.randint(2, 6),
-            "created_at": (now - timedelta(days=days_ago + random.randint(5, 20))).isoformat(),
-            "updated_at": (now - timedelta(days=days_ago)).isoformat(),
-            "is_demo": True,
-        }
-        threads.append(thread)
-    
-    if threads:
-        await db.email_threads.insert_many(threads)
 
 
 @router.get("/accounts")

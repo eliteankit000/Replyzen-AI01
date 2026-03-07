@@ -63,11 +63,12 @@ export const followupAPI = {
 
 // Billing
 export const billingAPI = {
-  getPlans: () => api.get("/billing/plans"),
+  getPlans: (currency) => api.get("/billing/plans", { params: currency ? { currency } : {} }),
   getPlanLimits: () => api.get("/billing/plan-limits"),
   createCheckout: (data) => api.post("/billing/checkout", data),
   getSubscription: () => api.get("/billing/subscription"),
   cancelSubscription: () => api.post("/billing/cancel"),
+  detectLocation: () => api.get("/billing/detect-location"),
 };
 
 // Analytics

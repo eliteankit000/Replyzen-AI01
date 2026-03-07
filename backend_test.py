@@ -1,284 +1,547 @@
-import requests
-import sys
-from datetime import datetime
+#!/usr/bin/env python3
+"""
+Backend API Testing for Replyzen AI
+Tests all critical backend endpoints as specified in the test request.
+"""
+
+import asyncio
+import aiohttp
 import json
+import hmac
+import hashlib
+import uuid
+from datetime import datetime, timezone
+import os
+from pathlib import Path
+
+# Load environment to get backend URL
+backend_dir = Path(__file__).parent / "backend"
+if (backend_dir / ".env").exists():
+    with open(backend_dir / ".env") as f:
+        for line in f:
+            if line.strip() and not line.startswith("#"):
+                key, value = line.strip().split("=", 1)
+                os.environ[key] = value.strip('"')
+
+# Get backend URL from frontend/.env
+frontend_env = Path(__file__).parent / "frontend" / ".env"
+BACKEND_URL = "http://localhost:8001"  # Default fallback
+if frontend_env.exists():
+    with open(frontend_env) as f:
+        for line in f:
+            if line.strip() and line.startswith("REACT_APP_BACKEND_URL"):
+                BACKEND_URL = line.split("=", 1)[1].strip()
+                break
+
+print(f"🔗 Backend URL: {BACKEND_URL}")
 
 class ReplyzenAPITester:
-    def __init__(self, base_url="https://replyzen-auto-send.preview.emergentagent.com"):
-        self.base_url = base_url
-        self.token = None
-        self.user_id = None
-        self.tests_run = 0
-        self.tests_passed = 0
-        self.failed_tests = []
-        self.passed_tests = []
-
-    def run_test(self, name, method, endpoint, expected_status, data=None, headers=None):
-        """Run a single API test"""
-        url = f"{self.base_url}/api/{endpoint}" if not endpoint.startswith('http') else endpoint
-        req_headers = {'Content-Type': 'application/json'}
-        if self.token:
-            req_headers['Authorization'] = f'Bearer {self.token}'
-        if headers:
-            req_headers.update(headers)
-
-        self.tests_run += 1
-        print(f"\n🔍 Testing {name}...")
-        print(f"   URL: {url}")
+    def __init__(self):
+        self.base_url = BACKEND_URL
+        self.auth_token = None
+        self.session = None
+        self.test_results = []
         
-        try:
-            if method == 'GET':
-                response = requests.get(url, headers=req_headers, timeout=30)
-            elif method == 'POST':
-                response = requests.post(url, json=data, headers=req_headers, timeout=30)
-            elif method == 'PUT':
-                response = requests.put(url, json=data, headers=req_headers, timeout=30)
-
-            success = response.status_code == expected_status
-            if success:
-                self.tests_passed += 1
-                self.passed_tests.append(name)
-                print(f"✅ Passed - Status: {response.status_code}")
-                try:
-                    return True, response.json()
-                except:
-                    return True, response.text
-            else:
-                self.failed_tests.append({
-                    "test": name,
-                    "expected": expected_status,
-                    "actual": response.status_code,
-                    "response": response.text[:200]
-                })
-                print(f"❌ Failed - Expected {expected_status}, got {response.status_code}")
-                print(f"   Response: {response.text[:200]}")
-                return False, {}
-
-        except Exception as e:
-            self.failed_tests.append({
-                "test": name,
-                "error": str(e)
-            })
-            print(f"❌ Failed - Error: {str(e)}")
-            return False, {}
-
-    def test_login(self):
-        """Test login with test user"""
-        success, response = self.run_test(
-            "User Login",
-            "POST",
-            "auth/login",
-            200,
-            data={"email": "test@replyzen.com", "password": "testpass123"}
-        )
-        if success:
-            print(f"   Login response: {response}")
-            # Check for different possible token field names
-            token_key = None
-            for key in ['access_token', 'token', 'jwt', 'auth_token']:
-                if key in response:
-                    token_key = key
-                    break
+    async def __aenter__(self):
+        self.session = aiohttp.ClientSession()
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.session:
+            await self.session.close()
             
-            if token_key:
-                self.token = response[token_key]
-                self.user_id = response.get('user_id', 'test_user_id')
-                print(f"   Logged in as: {response.get('email')}, Plan: {response.get('plan', 'free')}")
-                return True
-            else:
-                print(f"   ⚠️  No token found in response. Keys: {list(response.keys())}")
-        return False
-
-    def test_plan_limits(self):
-        """Test GET /api/billing/plan-limits returns correct limits for free user"""
-        success, response = self.run_test(
-            "Get Plan Limits",
-            "GET", 
-            "billing/plan-limits",
-            200
+    def log_result(self, test_name, success, details="", response_data=None):
+        """Log test result with details."""
+        status = "✅ PASS" if success else "❌ FAIL"
+        print(f"{status} {test_name}")
+        if details:
+            print(f"   📝 {details}")
+        if response_data and not success:
+            print(f"   📄 Response: {response_data}")
+        
+        self.test_results.append({
+            "test": test_name,
+            "success": success,
+            "details": details,
+            "response": response_data
+        })
+        
+    async def make_request(self, method, endpoint, **kwargs):
+        """Make HTTP request with proper headers."""
+        url = f"{self.base_url}{endpoint}"
+        headers = kwargs.pop("headers", {})
+        
+        if self.auth_token:
+            headers["Authorization"] = f"Bearer {self.auth_token}"
+            
+        try:
+            async with self.session.request(method, url, headers=headers, **kwargs) as resp:
+                try:
+                    data = await resp.json()
+                except:
+                    data = await resp.text()
+                return resp.status, data
+        except Exception as e:
+            return 0, str(e)
+            
+    async def test_health_check(self):
+        """Test GET /api/health"""
+        status, data = await self.make_request("GET", "/api/health")
+        
+        success = (
+            status == 200 and 
+            isinstance(data, dict) and 
+            data.get("status") == "ok" and
+            "replyzen" in data.get("service", "").lower()
         )
+        
+        details = f"Status: {status}"
         if success:
-            expected = {
-                "plan": "free",
-                "followups_per_month": 30,
-                "max_email_accounts": 1,
-                "auto_send": False,
-                "analytics": False,
-                "ai_tones": ["professional"]
-            }
-            for key, expected_val in expected.items():
-                if response.get(key) != expected_val:
-                    print(f"   ⚠️  {key}: expected {expected_val}, got {response.get(key)}")
+            details += f", Service: {data.get('service')}, Version: {data.get('version')}"
+        
+        self.log_result("Health Check", success, details, data if not success else None)
         return success
-
-    def test_email_account_limit(self):
-        """Test free user cannot connect more than 1 email account"""
-        # First, connect one email (should succeed)
-        success1, _ = self.run_test(
-            "Connect First Gmail Account",
-            "POST",
-            "emails/connect-gmail",
-            200,
-            data={"email": "test1@gmail.com"}
+        
+    async def test_config_status(self):
+        """Test GET /api/config-status"""
+        status, data = await self.make_request("GET", "/api/config-status")
+        
+        success = status == 200 and isinstance(data, dict)
+        all_100_percent = True
+        group_details = []
+        
+        if success:
+            for group, info in data.items():
+                percentage = info.get("percentage", 0)
+                group_details.append(f"{group}: {percentage}%")
+                if percentage < 100:
+                    all_100_percent = False
+        
+        details = f"Status: {status}"
+        if success:
+            details += f", Groups: {', '.join(group_details)}"
+            if not all_100_percent:
+                details += " (Some groups not 100%)"
+        
+        self.log_result("Config Status", success, details, data if not success else None)
+        return success and all_100_percent
+        
+    async def test_location_detection(self):
+        """Test GET /api/billing/detect-location"""
+        status, data = await self.make_request("GET", "/api/billing/detect-location")
+        
+        success = (
+            status == 200 and 
+            isinstance(data, dict) and
+            "country" in data and
+            "currency" in data and
+            "payment_provider" in data and
+            data.get("currency") in ["USD", "INR"] and
+            data.get("payment_provider") in ["razorpay", "paddle"]
         )
         
-        # Try to connect second email (should fail with 403)
-        success2, response2 = self.run_test(
-            "Connect Second Gmail Account (Should Fail)",
-            "POST", 
-            "emails/connect-gmail",
-            403,
-            data={"email": "test2@gmail.com"}
+        details = f"Status: {status}"
+        if success:
+            details += f", Country: {data.get('country')}, Currency: {data.get('currency')}, Provider: {data.get('payment_provider')}"
+        
+        self.log_result("Location Detection", success, details, data if not success else None)
+        return success
+        
+    async def test_plans_usd(self):
+        """Test GET /api/billing/plans?currency=USD"""
+        status, data = await self.make_request("GET", "/api/billing/plans?currency=USD")
+        
+        success = status == 200 and isinstance(data, list) and len(data) >= 3
+        pro_plan = None
+        business_plan = None
+        
+        if success:
+            for plan in data:
+                if plan.get("id") == "pro":
+                    pro_plan = plan
+                elif plan.get("id") == "business":
+                    business_plan = plan
+                    
+            success = (
+                pro_plan and business_plan and
+                pro_plan.get("price_monthly") == 19 and
+                pro_plan.get("price_yearly") == 190 and
+                business_plan.get("price_monthly") == 49 and
+                business_plan.get("price_yearly") == 490 and
+                pro_plan.get("currency") == "USD" and
+                pro_plan.get("currency_symbol") == "$"
+            )
+        
+        details = f"Status: {status}"
+        if success and pro_plan and business_plan:
+            details += f", Pro: ${pro_plan.get('price_monthly')}/${pro_plan.get('price_yearly')}, Business: ${business_plan.get('price_monthly')}/${business_plan.get('price_yearly')}"
+        
+        self.log_result("Plans with USD", success, details, data if not success else None)
+        return success
+        
+    async def test_plans_inr(self):
+        """Test GET /api/billing/plans?currency=INR"""
+        status, data = await self.make_request("GET", "/api/billing/plans?currency=INR")
+        
+        success = status == 200 and isinstance(data, list) and len(data) >= 3
+        pro_plan = None
+        business_plan = None
+        
+        if success:
+            for plan in data:
+                if plan.get("id") == "pro":
+                    pro_plan = plan
+                elif plan.get("id") == "business":
+                    business_plan = plan
+                    
+            success = (
+                pro_plan and business_plan and
+                pro_plan.get("price_monthly") == 1599 and
+                pro_plan.get("price_yearly") == 15990 and
+                business_plan.get("price_monthly") == 3999 and
+                business_plan.get("price_yearly") == 39990 and
+                pro_plan.get("currency") == "INR" and
+                pro_plan.get("currency_symbol") == "₹"
+            )
+        
+        details = f"Status: {status}"
+        if success and pro_plan and business_plan:
+            details += f", Pro: ₹{pro_plan.get('price_monthly')}/₹{pro_plan.get('price_yearly')}, Business: ₹{business_plan.get('price_monthly')}/₹{business_plan.get('price_yearly')}"
+        
+        self.log_result("Plans with INR", success, details, data if not success else None)
+        return success
+        
+    async def test_plans_default(self):
+        """Test GET /api/billing/plans (default currency)"""
+        status, data = await self.make_request("GET", "/api/billing/plans")
+        
+        success = status == 200 and isinstance(data, list) and len(data) >= 3
+        pro_plan = None
+        
+        if success:
+            for plan in data:
+                if plan.get("id") == "pro":
+                    pro_plan = plan
+                    break
+                    
+            success = (
+                pro_plan and
+                pro_plan.get("currency") == "USD" and
+                pro_plan.get("price_monthly") == 19
+            )
+        
+        details = f"Status: {status}"
+        if success and pro_plan:
+            details += f", Default currency: {pro_plan.get('currency')}, Pro: ${pro_plan.get('price_monthly')}"
+        
+        self.log_result("Plans Default (USD)", success, details, data if not success else None)
+        return success
+        
+    async def test_auth_register(self):
+        """Test POST /api/auth/register"""
+        # Generate unique email for test
+        test_email = f"test{uuid.uuid4().hex[:8]}@replyzentest.com"
+        
+        payload = {
+            "email": test_email,
+            "password": "test123456",
+            "full_name": "Test User Replyzen"
+        }
+        
+        status, data = await self.make_request("POST", "/api/auth/register", json=payload)
+        
+        success = (
+            status == 200 and
+            isinstance(data, dict) and
+            "token" in data and
+            "user" in data and
+            data["user"]["email"] == test_email and
+            data["user"]["plan"] == "free"
         )
         
-        return success1 and success2
-
-    def test_followup_generation_limits(self):
-        """Test followup generation and tone restrictions"""
-        # First get silent threads
-        success, threads_response = self.run_test(
-            "Get Silent Threads",
-            "GET",
-            "emails/threads/silent?limit=5",
-            200
-        )
+        if success:
+            self.auth_token = data["token"]
+            
+        details = f"Status: {status}"
+        if success:
+            details += f", User ID: {data['user']['id']}, Plan: {data['user']['plan']}"
         
-        if not success or not threads_response.get('threads'):
-            print("   ⚠️  No threads available for followup generation test")
+        self.log_result("Auth Register", success, details, data if not success else None)
+        return success
+        
+    async def test_auth_login(self):
+        """Test POST /api/auth/login"""
+        # Use the same email from registration
+        if not self.auth_token:
+            self.log_result("Auth Login", False, "No auth token from registration", None)
             return False
             
-        thread_id = threads_response['threads'][0]['id']
+        # Test with invalid credentials first
+        payload = {
+            "email": "nonexistent@test.com",
+            "password": "wrongpassword"
+        }
         
-        # Test professional tone (should work)
-        success1, _ = self.run_test(
-            "Generate Followup - Professional Tone",
-            "POST",
-            "followups/generate", 
-            200,
-            data={"thread_id": thread_id, "tone": "professional"}
-        )
+        status, data = await self.make_request("POST", "/api/auth/login", json=payload)
         
-        # Test casual tone (should fail for free user)
-        success2, _ = self.run_test(
-            "Generate Followup - Casual Tone (Should Fail)",
-            "POST",
-            "followups/generate",
-            403,
-            data={"thread_id": thread_id, "tone": "casual"}
-        )
+        # Should fail with 401
+        login_security_works = status == 401
         
-        # Test friendly tone (should fail for free user) 
-        success3, _ = self.run_test(
-            "Generate Followup - Friendly Tone (Should Fail)",
-            "POST",
-            "followups/generate",
-            403,
-            data={"thread_id": thread_id, "tone": "friendly"}
-        )
+        details = f"Status: {status}, Login security: {'✓' if login_security_works else '✗'}"
+        self.log_result("Auth Login Security", login_security_works, details, None)
         
-        return success1 and success2 and success3
-
-    def test_auto_send_restriction(self):
-        """Test free user cannot enable auto-send"""
-        success, _ = self.run_test(
-            "Enable Auto-Send (Should Fail)",
-            "PUT",
-            "settings",
-            403,
-            data={"auto_send": True}
-        )
-        return success
-
-    def test_analytics_restriction(self):
-        """Test free user cannot access analytics charts"""
-        success, _ = self.run_test(
-            "Get Analytics Charts (Should Fail)", 
-            "GET",
-            "analytics/followups-over-time?days=30",
-            403
-        )
-        return success
-
-    def test_billing_plans(self):
-        """Test billing plans API returns correct plan data"""
-        success, response = self.run_test(
-            "Get Billing Plans",
-            "GET",
-            "billing/plans", 
-            200
-        )
-        if success:
-            plans = response
-            expected_plans = ["free", "pro", "business"]
-            found_plans = [p.get("id") for p in plans if p.get("id")]
-            for plan_id in expected_plans:
-                if plan_id not in found_plans:
-                    print(f"   ⚠️  Missing plan: {plan_id}")
-                    return False
+        return login_security_works
+        
+    async def test_plan_limits(self):
+        """Test GET /api/billing/plan-limits (requires auth)"""
+        if not self.auth_token:
+            self.log_result("Plan Limits", False, "No auth token available", None)
+            return False
             
-            # Check Pro plan features
-            pro_plan = next((p for p in plans if p.get("id") == "pro"), None)
-            if pro_plan:
-                expected_pro = {
-                    "followup_limit": 2500,
-                    "account_limit": 3,
-                    "price_monthly": 19
-                }
-                for key, expected_val in expected_pro.items():
-                    if pro_plan.get(key) != expected_val:
-                        print(f"   ⚠️  Pro plan {key}: expected {expected_val}, got {pro_plan.get(key)}")
+        status, data = await self.make_request("GET", "/api/billing/plan-limits")
         
+        success = (
+            status == 200 and
+            isinstance(data, dict) and
+            "plan" in data and
+            "followups_per_month" in data and
+            "max_email_accounts" in data and
+            data.get("plan") == "free"
+        )
+        
+        details = f"Status: {status}"
+        if success:
+            details += f", Plan: {data.get('plan')}, Followups: {data.get('followups_per_month')}, Accounts: {data.get('max_email_accounts')}"
+        
+        self.log_result("Plan Limits", success, details, data if not success else None)
         return success
+        
+    async def test_checkout_razorpay(self):
+        """Test POST /api/billing/checkout (Razorpay)"""
+        if not self.auth_token:
+            self.log_result("Checkout Razorpay", False, "No auth token available", None)
+            return False
+            
+        payload = {
+            "plan_id": "pro",
+            "billing_cycle": "monthly",
+            "provider": "razorpay"
+        }
+        
+        status, data = await self.make_request("POST", "/api/billing/checkout", json=payload)
+        
+        success = (
+            status == 200 and
+            isinstance(data, dict) and
+            data.get("provider") == "razorpay" and
+            "subscription_id" in data and
+            "key_id" in data
+        )
+        
+        details = f"Status: {status}"
+        if success:
+            details += f", Provider: {data.get('provider')}, Has subscription_id: {'✓' if data.get('subscription_id') else '✗'}"
+        
+        self.log_result("Checkout Razorpay", success, details, data if not success else None)
+        return success
+        
+    async def test_checkout_paddle(self):
+        """Test POST /api/billing/checkout (Paddle)"""
+        if not self.auth_token:
+            self.log_result("Checkout Paddle", False, "No auth token available", None)
+            return False
+            
+        payload = {
+            "plan_id": "pro",
+            "billing_cycle": "monthly",
+            "provider": "paddle"
+        }
+        
+        status, data = await self.make_request("POST", "/api/billing/checkout", json=payload)
+        
+        success = (
+            status == 200 and
+            isinstance(data, dict) and
+            data.get("provider") == "paddle" and
+            "price_id" in data and
+            "vendor_id" in data
+        )
+        
+        details = f"Status: {status}"
+        if success:
+            details += f", Provider: {data.get('provider')}, Has price_id: {'✓' if data.get('price_id') else '✗'}"
+        
+        self.log_result("Checkout Paddle", success, details, data if not success else None)
+        return success
+        
+    async def test_razorpay_webhook(self):
+        """Test POST /api/billing/webhook/razorpay"""
+        # Sample Razorpay webhook payload
+        payload = {
+            "event": "subscription.activated",
+            "payload": {
+                "subscription": {
+                    "entity": {
+                        "id": f"sub_test_{uuid.uuid4().hex[:8]}",
+                        "notes": {
+                            "user_id": "test-user-123",
+                            "plan": "pro"
+                        }
+                    }
+                }
+            }
+        }
+        
+        # Create signature if webhook secret is available
+        webhook_secret = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "")
+        headers = {}
+        
+        if webhook_secret:
+            body = json.dumps(payload).encode()
+            signature = hmac.new(
+                webhook_secret.encode(), 
+                body, 
+                hashlib.sha256
+            ).hexdigest()
+            headers["X-Razorpay-Signature"] = signature
+        
+        status, data = await self.make_request(
+            "POST", 
+            "/api/billing/webhook/razorpay", 
+            json=payload,
+            headers=headers
+        )
+        
+        success = status == 200 and isinstance(data, dict) and data.get("status") == "ok"
+        
+        details = f"Status: {status}, Has webhook secret: {'✓' if webhook_secret else '✗'}"
+        
+        self.log_result("Razorpay Webhook", success, details, data if not success else None)
+        return success
+        
+    async def test_paddle_webhook(self):
+        """Test POST /api/billing/webhook/paddle"""
+        # Sample Paddle webhook payload
+        payload = {
+            "event_type": "subscription.activated",
+            "data": {
+                "id": f"sub_paddle_{uuid.uuid4().hex[:8]}",
+                "custom_data": {
+                    "user_id": "test-user-456",
+                    "plan": "business"
+                }
+            }
+        }
+        
+        # Create signature if webhook secret is available
+        webhook_secret = os.environ.get("PADDLE_WEBHOOK_SECRET", "")
+        headers = {}
+        
+        if webhook_secret:
+            body = json.dumps(payload)
+            ts = str(int(datetime.now(timezone.utc).timestamp()))
+            signed_payload = f"{ts}:{body}"
+            signature = hmac.new(
+                webhook_secret.encode(),
+                signed_payload.encode(),
+                hashlib.sha256
+            ).hexdigest()
+            headers["Paddle-Signature"] = f"ts={ts};h1={signature}"
+        
+        status, data = await self.make_request(
+            "POST", 
+            "/api/billing/webhook/paddle", 
+            json=payload,
+            headers=headers
+        )
+        
+        success = status == 200 and isinstance(data, dict) and data.get("status") == "ok"
+        
+        details = f"Status: {status}, Has webhook secret: {'✓' if webhook_secret else '✗'}"
+        
+        self.log_result("Paddle Webhook", success, details, data if not success else None)
+        return success
+        
+    async def test_gmail_auth_url(self):
+        """Test GET /api/emails/gmail/auth-url (requires auth)"""
+        if not self.auth_token:
+            self.log_result("Gmail Auth URL", False, "No auth token available", None)
+            return False
+            
+        status, data = await self.make_request("GET", "/api/emails/gmail/auth-url")
+        
+        success = (
+            status == 200 and
+            isinstance(data, dict) and
+            "auth_url" in data and
+            "accounts.google.com" in data.get("auth_url", "")
+        )
+        
+        details = f"Status: {status}"
+        if success:
+            details += f", Has OAuth URL: ✓"
+        
+        self.log_result("Gmail Auth URL", success, details, data if not success else None)
+        return success
+        
+    async def run_all_tests(self):
+        """Run all backend API tests."""
+        print("🚀 Starting Replyzen AI Backend API Tests\n")
+        
+        tests = [
+            ("Health Check", self.test_health_check),
+            ("Config Status", self.test_config_status),
+            ("Location Detection", self.test_location_detection),
+            ("Plans USD", self.test_plans_usd),
+            ("Plans INR", self.test_plans_inr),
+            ("Plans Default", self.test_plans_default),
+            ("Auth Register", self.test_auth_register),
+            ("Auth Login", self.test_auth_login),
+            ("Plan Limits", self.test_plan_limits),
+            ("Checkout Razorpay", self.test_checkout_razorpay),
+            ("Checkout Paddle", self.test_checkout_paddle),
+            ("Razorpay Webhook", self.test_razorpay_webhook),
+            ("Paddle Webhook", self.test_paddle_webhook),
+            ("Gmail Auth URL", self.test_gmail_auth_url),
+        ]
+        
+        for test_name, test_func in tests:
+            try:
+                await test_func()
+            except Exception as e:
+                self.log_result(test_name, False, f"Exception: {str(e)}", None)
+            print()  # Add spacing between tests
+            
+        # Summary
+        passed = sum(1 for result in self.test_results if result["success"])
+        total = len(self.test_results)
+        
+        print("=" * 60)
+        print(f"📊 TEST SUMMARY: {passed}/{total} tests passed")
+        print("=" * 60)
+        
+        # Show failed tests
+        failed_tests = [r for r in self.test_results if not r["success"]]
+        if failed_tests:
+            print("\n❌ FAILED TESTS:")
+            for result in failed_tests:
+                print(f"   • {result['test']}: {result['details']}")
+                if result.get('response'):
+                    print(f"     Response: {result['response']}")
+        else:
+            print("\n🎉 All tests passed!")
+            
+        return passed, total, failed_tests
 
-def main():
-    print("🚀 Starting Replyzen API Tests...")
-    tester = ReplyzenAPITester()
-    
-    # Login first
-    if not tester.test_login():
-        print("❌ Login failed, cannot continue tests")
-        return 1
-
-    # Run all plan enforcement tests  
-    tests = [
-        tester.test_plan_limits,
-        tester.test_billing_plans,
-        tester.test_email_account_limit,
-        tester.test_followup_generation_limits,
-        tester.test_auto_send_restriction,
-        tester.test_analytics_restriction,
-    ]
-
-    for test_func in tests:
-        try:
-            test_func()
-        except Exception as e:
-            tester.failed_tests.append({
-                "test": test_func.__name__,
-                "error": str(e)
-            })
-            print(f"❌ {test_func.__name__} failed with exception: {e}")
-
-    # Print results
-    print(f"\n📊 Test Results:")
-    print(f"   Tests run: {tester.tests_run}")
-    print(f"   Tests passed: {tester.tests_passed}")
-    print(f"   Tests failed: {len(tester.failed_tests)}")
-    
-    if tester.failed_tests:
-        print(f"\n❌ Failed Tests:")
-        for fail in tester.failed_tests:
-            print(f"   - {fail.get('test', 'Unknown')}: {fail.get('error', fail.get('response', 'Unknown error'))}")
-    
-    if tester.passed_tests:
-        print(f"\n✅ Passed Tests:")
-        for test in tester.passed_tests:
-            print(f"   - {test}")
-
-    success_rate = (tester.tests_passed / tester.tests_run * 100) if tester.tests_run > 0 else 0
-    print(f"\n📈 Success Rate: {success_rate:.1f}%")
-    
-    return 0 if success_rate > 80 else 1
+async def main():
+    """Main test runner."""
+    async with ReplyzenAPITester() as tester:
+        passed, total, failed = await tester.run_all_tests()
+        
+        if failed:
+            exit(1)  # Exit with error code if tests failed
+        else:
+            exit(0)  # Success
 
 if __name__ == "__main__":
-    sys.exit(main())
+    asyncio.run(main())

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -6,6 +6,8 @@ import {
   Mail, Zap, BarChart3, Clock, ArrowRight, Check,
   MessageSquare, Send, Shield, ChevronRight
 } from "lucide-react";
+
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
 const NAV_LINKS = [
   { label: "Features", href: "#features" },
@@ -43,65 +45,89 @@ const STEPS = [
   { num: "04", title: "Send & Track", desc: "Review, edit, and send. Track responses and optimize your follow-up game." },
 ];
 
-const PLANS = [
-  {
-    name: "Free",
-    price: "$0",
-    period: "forever",
-    desc: "Get started",
-    features: [
-      "30 follow-ups per month",
-      "1 email account connection",
-      "Basic AI follow-up drafts",
-      "Manual follow-up sending",
-      "Inbox scan for silent conversations",
-      "Follow-up queue dashboard",
-      "Basic settings",
-    ],
-    cta: "Start Free",
-    popular: false,
-  },
-  {
-    name: "Pro",
-    price: "$19",
-    period: "/month",
-    desc: "For professionals",
-    features: [
-      "2,500 follow-ups per month",
-      "Connect up to 3 email accounts",
-      "Advanced AI tones",
-      "Manual sending",
-      "Auto-send automation",
-      "Analytics dashboard",
-      "Inbox scanning",
-      "Follow-up detection",
-      "Priority support",
-    ],
-    cta: "Get Pro",
-    popular: true,
-  },
-  {
-    name: "Business",
-    price: "$49",
-    period: "/month",
-    desc: "For teams",
-    features: [
-      "Unlimited follow-ups",
-      "Connect up to 10 email accounts",
-      "All AI tones",
-      "Manual sending",
-      "Auto-send automation",
-      "Inbox scanning",
-      "Follow-up detection",
-      "Dedicated support",
-    ],
-    cta: "Get Business",
-    popular: false,
-  },
-];
+function getPricingPlans(currency) {
+  const isINR = currency === "INR";
+  const sym = isINR ? "₹" : "$";
+
+  return [
+    {
+      name: "Free",
+      price: `${sym}0`,
+      period: "forever",
+      desc: "Get started",
+      features: [
+        "30 follow-ups per month",
+        "1 email account connection",
+        "Basic AI follow-up drafts",
+        "Manual follow-up sending",
+        "Inbox scan for silent conversations",
+        "Follow-up queue dashboard",
+        "Basic settings",
+      ],
+      cta: "Start Free",
+      popular: false,
+    },
+    {
+      name: "Pro",
+      price: isINR ? `${sym}1599` : `${sym}19`,
+      period: "/month",
+      desc: "For professionals",
+      features: [
+        "2,500 follow-ups per month",
+        "Connect up to 3 email accounts",
+        "Advanced AI tones",
+        "Manual sending",
+        "Auto-send automation",
+        "Analytics dashboard",
+        "Inbox scanning",
+        "Follow-up detection",
+        "Priority support",
+      ],
+      cta: "Get Pro",
+      popular: true,
+    },
+    {
+      name: "Business",
+      price: isINR ? `${sym}3999` : `${sym}49`,
+      period: "/month",
+      desc: "For teams",
+      features: [
+        "Unlimited follow-ups",
+        "Connect up to 10 email accounts",
+        "All AI tones",
+        "Manual sending",
+        "Auto-send automation",
+        "Inbox scanning",
+        "Follow-up detection",
+        "Dedicated support",
+      ],
+      cta: "Get Business",
+      popular: false,
+    },
+  ];
+}
 
 export default function LandingPage() {
   const navigate = useNavigate();
+  const [currency, setCurrency] = useState("USD");
+
+  useEffect(() => {
+    // Detect location for pricing
+    async function detectLocation() {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/billing/detect-location`);
+        if (res.ok) {
+          const data = await res.json();
+          setCurrency(data.currency || "USD");
+        }
+      } catch (e) {
+        // Default to USD on error
+      }
+    }
+    detectLocation();
+  }, []);
+
+  const PLANS = getPricingPlans(currency);
 
   return (
     <div className="min-h-screen bg-background">
@@ -205,6 +231,9 @@ export default function LandingPage() {
           <div className="text-center mb-16">
             <h2 className="text-base md:text-lg font-semibold text-primary mb-2">Pricing</h2>
             <p className="text-2xl sm:text-3xl font-bold">Simple, transparent pricing</p>
+            <p className="text-sm text-muted-foreground mt-2">
+              Prices shown in {currency === "INR" ? "₹ INR" : "$ USD"}
+            </p>
           </div>
           <div className="grid md:grid-cols-3 gap-6">
             {PLANS.map((p) => (
