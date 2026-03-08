@@ -1,9 +1,11 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
-from database import db
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from database import get_db
 from auth import get_current_user
 from services.openai_service import generate_followup_draft
-from plan_permissions import check_followup_limit, get_user_plan, check_tone_allowed
+from plan_permissions import check_followup_limit, check_tone_allowed
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -24,78 +26,122 @@ class UpdateDraftRequest(BaseModel):
 
 
 @router.post("/generate")
-async def generate_followup(req: GenerateRequest, current_user: dict = Depends(get_current_user)):
+async def generate_followup(
+    req: GenerateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     user_id = current_user["user_id"]
 
-    # Plan limit check: followup quota
-    limit_check = await check_followup_limit(user_id)
+    # Plan quota check
+    limit_check = await check_followup_limit(user_id, db)
+
     if not limit_check["allowed"]:
         raise HTTPException(
             status_code=403,
-            detail=f"You have reached your monthly follow-up limit ({limit_check['limit']}). Upgrade your plan to continue."
+            detail=f"You have reached your monthly follow-up limit ({limit_check['limit']})."
         )
 
-    # Plan limit check: tone
     plan = limit_check["plan"]
+
     if not check_tone_allowed(plan, req.tone):
         raise HTTPException(
             status_code=403,
-            detail=f"The '{req.tone}' tone is not available on your current plan. Upgrade to Pro or Business to unlock advanced tones."
+            detail=f"Tone '{req.tone}' not available on your plan."
         )
 
-    thread = await db.email_threads.find_one(
-        {"id": req.thread_id, "user_id": user_id}, {"_id": 0}
+    # Get thread
+    result = await db.execute(
+        text("SELECT * FROM email_threads WHERE id=:id AND user_id=:uid"),
+        {"id": req.thread_id, "uid": user_id},
     )
+
+    thread = result.fetchone()
+
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found")
 
-    # Check for existing pending followup
-    existing = await db.followup_suggestions.find_one(
-        {"thread_id": req.thread_id, "user_id": user_id, "status": "pending"},
-        {"_id": 0}
+    thread = dict(thread._mapping)
+
+    # Check existing pending followup
+    result = await db.execute(
+        text("""
+        SELECT * FROM followup_suggestions
+        WHERE thread_id=:tid AND user_id=:uid AND status='pending'
+        """),
+        {"tid": req.thread_id, "uid": user_id},
     )
+
+    existing = result.fetchone()
+
     if existing:
-        return existing
+        return dict(existing._mapping)
 
     try:
         draft = await generate_followup_draft(
             subject=thread.get("subject", ""),
             snippet=thread.get("snippet", ""),
             days_silent=thread.get("days_silent", 1),
-            tone=req.tone
+            tone=req.tone,
         )
     except Exception as e:
         logger.error(f"AI generation failed: {e}")
-        draft = f"Hi,\n\nI wanted to follow up on our conversation about \"{thread.get('subject', 'our discussion')}\".\n\nLooking forward to hearing from you.\n\nBest regards"
+        draft = f"Hi,\n\nFollowing up regarding \"{thread.get('subject','our discussion')}\".\n\nBest regards"
 
     followup_id = str(uuid.uuid4())
-    followup = {
-        "id": followup_id,
-        "thread_id": req.thread_id,
-        "user_id": user_id,
-        "original_subject": thread.get("subject", ""),
-        "original_snippet": thread.get("snippet", ""),
-        "recipient": next((p for p in thread.get("participants", []) if p != current_user.get("email", "")), ""),
-        "recipient_name": thread.get("participant_names", [""])[0] if thread.get("participant_names") else "",
-        "ai_draft": draft,
-        "tone": req.tone,
-        "days_silent": thread.get("days_silent", 0),
-        "status": "pending",
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "sent_at": None,
-    }
-    await db.followup_suggestions.insert_one(followup)
 
-    # Track usage
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    await db.usage_tracking.update_one(
-        {"user_id": user_id, "date": today},
-        {"$inc": {"followups_generated": 1}, "$setOnInsert": {"followups_sent": 0, "emails_scanned": 0}},
-        upsert=True
+    recipient = ""
+    participants = thread.get("participants", [])
+    if participants:
+        recipient = participants[0]
+
+    now = datetime.now(timezone.utc)
+
+    await db.execute(
+        text("""
+        INSERT INTO followup_suggestions
+        (id,thread_id,user_id,original_subject,original_snippet,recipient,
+        recipient_name,ai_draft,tone,days_silent,status,created_at)
+        VALUES
+        (:id,:thread_id,:user_id,:subject,:snippet,:recipient,
+        :recipient_name,:draft,:tone,:days_silent,'pending',:created)
+        """),
+        {
+            "id": followup_id,
+            "thread_id": req.thread_id,
+            "user_id": user_id,
+            "subject": thread.get("subject"),
+            "snippet": thread.get("snippet"),
+            "recipient": recipient,
+            "recipient_name": "",
+            "draft": draft,
+            "tone": req.tone,
+            "days_silent": thread.get("days_silent", 0),
+            "created": now,
+        },
     )
 
-    result = {k: v for k, v in followup.items() if k != "_id"}
-    return result
+    # Usage tracking
+    today = now.date()
+
+    await db.execute(
+        text("""
+        INSERT INTO usage_tracking (user_id,date,followups_generated,followups_sent,emails_scanned)
+        VALUES (:uid,:date,1,0,0)
+        ON CONFLICT (user_id,date)
+        DO UPDATE SET followups_generated = usage_tracking.followups_generated + 1
+        """),
+        {"uid": user_id, "date": today},
+    )
+
+    await db.commit()
+
+    return {
+        "id": followup_id,
+        "thread_id": req.thread_id,
+        "ai_draft": draft,
+        "status": "pending",
+    }
 
 
 @router.get("")
@@ -103,71 +149,88 @@ async def list_followups(
     status: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    query = {"user_id": current_user["user_id"]}
+
+    query = """
+    SELECT * FROM followup_suggestions
+    WHERE user_id=:uid
+    """
+
+    params = {"uid": current_user["user_id"], "limit": limit, "offset": offset}
+
     if status:
-        query["status"] = status
+        query += " AND status=:status"
+        params["status"] = status
 
-    followups = await db.followup_suggestions.find(
-        query, {"_id": 0}
-    ).sort("created_at", -1).skip(offset).limit(limit).to_list(limit)
+    query += " ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
 
-    total = await db.followup_suggestions.count_documents(query)
+    result = await db.execute(text(query), params)
+
+    followups = [dict(r._mapping) for r in result]
+
+    count_result = await db.execute(
+        text("SELECT COUNT(*) FROM followup_suggestions WHERE user_id=:uid"),
+        {"uid": current_user["user_id"]},
+    )
+
+    total = count_result.scalar()
+
     return {"followups": followups, "total": total}
 
 
 @router.put("/{followup_id}")
-async def update_followup(followup_id: str, req: UpdateDraftRequest, current_user: dict = Depends(get_current_user)):
-    result = await db.followup_suggestions.update_one(
-        {"id": followup_id, "user_id": current_user["user_id"], "status": "pending"},
-        {"$set": {"ai_draft": req.draft, "updated_at": datetime.now(timezone.utc).isoformat()}}
+async def update_followup(
+    followup_id: str,
+    req: UpdateDraftRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+
+    result = await db.execute(
+        text("""
+        UPDATE followup_suggestions
+        SET ai_draft=:draft, updated_at=:updated
+        WHERE id=:id AND user_id=:uid AND status='pending'
+        """),
+        {
+            "draft": req.draft,
+            "updated": datetime.now(timezone.utc),
+            "id": followup_id,
+            "uid": current_user["user_id"],
+        },
     )
-    if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Follow-up not found or already sent")
+
+    await db.commit()
+
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Follow-up not found")
+
     return {"message": "Draft updated"}
 
 
 @router.post("/{followup_id}/send")
-async def send_followup(followup_id: str, current_user: dict = Depends(get_current_user)):
-    user_id = current_user["user_id"]
+async def send_followup(
+    followup_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
 
-    followup = await db.followup_suggestions.find_one(
-        {"id": followup_id, "user_id": user_id, "status": "pending"}, {"_id": 0}
-    )
-    if not followup:
-        raise HTTPException(status_code=404, detail="Follow-up not found or already processed")
+    now = datetime.now(timezone.utc)
 
-    # Mark as sent (in real implementation, this would send via Gmail API)
-    now = datetime.now(timezone.utc).isoformat()
-    await db.followup_suggestions.update_one(
-        {"id": followup_id},
-        {"$set": {"status": "sent", "sent_at": now}}
-    )
-
-    # Update thread status
-    await db.email_threads.update_one(
-        {"id": followup["thread_id"]},
-        {"$set": {"is_silent": False, "last_sender": "user", "updated_at": now}}
+    result = await db.execute(
+        text("""
+        UPDATE followup_suggestions
+        SET status='sent', sent_at=:sent
+        WHERE id=:id AND user_id=:uid AND status='pending'
+        """),
+        {"id": followup_id, "uid": current_user["user_id"], "sent": now},
     )
 
-    # Track usage
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    await db.usage_tracking.update_one(
-        {"user_id": user_id, "date": today},
-        {"$inc": {"followups_sent": 1}},
-        upsert=True
-    )
+    await db.commit()
 
-    return {"message": "Follow-up sent successfully"}
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Follow-up not found")
 
-
-@router.post("/{followup_id}/dismiss")
-async def dismiss_followup(followup_id: str, current_user: dict = Depends(get_current_user)):
-    result = await db.followup_suggestions.update_one(
-        {"id": followup_id, "user_id": current_user["user_id"], "status": "pending"},
-        {"$set": {"status": "dismissed", "updated_at": datetime.now(timezone.utc).isoformat()}}
-    )
-    if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Follow-up not found or already processed")
-    return {"message": "Follow-up dismissed"}
+    return {"message": "Follow-up sent"}
