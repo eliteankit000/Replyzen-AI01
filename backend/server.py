@@ -1,4 +1,4 @@
-```python
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -163,4 +163,3 @@ async def health_check():
 @app.get("/api/config-status")
 async def config_status():
     return get_config_status()
-```
