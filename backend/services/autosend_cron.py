@@ -13,7 +13,6 @@ from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
 
-# SQLAlchemy session factory
 SessionLocal = None
 
 
@@ -127,27 +126,28 @@ async def send_followup_email(followup: dict, account: dict) -> bool:
 
         from services.gmail_service import send_email
 
-        subject = followup.get("subject", "Follow-up")
+        subject = followup.get("subject") or "Follow-up"
 
         if not subject.lower().startswith("re:"):
             subject = f"Re: {subject}"
 
+        # Gmail send
         send_email(
             encrypted_tokens={
-                "access_token_encrypted": account["access_token_encrypted"],
-                "refresh_token_encrypted": account["refresh_token_encrypted"],
-                "token_expiry": account["token_expiry"]
+                "access_token_encrypted": account.get("access_token_encrypted"),
+                "refresh_token_encrypted": account.get("refresh_token_encrypted"),
+                "token_expiry": account.get("token_expiry")
             },
-            to=followup["recipient"],
+            to=followup.get("recipient"),
             subject=subject,
-            body=followup["ai_draft"],
-            thread_id=followup["thread_id"]
+            body=followup.get("ai_draft"),
+            thread_id=followup.get("thread_id")
         )
 
         return True
 
     except Exception as e:
-        logger.error(f"Failed to send follow-up {followup['id']}: {e}")
+        logger.warning(f"Follow-up send failed ({followup.get('id')}): {e}")
         return False
 
 
@@ -168,6 +168,15 @@ async def process_auto_send_queue():
         return {"processed": 0, "sent": 0, "errors": 0}
 
     async with SessionLocal() as db:
+
+        # Early exit if no pending followups
+        pending_check = await db.execute(
+            text("SELECT COUNT(*) FROM followup_suggestions WHERE status='pending'")
+        )
+
+        if pending_check.scalar() == 0:
+            logger.info("No pending followups for auto-send")
+            return {"processed": 0, "sent": 0, "errors": 0}
 
         users = await db.execute(
             text("""
@@ -196,25 +205,28 @@ async def process_auto_send_queue():
             if daily_count >= send_window["daily_limit"]:
                 continue
 
+            remaining_limit = send_window["daily_limit"] - daily_count
+
             result = await db.execute(
                 text("""
                 SELECT *
                 FROM followup_suggestions
                 WHERE user_id = :uid
                 AND status = 'pending'
-                LIMIT :limit
                 """),
-                {
-                    "uid": user_id,
-                    "limit": send_window["daily_limit"] - daily_count
-                }
+                {"uid": user_id}
             )
 
-            followups = result.fetchall()
+            followups = result.fetchall()[:remaining_limit]
 
             for f in followups:
 
                 processed += 1
+
+                if not f.account_id:
+                    await log_auto_send(db, user_id, f.id, "error", "Missing account_id")
+                    errors += 1
+                    continue
 
                 account_result = await db.execute(
                     text("""
@@ -232,7 +244,10 @@ async def process_auto_send_queue():
                     errors += 1
                     continue
 
-                success = await send_followup_email(dict(f._mapping), dict(account._mapping))
+                success = await send_followup_email(
+                    dict(f._mapping),
+                    dict(account._mapping)
+                )
 
                 if success:
 
@@ -257,7 +272,7 @@ async def process_auto_send_queue():
 
                     errors += 1
 
-                await asyncio.sleep(2)
+                await asyncio.sleep(1)
 
         await db.commit()
 
@@ -282,6 +297,6 @@ async def run_cron_loop(interval_minutes: int = 30):
             await process_auto_send_queue()
 
         except Exception as e:
-            logger.error(f"Cron loop error: {e}")
+            logger.warning(f"Cron loop network warning: {e}")
 
         await asyncio.sleep(interval_minutes * 60)
