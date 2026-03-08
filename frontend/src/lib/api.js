@@ -5,22 +5,25 @@ import axios from "axios";
 |--------------------------------------------------------------------------
 | Backend Configuration
 |--------------------------------------------------------------------------
-| Priority:
-| 1. REACT_APP_BACKEND_URL (React)
-| 2. NEXT_PUBLIC_API_URL (Next.js / Vercel)
-| 3. Fallback to Railway backend
+| Priority order:
+| 1. REACT_APP_BACKEND_URL (React env)
+| 2. NEXT_PUBLIC_API_URL (Vercel / Next env)
+| 3. Hardcoded Railway fallback
 |--------------------------------------------------------------------------
 */
 
-const BACKEND_URL =
+const ENV_BACKEND =
   process.env.REACT_APP_BACKEND_URL ||
-  process.env.NEXT_PUBLIC_API_URL ||
-  "https://replyzen-ai01-production.up.railway.app";
+  process.env.NEXT_PUBLIC_API_URL;
 
-const API_BASE = `${BACKEND_URL}/api`;
+const BACKEND_URL =
+  ENV_BACKEND && ENV_BACKEND !== "undefined"
+    ? ENV_BACKEND
+    : "https://replyzen-ai01-production.up.railway.app";
 
-// Debug log (helps verify env variable in browser console)
-console.log("Replyzen API Base:", API_BASE);
+const API_BASE = BACKEND_URL + "/api";
+
+console.log("Replyzen API Base URL:", API_BASE);
 
 /*
 |--------------------------------------------------------------------------
@@ -31,15 +34,15 @@ console.log("Replyzen API Base:", API_BASE);
 const api = axios.create({
   baseURL: API_BASE,
   headers: {
-    "Content-Type": "application/json",
+    "Content-Type": "application/json"
   },
-  withCredentials: true,
+  withCredentials: true
 });
 
 /*
 |--------------------------------------------------------------------------
 | Request Interceptor
-| Automatically attach JWT token
+| Attach JWT token automatically
 |--------------------------------------------------------------------------
 */
 
@@ -48,7 +51,7 @@ api.interceptors.request.use(
     const token = localStorage.getItem("replyzen_token");
 
     if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+      config.headers.Authorization = "Bearer " + token;
     }
 
     return config;
@@ -59,14 +62,14 @@ api.interceptors.request.use(
 /*
 |--------------------------------------------------------------------------
 | Response Interceptor
-| Handle authentication errors globally
+| Handle auth errors globally
 |--------------------------------------------------------------------------
 */
 
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    if (error.response && error.response.status === 401) {
       localStorage.removeItem("replyzen_token");
       localStorage.removeItem("replyzen_user");
 
@@ -90,21 +93,19 @@ api.interceptors.response.use(
 
 export const authAPI = {
   register: (data) => api.post("/auth/register", data),
-
   login: (data) => api.post("/auth/login", data),
-
   getMe: () => api.get("/auth/me"),
 
   getGoogleAuthUrl: (redirectUri) =>
     api.get("/auth/google/url", {
-      params: { redirect_uri: redirectUri },
+      params: { redirect_uri: redirectUri }
     }),
 
   googleCallback: (code, redirectUri) =>
     api.post("/auth/google/callback", {
-      code,
-      redirect_uri: redirectUri,
-    }),
+      code: code,
+      redirect_uri: redirectUri
+    })
 };
 
 /*
@@ -115,7 +116,7 @@ export const authAPI = {
 
 export const emailAPI = {
   connectGmail: (email) =>
-    api.post("/emails/connect-gmail", { email }),
+    api.post("/emails/connect-gmail", { email: email }),
 
   getGmailAuthUrl: () =>
     api.get("/emails/gmail/auth-url"),
@@ -123,8 +124,8 @@ export const emailAPI = {
   gmailCallback: (code, state) =>
     api.post(
       "/emails/gmail/callback",
-      { code, state },
-      { params: { code, state } }
+      { code: code, state: state },
+      { params: { code: code, state: state } }
     ),
 
   getAccounts: () =>
@@ -134,10 +135,10 @@ export const emailAPI = {
     api.post("/emails/sync"),
 
   getThreads: (params) =>
-    api.get("/emails/threads", { params }),
+    api.get("/emails/threads", { params: params }),
 
   getSilentThreads: (params) =>
-    api.get("/emails/threads/silent", { params }),
+    api.get("/emails/threads/silent", { params: params })
 };
 
 /*
@@ -150,20 +151,20 @@ export const followupAPI = {
   generate: (threadId, tone) =>
     api.post("/followups/generate", {
       thread_id: threadId,
-      tone,
+      tone: tone
     }),
 
   list: (params) =>
-    api.get("/followups", { params }),
+    api.get("/followups", { params: params }),
 
   update: (id, draft) =>
-    api.put(`/followups/${id}`, { draft }),
+    api.put("/followups/" + id, { draft: draft }),
 
   send: (id) =>
-    api.post(`/followups/${id}/send`),
+    api.post("/followups/" + id + "/send"),
 
   dismiss: (id) =>
-    api.post(`/followups/${id}/dismiss`),
+    api.post("/followups/" + id + "/dismiss")
 };
 
 /*
@@ -175,7 +176,7 @@ export const followupAPI = {
 export const billingAPI = {
   getPlans: (currency) =>
     api.get("/billing/plans", {
-      params: currency ? { currency } : {},
+      params: currency ? { currency: currency } : {}
     }),
 
   getPlanLimits: () =>
@@ -191,7 +192,7 @@ export const billingAPI = {
     api.post("/billing/cancel"),
 
   detectLocation: () =>
-    api.get("/billing/detect-location"),
+    api.get("/billing/detect-location")
 };
 
 /*
@@ -206,11 +207,11 @@ export const analyticsAPI = {
 
   getFollowupsOverTime: (days) =>
     api.get("/analytics/followups-over-time", {
-      params: { days },
+      params: { days: days }
     }),
 
   getTopContacts: () =>
-    api.get("/analytics/top-contacts"),
+    api.get("/analytics/top-contacts")
 };
 
 /*
@@ -233,7 +234,7 @@ export const settingsAPI = {
     api.put("/settings/silence-rules", data),
 
   disconnectEmail: (id) =>
-    api.delete(`/settings/email-account/${id}`),
+    api.delete("/settings/email-account/" + id)
 };
 
 export default api;
