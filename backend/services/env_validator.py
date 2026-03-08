@@ -19,9 +19,11 @@ def validate_environment() -> Tuple[bool, List[str], List[str]]:
     
     # Critical variables - app won't work without these
     critical_vars = {
-        "MONGO_URL": "MongoDB connection string",
-        "JWT_SECRET": "JWT signing secret",
-    }
+    "SUPABASE_DB_URL": "Supabase PostgreSQL connection string",
+    "SUPABASE_URL": "Supabase project URL",
+    "SUPABASE_SERVICE_ROLE_KEY": "Supabase service role key",
+    "JWT_SECRET": "JWT signing secret",
+}
     
     # Important variables - features may not work
     important_vars = {
@@ -89,8 +91,11 @@ def get_config_status() -> Dict:
     """Get status of all configuration variables."""
     config_groups = {
         "database": {
-            "MONGO_URL": bool(os.environ.get("MONGO_URL")),
+    "SUPABASE_DB_URL": bool(os.environ.get("SUPABASE_DB_URL")),
+    "SUPABASE_URL": bool(os.environ.get("SUPABASE_URL")),
+    "SUPABASE_SERVICE_ROLE_KEY": bool(os.environ.get("SUPABASE_SERVICE_ROLE_KEY")),
         },
+        
         "auth": {
             "JWT_SECRET": bool(os.environ.get("JWT_SECRET")),
         },
