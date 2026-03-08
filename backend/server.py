@@ -107,30 +107,21 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# CORS Configuration (must be right after app creation)
 # ------------------------------------------------------------
-# CORS Configuration
-# ------------------------------------------------------------
-
-cors_origins = os.getenv(
-    "CORS_ORIGINS",
-    "http://localhost:3000,"
-    "https://replyzen-ai-01-wjzx.vercel.app,"
-    "https://replyzenai.com,"
-    "https://replyzen-ai01-production.up.railway.app"
-)
-
-origins = [origin.strip() for origin in cors_origins.split(",")]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_origin_regex="https://.*vercel.app",  # allow all Vercel preview deployments
+    allow_origins=[
+        "http://localhost:3000",
+        "https://replyzen-ai-01-wjzx.vercel.app",
+        "https://replyzenai.com"
+    ],
+    allow_origin_regex="https://.*vercel.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-logger.info(f"CORS enabled for: {origins}")
 
 # ------------------------------------------------------------
 # Import Routers
