@@ -165,4 +165,3 @@ async def health_check():
 @app.get("/api/config-status")
 async def config_status():
     return get_config_status()
-```
