@@ -107,17 +107,20 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS Configuration (must be right after app creation)
 # ------------------------------------------------------------
+# CORS Configuration
+# ------------------------------------------------------------
+
+from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "https://replyzen-ai-01-wjzx.vercel.app",
-        "https://replyzenai.com"
+        "https://replyzenai.com",
+        "https://replyzen-ai01-production.up.railway.app",
     ],
-    allow_origin_regex="https://.*vercel.app",
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
