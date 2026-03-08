@@ -1,5 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
-from database import db
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from database import get_db
 from auth import get_current_user
 from plan_permissions import get_user_plan, check_analytics_allowed
 from datetime import datetime, timezone, timedelta
@@ -7,22 +9,59 @@ from datetime import datetime, timezone, timedelta
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
+# ---------------------------------------------------------
+# Overview Analytics
+# ---------------------------------------------------------
+
 @router.get("/overview")
-async def get_overview(current_user: dict = Depends(get_current_user)):
+async def get_overview(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     user_id = current_user["user_id"]
 
-    # Basic overview stats available to all plans
-    total_threads = await db.email_threads.count_documents({"user_id": user_id})
-    silent_threads = await db.email_threads.count_documents({"user_id": user_id, "is_silent": True})
-    followups_sent = await db.followup_suggestions.count_documents({"user_id": user_id, "status": "sent"})
-    followups_pending = await db.followup_suggestions.count_documents({"user_id": user_id, "status": "pending"})
-    followups_dismissed = await db.followup_suggestions.count_documents({"user_id": user_id, "status": "dismissed"})
+    total_threads = await db.execute(
+        text("SELECT COUNT(*) FROM email_threads WHERE user_id = :uid"),
+        {"uid": user_id}
+    )
+    total_threads = total_threads.scalar() or 0
+
+    silent_threads = await db.execute(
+        text("SELECT COUNT(*) FROM email_threads WHERE user_id = :uid AND is_silent = TRUE"),
+        {"uid": user_id}
+    )
+    silent_threads = silent_threads.scalar() or 0
+
+    followups_sent = await db.execute(
+        text("SELECT COUNT(*) FROM followup_suggestions WHERE user_id = :uid AND status='sent'"),
+        {"uid": user_id}
+    )
+    followups_sent = followups_sent.scalar() or 0
+
+    followups_pending = await db.execute(
+        text("SELECT COUNT(*) FROM followup_suggestions WHERE user_id = :uid AND status='pending'"),
+        {"uid": user_id}
+    )
+    followups_pending = followups_pending.scalar() or 0
+
+    followups_dismissed = await db.execute(
+        text("SELECT COUNT(*) FROM followup_suggestions WHERE user_id = :uid AND status='dismissed'"),
+        {"uid": user_id}
+    )
+    followups_dismissed = followups_dismissed.scalar() or 0
+
     total_followups = followups_sent + followups_pending + followups_dismissed
 
     response_rate = round((followups_sent / total_followups * 100) if total_followups > 0 else 0, 1)
-    accounts_count = await db.email_accounts.count_documents({"user_id": user_id})
+
+    accounts = await db.execute(
+        text("SELECT COUNT(*) FROM email_accounts WHERE user_id = :uid"),
+        {"uid": user_id}
+    )
+    accounts_count = accounts.scalar() or 0
 
     plan = await get_user_plan(user_id)
+
     return {
         "total_threads": total_threads,
         "silent_threads": silent_threads,
@@ -36,56 +75,100 @@ async def get_overview(current_user: dict = Depends(get_current_user)):
     }
 
 
+# ---------------------------------------------------------
+# Followups Over Time Chart
+# ---------------------------------------------------------
+
 @router.get("/followups-over-time")
-async def followups_over_time(days: int = 30, current_user: dict = Depends(get_current_user)):
+async def followups_over_time(
+    days: int = 30,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+
     user_id = current_user["user_id"]
 
-    # Plan gate: only Pro has analytics charts
     plan = await get_user_plan(user_id)
+
     if not check_analytics_allowed(plan):
         raise HTTPException(
             status_code=403,
             detail="Analytics is available on the Pro plan. Upgrade to access detailed analytics."
         )
+
     now = datetime.now(timezone.utc)
     start_date = now - timedelta(days=days)
 
-    # Get usage data for the period
-    usage_data = await db.usage_tracking.find(
-        {"user_id": user_id, "date": {"$gte": start_date.strftime("%Y-%m-%d")}},
-        {"_id": 0}
-    ).sort("date", 1).to_list(days)
+    result = await db.execute(
+        text("""
+        SELECT date, followups_generated, followups_sent
+        FROM usage_tracking
+        WHERE user_id = :uid AND date >= :start
+        ORDER BY date ASC
+        """),
+        {
+            "uid": user_id,
+            "start": start_date.strftime("%Y-%m-%d")
+        }
+    )
 
-    # Fill in missing days
+    rows = result.fetchall()
+
+    usage_map = {
+        row.date: {
+            "generated": row.followups_generated,
+            "sent": row.followups_sent
+        }
+        for row in rows
+    }
+
     chart_data = []
+
     for i in range(days):
         date = (start_date + timedelta(days=i)).strftime("%Y-%m-%d")
-        entry = next((u for u in usage_data if u.get("date") == date), None)
+
+        entry = usage_map.get(date)
+
         chart_data.append({
             "date": date,
-            "generated": entry.get("followups_generated", 0) if entry else 0,
-            "sent": entry.get("followups_sent", 0) if entry else 0,
+            "generated": entry["generated"] if entry else 0,
+            "sent": entry["sent"] if entry else 0
         })
 
     return chart_data
 
 
+# ---------------------------------------------------------
+# Top Contacts
+# ---------------------------------------------------------
+
 @router.get("/top-contacts")
-async def top_contacts(current_user: dict = Depends(get_current_user)):
+async def top_contacts(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+
     user_id = current_user["user_id"]
 
-    followups = await db.followup_suggestions.find(
-        {"user_id": user_id, "status": "sent"},
-        {"_id": 0, "recipient": 1, "recipient_name": 1}
-    ).to_list(500)
+    result = await db.execute(
+        text("""
+        SELECT recipient, recipient_name, COUNT(*) as count
+        FROM followup_suggestions
+        WHERE user_id = :uid AND status = 'sent'
+        GROUP BY recipient, recipient_name
+        ORDER BY count DESC
+        LIMIT 10
+        """),
+        {"uid": user_id}
+    )
 
-    contact_counts = {}
-    for f in followups:
-        email = f.get("recipient", "unknown")
-        name = f.get("recipient_name", email)
-        if email not in contact_counts:
-            contact_counts[email] = {"email": email, "name": name, "count": 0}
-        contact_counts[email]["count"] += 1
+    rows = result.fetchall()
 
-    sorted_contacts = sorted(contact_counts.values(), key=lambda x: x["count"], reverse=True)[:10]
-    return sorted_contacts
+    return [
+        {
+            "email": row.recipient,
+            "name": row.recipient_name,
+            "count": row.count
+        }
+        for row in rows
+    ]
