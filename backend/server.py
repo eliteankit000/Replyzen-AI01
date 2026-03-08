@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 from services.env_validator import validate_environment, get_config_status
 env_valid, env_errors, env_warnings = validate_environment()
 
-from database import client, db
+from database import engine, AsyncSessionLocal
 
 # Background task reference
 cron_task = None
@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
     
     # Initialize auto-send cron service
     from services.autosend_cron import set_database, run_cron_loop
-    set_database(db)
+    set_database(AsyncSessionLocal)
     
     # Start cron job in background (every 30 minutes)
     cron_task = asyncio.create_task(run_cron_loop(interval_minutes=30))
@@ -62,8 +62,8 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
     
-    # Close database connection
-    client.close()
+    # Close database engine
+    await engine.dispose()
 
 
 app = FastAPI(
