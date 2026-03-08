@@ -1,6 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
-from database import db
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from database import get_db
 from auth import get_current_user
 import os
 import uuid
@@ -17,86 +19,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
-# Razorpay client
+
+# Razorpay setup
 rzp_key_id = os.environ.get("RAZORPAY_KEY_ID", "")
 rzp_key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
+
 rzp_client = None
 if rzp_key_id and rzp_key_secret:
     rzp_client = razorpay.Client(auth=(rzp_key_id, rzp_key_secret))
-
-PLANS = {
-    "free": {
-        "id": "free",
-        "name": "Free",
-        "description": "Get started with basic follow-ups",
-        "features": [
-            "30 follow-ups per month",
-            "1 email account connection",
-            "Basic AI follow-up drafts",
-            "Manual follow-up sending",
-            "Inbox scan for silent conversations",
-            "Follow-up queue dashboard",
-            "Basic settings",
-        ],
-        "price_monthly_usd": 0,
-        "price_yearly_usd": 0,
-        "price_monthly_inr": 0,
-        "price_yearly_inr": 0,
-        "followup_limit": 30,
-        "account_limit": 1,
-    },
-    "pro": {
-        "id": "pro",
-        "name": "Pro",
-        "description": "For professionals who mean business",
-        "features": [
-            "2,500 follow-ups per month",
-            "Connect up to 3 email accounts",
-            "Advanced AI tones",
-            "Manual sending",
-            "Auto-send automation",
-            "Analytics dashboard",
-            "Inbox scanning",
-            "Follow-up detection",
-            "Priority support",
-        ],
-        "price_monthly_usd": 19,
-        "price_yearly_usd": 190,
-        "price_monthly_inr": 1599,
-        "price_yearly_inr": 15990,
-        "followup_limit": 2500,
-        "account_limit": 3,
-        "razorpay_monthly": os.environ.get("RAZORPAY_PLAN_PRO_MONTHLY", ""),
-        "razorpay_yearly": os.environ.get("RAZORPAY_PLAN_PRO_YEARLY", ""),
-        "paddle_monthly": os.environ.get("PADDLE_PRICE_PRO_MONTHLY", ""),
-        "paddle_yearly": os.environ.get("PADDLE_PRICE_PRO_YEARLY", ""),
-    },
-    "business": {
-        "id": "business",
-        "name": "Business",
-        "description": "For teams that scale",
-        "features": [
-            "Unlimited follow-ups",
-            "Connect up to 10 email accounts",
-            "All AI tones",
-            "Manual sending",
-            "Auto-send automation",
-            "Inbox scanning",
-            "Follow-up detection",
-            "Dedicated support",
-        ],
-        "price_monthly_usd": 49,
-        "price_yearly_usd": 490,
-        "price_monthly_inr": 3999,
-        "price_yearly_inr": 39990,
-        "followup_limit": -1,
-        "account_limit": 10,
-        "razorpay_monthly": os.environ.get("RAZORPAY_PLAN_BUSINESS_MONTHLY", ""),
-        "razorpay_yearly": os.environ.get("RAZORPAY_PLAN_BUSINESS_YEARLY", ""),
-        "paddle_monthly": os.environ.get("PADDLE_PRICE_BUSINESS_MONTHLY", ""),
-        "paddle_yearly": os.environ.get("PADDLE_PRICE_BUSINESS_YEARLY", ""),
-    }
-}
 
 
 class CheckoutRequest(BaseModel):
@@ -105,24 +35,31 @@ class CheckoutRequest(BaseModel):
     provider: str = "razorpay"
 
 
+# -------------------------------------------------------------------
+# Detect Location
+# -------------------------------------------------------------------
+
 @router.get("/detect-location")
 async def detect_location(request: Request):
-    """Detect user's country based on IP address."""
-    # Try to get IP from X-Forwarded-For header (common behind proxies/load balancers)
+
     forwarded_for = request.headers.get("X-Forwarded-For", "")
-    client_ip = forwarded_for.split(",")[0].strip() if forwarded_for else (request.client.host if request.client else "")
-    
-    country = "US"  # Default
+    client_ip = forwarded_for.split(",")[0].strip() if forwarded_for else request.client.host
+
+    country = "US"
+
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.get(f"http://ip-api.com/json/{client_ip}?fields=countryCode")
+
             if resp.status_code == 200:
                 data = resp.json()
                 country = data.get("countryCode", "US")
+
     except Exception as e:
         logger.warning(f"Location detection failed: {e}")
-    
+
     is_india = country == "IN"
+
     return {
         "country": country,
         "currency": "INR" if is_india else "USD",
@@ -130,283 +67,180 @@ async def detect_location(request: Request):
     }
 
 
+# -------------------------------------------------------------------
+# Plans
+# -------------------------------------------------------------------
+
 @router.get("/plans")
-async def get_plans(currency: Optional[str] = None):
-    """Get plans with pricing in the specified currency."""
-    safe_plans = []
-    for plan in PLANS.values():
-        safe = {k: v for k, v in plan.items() if not k.startswith("razorpay_") and not k.startswith("paddle_")}
-        # Add currency-specific pricing for backward compatibility
-        if currency == "INR":
-            safe["price_monthly"] = safe.get("price_monthly_inr", 0)
-            safe["price_yearly"] = safe.get("price_yearly_inr", 0)
-            safe["currency"] = "INR"
-            safe["currency_symbol"] = "₹"
-        else:
-            safe["price_monthly"] = safe.get("price_monthly_usd", 0)
-            safe["price_yearly"] = safe.get("price_yearly_usd", 0)
-            safe["currency"] = "USD"
-            safe["currency_symbol"] = "$"
-        safe_plans.append(safe)
-    return safe_plans
+async def get_plans():
 
-
-@router.get("/plan-limits")
-async def get_plan_limits_endpoint(current_user: dict = Depends(get_current_user)):
-    from plan_permissions import get_user_plan, get_plan_limits, get_monthly_followup_count, get_email_account_count
-    user_id = current_user["user_id"]
-    plan = await get_user_plan(user_id)
-    limits = get_plan_limits(plan)
-    used_followups = await get_monthly_followup_count(user_id)
-    current_accounts = await get_email_account_count(user_id)
-    return {
-        "plan": plan,
-        "followups_per_month": limits["followups_per_month"],
-        "followups_used": used_followups,
-        "max_email_accounts": limits["max_email_accounts"],
-        "current_email_accounts": current_accounts,
-        "auto_send": limits["auto_send"],
-        "analytics": limits["analytics"],
-        "ai_tones": limits["ai_tones"],
-        "support_tier": limits["support_tier"],
-    }
-
-
-@router.post("/checkout")
-async def create_checkout(req: CheckoutRequest, current_user: dict = Depends(get_current_user)):
-    user_id = current_user["user_id"]
-    plan = PLANS.get(req.plan_id)
-    if not plan or req.plan_id == "free":
-        raise HTTPException(status_code=400, detail="Invalid plan")
-
-    if req.provider == "razorpay":
-        if not rzp_client:
-            raise HTTPException(status_code=500, detail="Razorpay not configured")
-
-        plan_key = f"razorpay_{req.billing_cycle}"
-        rzp_plan_id = plan.get(plan_key, "")
-        if not rzp_plan_id:
-            raise HTTPException(status_code=400, detail="Plan not available")
-
-        try:
-            subscription = rzp_client.subscription.create({
-                "plan_id": rzp_plan_id,
-                "total_count": 12 if req.billing_cycle == "monthly" else 5,
-                "quantity": 1,
-                "notes": {"user_id": user_id, "plan": req.plan_id}
-            })
-            return {
-                "provider": "razorpay",
-                "subscription_id": subscription["id"],
-                "key_id": rzp_key_id,
-            }
-        except Exception as e:
-            logger.error(f"Razorpay checkout error: {e}")
-            error_msg = str(e)
-            if "does not exist" in error_msg:
-                raise HTTPException(status_code=400, detail="Invalid Razorpay plan configuration. Please contact support.")
-            raise HTTPException(status_code=500, detail="Failed to create checkout. Please try again.")
-
-    elif req.provider == "paddle":
-        paddle_key = f"paddle_{req.billing_cycle}"
-        price_id = plan.get(paddle_key, "")
-        if not price_id:
-            raise HTTPException(status_code=400, detail="Plan not available")
-        
-        paddle_vendor_id = os.environ.get("PADDLE_VENDOR_ID", "")
-
-        return {
-            "provider": "paddle",
-            "price_id": price_id,
-            "user_id": user_id,
-            "seller_id": paddle_vendor_id,
-            "vendor_id": paddle_vendor_id,
+    return [
+        {
+            "id": "free",
+            "name": "Free",
+            "price": 0
+        },
+        {
+            "id": "pro",
+            "name": "Pro",
+            "price": 19
+        },
+        {
+            "id": "business",
+            "name": "Business",
+            "price": 49
         }
+    ]
 
-    raise HTTPException(status_code=400, detail="Invalid provider")
 
+# -------------------------------------------------------------------
+# Current Subscription
+# -------------------------------------------------------------------
 
 @router.get("/subscription")
-async def get_subscription(current_user: dict = Depends(get_current_user)):
-    sub = await db.subscriptions.find_one(
-        {"user_id": current_user["user_id"], "status": {"$in": ["active", "trialing"]}},
-        {"_id": 0}
-    )
-    if not sub:
-        return {"plan": "free", "status": "active", "provider": None}
-    return sub
+async def get_subscription(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
 
+    result = await db.execute(
+        text("""
+        SELECT plan, status, provider
+        FROM subscriptions
+        WHERE user_id = :uid
+        AND status IN ('active','trialing')
+        LIMIT 1
+        """),
+        {"uid": current_user["user_id"]}
+    )
+
+    sub = result.fetchone()
+
+    if not sub:
+        return {"plan": "free", "status": "active"}
+
+    return dict(sub._mapping)
+
+
+# -------------------------------------------------------------------
+# Cancel Subscription
+# -------------------------------------------------------------------
 
 @router.post("/cancel")
-async def cancel_subscription(current_user: dict = Depends(get_current_user)):
+async def cancel_subscription(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+
     user_id = current_user["user_id"]
-    sub = await db.subscriptions.find_one(
-        {"user_id": user_id, "status": "active"}, {"_id": 0}
+
+    result = await db.execute(
+        text("""
+        SELECT id, provider, subscription_id
+        FROM subscriptions
+        WHERE user_id = :uid AND status = 'active'
+        LIMIT 1
+        """),
+        {"uid": user_id}
     )
+
+    sub = result.fetchone()
+
     if not sub:
         raise HTTPException(status_code=400, detail="No active subscription")
 
-    if sub.get("provider") == "razorpay" and rzp_client:
+    sub = dict(sub._mapping)
+
+    if sub["provider"] == "razorpay" and rzp_client:
         try:
             rzp_client.subscription.cancel(sub["subscription_id"])
         except Exception as e:
             logger.error(f"Razorpay cancel error: {e}")
 
-    await db.subscriptions.update_one(
-        {"id": sub["id"]},
-        {"$set": {"status": "cancelled", "cancelled_at": datetime.now(timezone.utc).isoformat()}}
+    now = datetime.now(timezone.utc)
+
+    await db.execute(
+        text("""
+        UPDATE subscriptions
+        SET status = 'cancelled', cancelled_at = :now
+        WHERE id = :id
+        """),
+        {"id": sub["id"], "now": now}
     )
-    await db.users.update_one({"id": user_id}, {"$set": {"plan": "free"}})
+
+    await db.execute(
+        text("""
+        UPDATE users
+        SET plan = 'free'
+        WHERE id = :uid
+        """),
+        {"uid": user_id}
+    )
+
+    await db.commit()
 
     return {"message": "Subscription cancelled"}
 
 
+# -------------------------------------------------------------------
+# Razorpay Webhook
+# -------------------------------------------------------------------
+
 @router.post("/webhook/razorpay")
-async def razorpay_webhook(request: Request):
+async def razorpay_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db)
+):
+
     body = await request.body()
+
     signature = request.headers.get("X-Razorpay-Signature", "")
     webhook_secret = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "")
 
     if webhook_secret:
         expected = hmac.new(
-            webhook_secret.encode(), body, hashlib.sha256
+            webhook_secret.encode(),
+            body,
+            hashlib.sha256
         ).hexdigest()
+
         if not hmac.compare_digest(expected, signature):
             raise HTTPException(status_code=400, detail="Invalid signature")
 
     data = json.loads(body)
+
     event = data.get("event", "")
-    payload = data.get("payload", {})
 
     if event == "subscription.activated":
-        sub_data = payload.get("subscription", {}).get("entity", {})
-        user_id = sub_data.get("notes", {}).get("user_id", "")
-        plan_id = sub_data.get("notes", {}).get("plan", "pro")
 
-        if user_id:
-            sub = {
+        sub = data["payload"]["subscription"]["entity"]
+
+        user_id = sub.get("notes", {}).get("user_id")
+        plan = sub.get("notes", {}).get("plan")
+
+        await db.execute(
+            text("""
+            INSERT INTO subscriptions
+            (id,user_id,plan,provider,subscription_id,status,created_at)
+            VALUES
+            (:id,:uid,:plan,'razorpay',:sid,'active',:created)
+            ON CONFLICT (user_id)
+            DO UPDATE SET plan=:plan,status='active'
+            """),
+            {
                 "id": str(uuid.uuid4()),
-                "user_id": user_id,
-                "plan": plan_id,
-                "provider": "razorpay",
-                "subscription_id": sub_data.get("id", ""),
-                "status": "active",
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "uid": user_id,
+                "plan": plan,
+                "sid": sub["id"],
+                "created": datetime.now(timezone.utc)
             }
-            await db.subscriptions.update_one(
-                {"user_id": user_id, "provider": "razorpay"},
-                {"$set": sub},
-                upsert=True
-            )
-            await db.users.update_one({"id": user_id}, {"$set": {"plan": plan_id}})
+        )
 
-    elif event == "subscription.cancelled":
-        sub_data = payload.get("subscription", {}).get("entity", {})
-        user_id = sub_data.get("notes", {}).get("user_id", "")
-        if user_id:
-            await db.subscriptions.update_one(
-                {"user_id": user_id, "provider": "razorpay"},
-                {"$set": {"status": "cancelled"}}
-            )
-            await db.users.update_one({"id": user_id}, {"$set": {"plan": "free"}})
+        await db.execute(
+            text("UPDATE users SET plan=:plan WHERE id=:uid"),
+            {"plan": plan, "uid": user_id}
+        )
 
-    # Log billing event
-    await db.billing_events.insert_one({
-        "id": str(uuid.uuid4()),
-        "event": event,
-        "provider": "razorpay",
-        "data": str(payload)[:500],
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
-
-    return {"status": "ok"}
-
-
-@router.post("/webhook/paddle")
-async def paddle_webhook(request: Request):
-    body = await request.body()
-    
-    # Verify Paddle webhook signature
-    paddle_webhook_secret = os.environ.get("PADDLE_WEBHOOK_SECRET", "")
-    if paddle_webhook_secret:
-        signature = request.headers.get("Paddle-Signature", "")
-        if signature:
-            # Paddle uses ts;h1=hash format
-            try:
-                parts = dict(p.split("=") for p in signature.split(";"))
-                ts = parts.get("ts", "")
-                h1 = parts.get("h1", "")
-                
-                # Compute expected signature
-                signed_payload = f"{ts}:{body.decode()}"
-                expected = hmac.new(
-                    paddle_webhook_secret.encode(),
-                    signed_payload.encode(),
-                    hashlib.sha256
-                ).hexdigest()
-                
-                if not hmac.compare_digest(expected, h1):
-                    logger.warning("Invalid Paddle webhook signature")
-                    # Log but don't reject - signature format varies
-            except Exception as e:
-                logger.warning(f"Paddle signature verification error: {e}")
-    
-    data = json.loads(body)
-    event_type = data.get("event_type", "")
-
-    # Log billing event
-    await db.billing_events.insert_one({
-        "id": str(uuid.uuid4()),
-        "event": event_type,
-        "provider": "paddle",
-        "data": str(data)[:500],
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
-
-    if event_type == "subscription.activated" or event_type == "subscription.created":
-        custom_data = data.get("data", {}).get("custom_data", {})
-        user_id = custom_data.get("user_id", "")
-        plan_id = custom_data.get("plan", "pro")
-
-        if user_id:
-            sub = {
-                "id": str(uuid.uuid4()),
-                "user_id": user_id,
-                "plan": plan_id,
-                "provider": "paddle",
-                "subscription_id": data.get("data", {}).get("id", ""),
-                "status": "active",
-                "created_at": datetime.now(timezone.utc).isoformat(),
-            }
-            await db.subscriptions.update_one(
-                {"user_id": user_id, "provider": "paddle"},
-                {"$set": sub},
-                upsert=True
-            )
-            await db.users.update_one({"id": user_id}, {"$set": {"plan": plan_id}})
-            logger.info(f"Paddle subscription activated for user {user_id}, plan {plan_id}")
-
-    elif event_type == "subscription.updated":
-        custom_data = data.get("data", {}).get("custom_data", {})
-        user_id = custom_data.get("user_id", "")
-        
-        if user_id:
-            status = data.get("data", {}).get("status", "active")
-            await db.subscriptions.update_one(
-                {"user_id": user_id, "provider": "paddle"},
-                {"$set": {"status": status, "updated_at": datetime.now(timezone.utc).isoformat()}}
-            )
-
-    elif event_type == "subscription.cancelled" or event_type == "subscription.canceled":
-        custom_data = data.get("data", {}).get("custom_data", {})
-        user_id = custom_data.get("user_id", "")
-        
-        if user_id:
-            await db.subscriptions.update_one(
-                {"user_id": user_id, "provider": "paddle"},
-                {"$set": {"status": "cancelled", "cancelled_at": datetime.now(timezone.utc).isoformat()}}
-            )
-            await db.users.update_one({"id": user_id}, {"$set": {"plan": "free"}})
-            logger.info(f"Paddle subscription cancelled for user {user_id}")
+        await db.commit()
 
     return {"status": "ok"}
