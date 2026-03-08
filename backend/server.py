@@ -1,8 +1,7 @@
-
+```python
 from fastapi import FastAPI
-from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
-import os
+from dotenv import load_dotenv
 import logging
 import asyncio
 from pathlib import Path
@@ -61,7 +60,6 @@ async def lifespan(app: FastAPI):
 
     logger.info("Replyzen AI API starting up...")
 
-    # Show config status
     config_status = get_config_status()
     for group, status in config_status.items():
         if status["percentage"] < 100:
@@ -71,7 +69,7 @@ async def lifespan(app: FastAPI):
                 f"({status['percentage']}%)"
             )
 
-    # Initialize cron service
+    # Initialize cron job
     from services.autosend_cron import set_database, run_cron_loop
 
     set_database(AsyncSessionLocal)
@@ -84,7 +82,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Shutdown tasks
+    # Shutdown
     logger.info("Replyzen AI API shutting down...")
 
     if cron_task:
@@ -108,23 +106,23 @@ app = FastAPI(
 )
 
 # ------------------------------------------------------------
-# CORS Configuration
+# CORS Configuration (FIXED)
 # ------------------------------------------------------------
-
-from fastapi.middleware.cors import CORSMiddleware
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
-        "https://replyzenai.com",
-        "https://replyzen-ai01-production.up.railway.app",
+        "https://replyzenai.com"
     ],
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+logger.info("CORS middleware enabled")
+
 
 # ------------------------------------------------------------
 # Import Routers
@@ -144,6 +142,7 @@ app.include_router(billing_router)
 app.include_router(analytics_router)
 app.include_router(settings_router)
 
+
 # ------------------------------------------------------------
 # Health Endpoint
 # ------------------------------------------------------------
@@ -156,6 +155,7 @@ async def health_check():
         "version": "1.0.0"
     }
 
+
 # ------------------------------------------------------------
 # Config Status Endpoint
 # ------------------------------------------------------------
@@ -163,3 +163,4 @@ async def health_check():
 @app.get("/api/config-status")
 async def config_status():
     return get_config_status()
+```
