@@ -1,29 +1,25 @@
-```javascript
+
 import axios from "axios";
 
 /*
 |--------------------------------------------------------------------------
 | Backend Configuration
 |--------------------------------------------------------------------------
-| Priority order:
-| 1. REACT_APP_BACKEND_URL (React env)
-| 2. NEXT_PUBLIC_API_URL (Vercel / Next env)
-| 3. Hardcoded Railway fallback
-|--------------------------------------------------------------------------
 */
 
-const ENV_BACKEND =
-  process.env.REACT_APP_BACKEND_URL ||
-  process.env.NEXT_PUBLIC_API_URL;
+let BACKEND_URL = "https://replyzen-ai01-production.up.railway.app";
 
-const BACKEND_URL =
-  ENV_BACKEND && ENV_BACKEND !== "undefined"
-    ? ENV_BACKEND
-    : "https://replyzen-ai01-production.up.railway.app";
+if (process.env.REACT_APP_BACKEND_URL) {
+  BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+}
+
+if (process.env.NEXT_PUBLIC_API_URL) {
+  BACKEND_URL = process.env.NEXT_PUBLIC_API_URL;
+}
 
 const API_BASE = BACKEND_URL + "/api";
 
-console.log("Replyzen API Base URL:", API_BASE);
+console.log("Replyzen API Base:", API_BASE);
 
 /*
 |--------------------------------------------------------------------------
@@ -42,12 +38,11 @@ const api = axios.create({
 /*
 |--------------------------------------------------------------------------
 | Request Interceptor
-| Attach JWT token automatically
 |--------------------------------------------------------------------------
 */
 
 api.interceptors.request.use(
-  (config) => {
+  function (config) {
     const token = localStorage.getItem("replyzen_token");
 
     if (token) {
@@ -56,19 +51,22 @@ api.interceptors.request.use(
 
     return config;
   },
-  (error) => Promise.reject(error)
+  function (error) {
+    return Promise.reject(error);
+  }
 );
 
 /*
 |--------------------------------------------------------------------------
 | Response Interceptor
-| Handle auth errors globally
 |--------------------------------------------------------------------------
 */
 
 api.interceptors.response.use(
-  (response) => response,
-  (error) => {
+  function (response) {
+    return response;
+  },
+  function (error) {
     if (error.response && error.response.status === 401) {
       localStorage.removeItem("replyzen_token");
       localStorage.removeItem("replyzen_user");
@@ -92,20 +90,30 @@ api.interceptors.response.use(
 */
 
 export const authAPI = {
-  register: (data) => api.post("/auth/register", data),
-  login: (data) => api.post("/auth/login", data),
-  getMe: () => api.get("/auth/me"),
+  register: function (data) {
+    return api.post("/auth/register", data);
+  },
 
-  getGoogleAuthUrl: (redirectUri) =>
-    api.get("/auth/google/url", {
+  login: function (data) {
+    return api.post("/auth/login", data);
+  },
+
+  getMe: function () {
+    return api.get("/auth/me");
+  },
+
+  getGoogleAuthUrl: function (redirectUri) {
+    return api.get("/auth/google/url", {
       params: { redirect_uri: redirectUri }
-    }),
+    });
+  },
 
-  googleCallback: (code, redirectUri) =>
-    api.post("/auth/google/callback", {
+  googleCallback: function (code, redirectUri) {
+    return api.post("/auth/google/callback", {
       code: code,
       redirect_uri: redirectUri
-    })
+    });
+  }
 };
 
 /*
@@ -115,127 +123,152 @@ export const authAPI = {
 */
 
 export const emailAPI = {
-  connectGmail: (email) =>
-    api.post("/emails/connect-gmail", { email: email }),
+  connectGmail: function (email) {
+    return api.post("/emails/connect-gmail", { email: email });
+  },
 
-  getGmailAuthUrl: () =>
-    api.get("/emails/gmail/auth-url"),
+  getGmailAuthUrl: function () {
+    return api.get("/emails/gmail/auth-url");
+  },
 
-  gmailCallback: (code, state) =>
-    api.post(
+  gmailCallback: function (code, state) {
+    return api.post(
       "/emails/gmail/callback",
       { code: code, state: state },
       { params: { code: code, state: state } }
-    ),
+    );
+  },
 
-  getAccounts: () =>
-    api.get("/emails/accounts"),
+  getAccounts: function () {
+    return api.get("/emails/accounts");
+  },
 
-  syncEmails: () =>
-    api.post("/emails/sync"),
+  syncEmails: function () {
+    return api.post("/emails/sync");
+  },
 
-  getThreads: (params) =>
-    api.get("/emails/threads", { params: params }),
+  getThreads: function (params) {
+    return api.get("/emails/threads", { params: params });
+  },
 
-  getSilentThreads: (params) =>
-    api.get("/emails/threads/silent", { params: params })
+  getSilentThreads: function (params) {
+    return api.get("/emails/threads/silent", { params: params });
+  }
 };
 
 /*
 |--------------------------------------------------------------------------
-| Follow-up APIs
+| Followups
 |--------------------------------------------------------------------------
 */
 
 export const followupAPI = {
-  generate: (threadId, tone) =>
-    api.post("/followups/generate", {
+  generate: function (threadId, tone) {
+    return api.post("/followups/generate", {
       thread_id: threadId,
       tone: tone
-    }),
+    });
+  },
 
-  list: (params) =>
-    api.get("/followups", { params: params }),
+  list: function (params) {
+    return api.get("/followups", { params: params });
+  },
 
-  update: (id, draft) =>
-    api.put("/followups/" + id, { draft: draft }),
+  update: function (id, draft) {
+    return api.put("/followups/" + id, { draft: draft });
+  },
 
-  send: (id) =>
-    api.post("/followups/" + id + "/send"),
+  send: function (id) {
+    return api.post("/followups/" + id + "/send");
+  },
 
-  dismiss: (id) =>
-    api.post("/followups/" + id + "/dismiss")
+  dismiss: function (id) {
+    return api.post("/followups/" + id + "/dismiss");
+  }
 };
 
 /*
 |--------------------------------------------------------------------------
-| Billing APIs
+| Billing
 |--------------------------------------------------------------------------
 */
 
 export const billingAPI = {
-  getPlans: (currency) =>
-    api.get("/billing/plans", {
+  getPlans: function (currency) {
+    return api.get("/billing/plans", {
       params: currency ? { currency: currency } : {}
-    }),
+    });
+  },
 
-  getPlanLimits: () =>
-    api.get("/billing/plan-limits"),
+  getPlanLimits: function () {
+    return api.get("/billing/plan-limits");
+  },
 
-  createCheckout: (data) =>
-    api.post("/billing/checkout", data),
+  createCheckout: function (data) {
+    return api.post("/billing/checkout", data);
+  },
 
-  getSubscription: () =>
-    api.get("/billing/subscription"),
+  getSubscription: function () {
+    return api.get("/billing/subscription");
+  },
 
-  cancelSubscription: () =>
-    api.post("/billing/cancel"),
+  cancelSubscription: function () {
+    return api.post("/billing/cancel");
+  },
 
-  detectLocation: () =>
-    api.get("/billing/detect-location")
+  detectLocation: function () {
+    return api.get("/billing/detect-location");
+  }
 };
 
 /*
 |--------------------------------------------------------------------------
-| Analytics APIs
+| Analytics
 |--------------------------------------------------------------------------
 */
 
 export const analyticsAPI = {
-  getOverview: () =>
-    api.get("/analytics/overview"),
+  getOverview: function () {
+    return api.get("/analytics/overview");
+  },
 
-  getFollowupsOverTime: (days) =>
-    api.get("/analytics/followups-over-time", {
+  getFollowupsOverTime: function (days) {
+    return api.get("/analytics/followups-over-time", {
       params: { days: days }
-    }),
+    });
+  },
 
-  getTopContacts: () =>
-    api.get("/analytics/top-contacts")
+  getTopContacts: function () {
+    return api.get("/analytics/top-contacts");
+  }
 };
 
 /*
 |--------------------------------------------------------------------------
-| Settings APIs
+| Settings
 |--------------------------------------------------------------------------
 */
 
 export const settingsAPI = {
-  get: () =>
-    api.get("/settings"),
+  get: function () {
+    return api.get("/settings");
+  },
 
-  update: (data) =>
-    api.put("/settings", data),
+  update: function (data) {
+    return api.put("/settings", data);
+  },
 
-  updateProfile: (data) =>
-    api.put("/settings/profile", data),
+  updateProfile: function (data) {
+    return api.put("/settings/profile", data);
+  },
 
-  updateSilenceRules: (data) =>
-    api.put("/settings/silence-rules", data),
+  updateSilenceRules: function (data) {
+    return api.put("/settings/silence-rules", data);
+  },
 
-  disconnectEmail: (id) =>
-    api.delete("/settings/email-account/" + id)
+  disconnectEmail: function (id) {
+    return api.delete("/settings/email-account/" + id);
+  }
 };
 
 export default api;
-```
