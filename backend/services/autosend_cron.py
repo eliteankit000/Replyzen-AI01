@@ -25,6 +25,42 @@ def set_database(session_factory):
 
 
 # ---------------------------------------------------------
+# Distributed Cron Lock (Prevents multi-server duplicate runs)
+# ---------------------------------------------------------
+
+async def acquire_cron_lock(db) -> bool:
+    """
+    Acquire distributed cron lock using database.
+    Only one server instance will run the cron job.
+    """
+
+    instance_id = str(uuid.uuid4())
+
+    result = await db.execute(
+        text("""
+        INSERT INTO cron_locks(name, locked_at, locked_by)
+        VALUES ('autosend', NOW(), :id)
+        ON CONFLICT (name)
+        DO UPDATE
+        SET locked_at = NOW(),
+            locked_by = :id
+        WHERE cron_locks.locked_at < NOW() - INTERVAL '5 minutes'
+        RETURNING locked_by
+        """),
+        {"id": instance_id}
+    )
+
+    row = result.fetchone()
+
+    if row and row.locked_by == instance_id:
+        logger.info("Cron lock acquired")
+        return True
+
+    logger.info("Cron lock held by another instance")
+    return False
+
+
+# ---------------------------------------------------------
 # Helper Functions
 # ---------------------------------------------------------
 
@@ -131,7 +167,6 @@ async def send_followup_email(followup: dict, account: dict) -> bool:
         if not subject.lower().startswith("re:"):
             subject = f"Re: {subject}"
 
-        # Gmail send
         send_email(
             encrypted_tokens={
                 "access_token_encrypted": account.get("access_token_encrypted"),
@@ -168,6 +203,11 @@ async def process_auto_send_queue():
         return {"processed": 0, "sent": 0, "errors": 0}
 
     async with SessionLocal() as db:
+
+        # Acquire distributed cron lock
+        if not await acquire_cron_lock(db):
+            logger.info("Another instance holds cron lock. Skipping run.")
+            return {"processed": 0, "sent": 0, "errors": 0}
 
         # Early exit if no pending followups
         pending_check = await db.execute(
