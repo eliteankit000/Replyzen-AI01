@@ -1,6 +1,9 @@
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, EmailStr
-from database import db
+from database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import Depends
+from sqlalchemy import text
 from auth import hash_password, verify_password, create_token, get_current_user
 import uuid
 import os
@@ -36,8 +39,12 @@ class GoogleAuthRequest(BaseModel):
 
 
 @router.post("/register")
-async def register(req: RegisterRequest):
-    existing = await db.users.find_one({"email": req.email}, {"_id": 0})
+async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
+   result = await db.execute(
+    text("SELECT id FROM users WHERE email = :email"),
+    {"email": req.email}
+)
+existing = result.fetchone()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
@@ -53,7 +60,14 @@ async def register(req: RegisterRequest):
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    await db.users.insert_one(user)
+    await db.execute(
+    text("""
+        INSERT INTO users (id,email,password_hash,full_name,plan,auth_provider,created_at,updated_at)
+        VALUES (:id,:email,:password_hash,:full_name,:plan,:auth_provider,:created_at,:updated_at)
+    """),
+    user
+   )
+   await db.commit()
 
     # Create default settings
     settings = {
