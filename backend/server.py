@@ -106,22 +106,47 @@ app = FastAPI(
 )
 
 # ------------------------------------------------------------
-# CORS Configuration (FIXED)
+# CORS Configuration (PRODUCTION SAFE)
 # ------------------------------------------------------------
+
+allowed_origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+
+    # Production domains
+    "https://replyzenai.com",
+    "https://www.replyzenai.com",
+
+    # Vercel preview deployments
+    "https://replyzen-ai-01-wjzx.vercel.app",
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://replyzenai.com"
-    ],
+    allow_origins=allowed_origins,
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=[
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE",
+        "OPTIONS",
+        "PATCH"
+    ],
+    allow_headers=[
+        "*",
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Origin",
+        "User-Agent",
+    ],
+    expose_headers=["*"],
+    max_age=86400,
 )
 
-logger.info("CORS middleware enabled")
+logger.info("CORS middleware enabled (production mode)")
 
 
 # ------------------------------------------------------------
