@@ -1,8 +1,10 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
-from database import db
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from database import get_db
 from auth import get_current_user
-from plan_permissions import get_user_plan, check_auto_send_allowed, get_plan_limits, check_account_limit
+from plan_permissions import get_user_plan, check_auto_send_allowed
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -31,11 +33,28 @@ class SilenceRulesRequest(BaseModel):
     ignore_notifications: Optional[bool] = None
 
 
+# -------------------------------------------------------
+# Get Settings
+# -------------------------------------------------------
+
 @router.get("")
-async def get_settings(current_user: dict = Depends(get_current_user)):
-    settings = await db.user_settings.find_one(
-        {"user_id": current_user["user_id"]}, {"_id": 0}
+async def get_settings(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+
+    result = await db.execute(
+        text("""
+        SELECT *
+        FROM user_settings
+        WHERE user_id = :uid
+        LIMIT 1
+        """),
+        {"uid": current_user["user_id"]}
     )
+
+    settings = result.fetchone()
+
     if not settings:
         return {
             "daily_digest": True,
@@ -50,84 +69,175 @@ async def get_settings(current_user: dict = Depends(get_current_user)):
             "ignore_newsletters": True,
             "ignore_notifications": True,
         }
-    return settings
 
+    return dict(settings._mapping)
+
+
+# -------------------------------------------------------
+# Update Profile
+# -------------------------------------------------------
 
 @router.put("/profile")
-async def update_profile(req: ProfileUpdateRequest, current_user: dict = Depends(get_current_user)):
-    update = {}
-    if req.full_name is not None:
-        update["full_name"] = req.full_name
-    if req.avatar_url is not None:
-        update["avatar_url"] = req.avatar_url
+async def update_profile(
+    req: ProfileUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
 
-    if not update:
+    update_fields = {}
+
+    if req.full_name is not None:
+        update_fields["full_name"] = req.full_name
+
+    if req.avatar_url is not None:
+        update_fields["avatar_url"] = req.avatar_url
+
+    if not update_fields:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    update["updated_at"] = datetime.now(timezone.utc).isoformat()
-    await db.users.update_one(
-        {"id": current_user["user_id"]},
-        {"$set": update}
-    )
+    update_fields["updated_at"] = datetime.now(timezone.utc)
+
+    query_parts = []
+    params = {"uid": current_user["user_id"]}
+
+    for key, value in update_fields.items():
+        query_parts.append(f"{key} = :{key}")
+        params[key] = value
+
+    query = f"""
+    UPDATE users
+    SET {", ".join(query_parts)}
+    WHERE id = :uid
+    """
+
+    await db.execute(text(query), params)
+    await db.commit()
+
     return {"message": "Profile updated"}
 
 
-@router.put("")
-async def update_settings(req: SettingsUpdateRequest, current_user: dict = Depends(get_current_user)):
-    update = {}
-    for field, value in req.model_dump(exclude_none=True).items():
-        update[field] = value
+# -------------------------------------------------------
+# Update Settings
+# -------------------------------------------------------
 
-    # Plan gate: auto_send
+@router.put("")
+async def update_settings(
+    req: SettingsUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+
+    update = req.model_dump(exclude_none=True)
+
     if "auto_send" in update and update["auto_send"]:
         plan = await get_user_plan(current_user["user_id"])
+
         if not check_auto_send_allowed(plan):
             raise HTTPException(
                 status_code=403,
-                detail="Auto-send is available on Pro and Business plans. Upgrade to enable auto-send."
+                detail="Auto-send is available on Pro and Business plans."
             )
 
     if not update:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    update["updated_at"] = datetime.now(timezone.utc).isoformat()
-    await db.user_settings.update_one(
-        {"user_id": current_user["user_id"]},
-        {"$set": update},
-        upsert=True
+    update["updated_at"] = datetime.now(timezone.utc)
+
+    set_clause = ", ".join([f"{k} = :{k}" for k in update.keys()])
+
+    params = update.copy()
+    params["uid"] = current_user["user_id"]
+
+    await db.execute(
+        text(f"""
+        UPDATE user_settings
+        SET {set_clause}
+        WHERE user_id = :uid
+        """),
+        params
     )
+
+    await db.commit()
+
     return {"message": "Settings updated"}
 
 
+# -------------------------------------------------------
+# Update Silence Rules
+# -------------------------------------------------------
+
 @router.put("/silence-rules")
-async def update_silence_rules(req: SilenceRulesRequest, current_user: dict = Depends(get_current_user)):
-    update = {}
-    for field, value in req.model_dump(exclude_none=True).items():
-        update[field] = value
+async def update_silence_rules(
+    req: SilenceRulesRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+
+    update = req.model_dump(exclude_none=True)
 
     if not update:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    update["updated_at"] = datetime.now(timezone.utc).isoformat()
-    await db.user_settings.update_one(
-        {"user_id": current_user["user_id"]},
-        {"$set": update},
-        upsert=True
+    update["updated_at"] = datetime.now(timezone.utc)
+
+    set_clause = ", ".join([f"{k} = :{k}" for k in update.keys()])
+
+    params = update.copy()
+    params["uid"] = current_user["user_id"]
+
+    await db.execute(
+        text(f"""
+        UPDATE user_settings
+        SET {set_clause}
+        WHERE user_id = :uid
+        """),
+        params
     )
+
+    await db.commit()
+
     return {"message": "Silence rules updated"}
 
 
+# -------------------------------------------------------
+# Disconnect Email Account
+# -------------------------------------------------------
+
 @router.delete("/email-account/{account_id}")
-async def disconnect_email(account_id: str, current_user: dict = Depends(get_current_user)):
-    result = await db.email_accounts.delete_one(
-        {"id": account_id, "user_id": current_user["user_id"]}
+async def disconnect_email(
+    account_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+
+    result = await db.execute(
+        text("""
+        DELETE FROM email_accounts
+        WHERE id = :aid AND user_id = :uid
+        RETURNING id
+        """),
+        {
+            "aid": account_id,
+            "uid": current_user["user_id"]
+        }
     )
-    if result.deleted_count == 0:
+
+    deleted = result.fetchone()
+
+    if not deleted:
         raise HTTPException(status_code=404, detail="Account not found")
 
-    # Clean up threads for this account
-    await db.email_threads.delete_many(
-        {"account_id": account_id, "user_id": current_user["user_id"]}
+    await db.execute(
+        text("""
+        DELETE FROM email_threads
+        WHERE account_id = :aid AND user_id = :uid
+        """),
+        {
+            "aid": account_id,
+            "uid": current_user["user_id"]
+        }
     )
+
+    await db.commit()
 
     return {"message": "Account disconnected"}
