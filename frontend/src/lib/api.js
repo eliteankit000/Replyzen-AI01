@@ -5,19 +5,22 @@ import axios from "axios";
 |--------------------------------------------------------------------------
 | Backend Configuration
 |--------------------------------------------------------------------------
-| Railway Backend
-| https://replyzen-ai01-production.up.railway.app
-|
-| Environment Variable (.env)
-| REACT_APP_BACKEND_URL=https://replyzen-ai01-production.up.railway.app
+| Priority:
+| 1. REACT_APP_BACKEND_URL (React)
+| 2. NEXT_PUBLIC_API_URL (Next.js / Vercel)
+| 3. Fallback to Railway backend
 |--------------------------------------------------------------------------
 */
 
 const BACKEND_URL =
   process.env.REACT_APP_BACKEND_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
   "https://replyzen-ai01-production.up.railway.app";
 
 const API_BASE = `${BACKEND_URL}/api`;
+
+// Debug log (helps verify env variable in browser console)
+console.log("Replyzen API Base:", API_BASE);
 
 /*
 |--------------------------------------------------------------------------
