@@ -9,7 +9,6 @@ import { Separator } from "@/components/ui/separator";
 import { Mail, ArrowRight, Eye, EyeOff, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
-// Google icon SVG component
 function GoogleIcon({ className }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -31,20 +30,19 @@ export default function LoginPage() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Login form
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
 
-  // Register form
   const [regName, setRegName] = useState("");
   const [regEmail, setRegEmail] = useState("");
   const [regPassword, setRegPassword] = useState("");
 
-  // Handle Google OAuth callback
+  // ✅ FIX: Check for OAuth callback — Google returns ?code=...&state=google_auth
   useEffect(() => {
     const code = searchParams.get("code");
     const state = searchParams.get("state");
-    
+
+    // Only handle if it's our google_auth state (not Gmail connect flow)
     if (code && state === "google_auth") {
       handleGoogleCallback(code);
     }
@@ -56,18 +54,17 @@ export default function LoginPage() {
     try {
       const redirectUri = `${window.location.origin}/login`;
       const { user, isNewUser } = await loginWithGoogle(code, redirectUri);
-      
+
       if (isNewUser) {
-        toast.success(`Welcome to Replyzen AI, ${user.full_name}!`);
+        toast.success(`Welcome to Replyzen AI, ${user.full_name || user.email}!`);
       } else {
-        toast.success(`Welcome back, ${user.full_name}!`);
+        toast.success(`Welcome back, ${user.full_name || user.email}!`);
       }
-      
-      // Clear URL params and navigate
+
       window.history.replaceState({}, document.title, "/login");
       navigate("/dashboard");
     } catch (err) {
-      setError(err.response?.data?.detail || "Google authentication failed");
+      setError(err.response?.data?.detail || "Google authentication failed. Please try again.");
       window.history.replaceState({}, document.title, "/login");
     } finally {
       setGoogleLoading(false);
@@ -79,12 +76,26 @@ export default function LoginPage() {
     setError("");
     try {
       const redirectUri = `${window.location.origin}/login`;
+
+      // ✅ FIX: Pass state=google_auth as part of redirectUri query,
+      // so Google echoes it back and we can detect the callback.
+      // We build the full redirect with state BEFORE calling backend,
+      // then the backend appends it to the Google URL via the state param.
       const authUrl = await getGoogleAuthUrl(redirectUri);
-      // Add state parameter to identify this as auth flow
-      const urlWithState = authUrl + "&state=google_auth";
-      window.location.href = urlWithState;
+
+      if (!authUrl) {
+        throw new Error("No auth URL returned from server");
+      }
+
+      // ✅ FIX: Replace the state param that backend set (user_id) with "google_auth"
+      // so our useEffect can detect the callback correctly.
+      // Backend sets state= in the URL — we override it here for login flow.
+      const urlObj = new URL(authUrl);
+      urlObj.searchParams.set("state", "google_auth");
+
+      window.location.href = urlObj.toString();
     } catch (err) {
-      setError(err.response?.data?.detail || "Failed to initiate Google login");
+      setError(err.response?.data?.detail || err.message || "Failed to initiate Google login");
       setGoogleLoading(false);
     }
   };
@@ -137,6 +148,7 @@ export default function LoginPage() {
 
         {/* Card */}
         <div className="bg-card border border-border rounded-2xl p-8 shadow-sm animate-fade-in stagger-1">
+
           {/* Google Login Button */}
           <Button
             type="button"
@@ -151,7 +163,7 @@ export default function LoginPage() {
             ) : (
               <GoogleIcon className="w-5 h-5 mr-2" />
             )}
-            Continue with Google
+            {googleLoading ? "Connecting to Google..." : "Continue with Google"}
           </Button>
 
           <div className="relative mb-6">
@@ -209,8 +221,14 @@ export default function LoginPage() {
                     </button>
                   </div>
                 </div>
-                <Button type="submit" className="w-full bg-primary hover:bg-primary/90 text-white" disabled={loading || googleLoading} data-testid="login-submit-btn">
-                  {loading ? "Signing in..." : "Sign in"} {!loading && <ArrowRight className="w-4 h-4 ml-2" />}
+                <Button
+                  type="submit"
+                  className="w-full bg-primary hover:bg-primary/90 text-white"
+                  disabled={loading || googleLoading}
+                  data-testid="login-submit-btn"
+                >
+                  {loading ? "Signing in..." : "Sign in"}
+                  {!loading && <ArrowRight className="w-4 h-4 ml-2" />}
                 </Button>
               </form>
             </TabsContent>
@@ -264,8 +282,14 @@ export default function LoginPage() {
                     </button>
                   </div>
                 </div>
-                <Button type="submit" className="w-full bg-primary hover:bg-primary/90 text-white" disabled={loading || googleLoading} data-testid="register-submit-btn">
-                  {loading ? "Creating account..." : "Create account"} {!loading && <ArrowRight className="w-4 h-4 ml-2" />}
+                <Button
+                  type="submit"
+                  className="w-full bg-primary hover:bg-primary/90 text-white"
+                  disabled={loading || googleLoading}
+                  data-testid="register-submit-btn"
+                >
+                  {loading ? "Creating account..." : "Create account"}
+                  {!loading && <ArrowRight className="w-4 h-4 ml-2" />}
                 </Button>
               </form>
             </TabsContent>
