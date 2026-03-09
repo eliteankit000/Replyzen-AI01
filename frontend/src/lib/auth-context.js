@@ -3,6 +3,8 @@ import { authAPI } from "./api";
 
 const AuthContext = createContext(null);
 
+const BACKEND_URL = "https://replyzen-ai01-production.up.railway.app";
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
@@ -52,10 +54,15 @@ export function AuthProvider({ children }) {
     return { user: userData, isNewUser: res.data.is_new_user };
   }, []);
 
+  // ✅ KEY FIX: Use plain fetch instead of axios
+  // axios has withCredentials:true which triggers a CORS preflight on this
+  // public endpoint — plain fetch avoids this entirely
   const getGoogleAuthUrl = useCallback(async (redirectUri) => {
-    const res = await authAPI.getGoogleAuthUrl(redirectUri);
-    // ✅ FIX: backend returns { url: "..." } not { auth_url: "..." }
-    return res.data.url || res.data.auth_url;
+    const url = `${BACKEND_URL}/api/auth/google/url?redirect_uri=${encodeURIComponent(redirectUri)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Failed to get Google auth URL: ${res.status}`);
+    const data = await res.json();
+    return data.url || data.auth_url;
   }, []);
 
   const logout = useCallback(() => {
