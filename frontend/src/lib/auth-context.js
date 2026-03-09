@@ -54,7 +54,8 @@ export function AuthProvider({ children }) {
 
   const getGoogleAuthUrl = useCallback(async (redirectUri) => {
     const res = await authAPI.getGoogleAuthUrl(redirectUri);
-    return res.data.auth_url;
+    // ✅ FIX: backend returns { url: "..." } not { auth_url: "..." }
+    return res.data.url || res.data.auth_url;
   }, []);
 
   const logout = useCallback(() => {
@@ -75,11 +76,11 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ 
-      user, token, loading, 
-      login, register, logout, refreshUser, 
+    <AuthContext.Provider value={{
+      user, token, loading,
+      login, register, logout, refreshUser,
       loginWithGoogle, getGoogleAuthUrl,
-      isAuthenticated: !!token 
+      isAuthenticated: !!token
     }}>
       {children}
     </AuthContext.Provider>
