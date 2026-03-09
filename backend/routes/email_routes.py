@@ -33,11 +33,11 @@ class ConnectGmailRequest(BaseModel):
 @router.get("/gmail/auth-url")
 async def get_gmail_auth_url(
     current_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db)          # ← db was already here ✅
 ):
     user_id = current_user["user_id"]
 
-    account_check = await check_account_limit(user_id)
+    account_check = await check_account_limit(user_id, db)  # ← ADD db HERE ✅
     if not account_check["allowed"]:
         raise HTTPException(status_code=403, detail="Email account limit reached")
 
