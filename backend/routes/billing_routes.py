@@ -19,10 +19,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
-# Razorpay setup
 rzp_key_id = os.environ.get("RAZORPAY_KEY_ID", "")
 rzp_key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
-
 rzp_client = None
 if rzp_key_id and rzp_key_secret:
     rzp_client = razorpay.Client(auth=(rzp_key_id, rzp_key_secret))
@@ -32,6 +30,62 @@ class CheckoutRequest(BaseModel):
     plan_id: str
     billing_cycle: str = "monthly"
     provider: str = "razorpay"
+
+
+PLANS = {
+    "USD": [
+        {
+            "id": "free",
+            "name": "Free",
+            "description": "Get started for free",
+            "price_monthly": 0,
+            "price_yearly": 0,
+            "features": ["10 follow-ups/month", "1 email account", "Basic AI replies"],
+        },
+        {
+            "id": "pro",
+            "name": "Pro",
+            "description": "For professionals",
+            "price_monthly": 19,
+            "price_yearly": 190,
+            "features": ["200 follow-ups/month", "3 email accounts", "Advanced AI replies", "Analytics"],
+        },
+        {
+            "id": "business",
+            "name": "Business",
+            "description": "For teams and power users",
+            "price_monthly": 49,
+            "price_yearly": 490,
+            "features": ["Unlimited follow-ups", "10 email accounts", "Priority AI", "Advanced analytics", "Priority support"],
+        },
+    ],
+    "INR": [
+        {
+            "id": "free",
+            "name": "Free",
+            "description": "Get started for free",
+            "price_monthly": 0,
+            "price_yearly": 0,
+            "features": ["10 follow-ups/month", "1 email account", "Basic AI replies"],
+        },
+        {
+            "id": "pro",
+            "name": "Pro",
+            "description": "For professionals",
+            "price_monthly": 999,
+            "price_yearly": 9990,
+            "features": ["200 follow-ups/month", "3 email accounts", "Advanced AI replies", "Analytics"],
+        },
+        {
+            "id": "business",
+            "name": "Business",
+            "description": "For teams and power users",
+            "price_monthly": 2499,
+            "price_yearly": 24990,
+            "features": ["Unlimited follow-ups", "10 email accounts", "Priority AI", "Advanced analytics", "Priority support"],
+        },
+    ],
+}
 
 
 # -------------------------------------------------------------------
@@ -61,26 +115,23 @@ async def detect_location(request: Request):
 
 
 # -------------------------------------------------------------------
-# Plans
+# Plans — returns price_monthly, price_yearly, features, description
 # -------------------------------------------------------------------
 
 @router.get("/plans")
-async def get_plans():
-    return [
-        {"id": "free",     "name": "Free",     "price": 0},
-        {"id": "pro",      "name": "Pro",       "price": 19},
-        {"id": "business", "name": "Business",  "price": 49}
-    ]
+async def get_plans(currency: str = "USD"):
+    currency = currency.upper()
+    return PLANS.get(currency, PLANS["USD"])
 
 
 # -------------------------------------------------------------------
-# ✅ NEW: Plan Limits (was missing — caused 404)
+# Plan Limits
 # -------------------------------------------------------------------
 
 PLAN_LIMITS = {
-    "free":     {"followups_per_month": 10,  "email_accounts": 1, "ai_replies": 10},
-    "pro":      {"followups_per_month": 200, "email_accounts": 3, "ai_replies": 200},
-    "business": {"followups_per_month": -1,  "email_accounts": 10, "ai_replies": -1},
+    "free":     {"followups_per_month": 10,  "followups_used": 0, "email_accounts": 1,  "ai_replies": 10},
+    "pro":      {"followups_per_month": 200, "followups_used": 0, "email_accounts": 3,  "ai_replies": 200},
+    "business": {"followups_per_month": -1,  "followups_used": 0, "email_accounts": 10, "ai_replies": -1},
 }
 
 @router.get("/plan-limits")
@@ -93,7 +144,7 @@ async def get_plan_limits(
         {"uid": current_user["user_id"]}
     )
     row = result.fetchone()
-    plan = row[0] if row else "free"
+    plan = str(row[0]) if row else "free"
     limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
     return {"plan": plan, **limits}
 
@@ -123,7 +174,7 @@ async def get_subscription(
             return {"plan": "free", "status": "active"}
         return dict(sub._mapping)
     except Exception as e:
-        logger.warning(f"Subscriptions table error: {e}")
+        logger.warning(f"Subscription fetch error: {e}")
         return {"plan": "free", "status": "active"}
 
 
@@ -138,12 +189,7 @@ async def cancel_subscription(
 ):
     user_id = current_user["user_id"]
     result = await db.execute(
-        text("""
-        SELECT id, provider, subscription_id
-        FROM subscriptions
-        WHERE user_id = :uid AND status = 'active'
-        LIMIT 1
-        """),
+        text("SELECT id, provider, subscription_id FROM subscriptions WHERE user_id = :uid AND status = 'active' LIMIT 1"),
         {"uid": user_id}
     )
     sub = result.fetchone()
@@ -175,20 +221,13 @@ async def cancel_subscription(
 # -------------------------------------------------------------------
 
 @router.post("/webhook/razorpay")
-async def razorpay_webhook(
-    request: Request,
-    db: AsyncSession = Depends(get_db)
-):
+async def razorpay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
     body = await request.body()
     signature = request.headers.get("X-Razorpay-Signature", "")
     webhook_secret = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "")
 
     if webhook_secret:
-        expected = hmac.new(
-            webhook_secret.encode(),
-            body,
-            hashlib.sha256
-        ).hexdigest()
+        expected = hmac.new(webhook_secret.encode(), body, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected, signature):
             raise HTTPException(status_code=400, detail="Invalid signature")
 
@@ -201,25 +240,13 @@ async def razorpay_webhook(
         plan = sub.get("notes", {}).get("plan")
         await db.execute(
             text("""
-            INSERT INTO subscriptions
-            (id,user_id,plan,provider,subscription_id,status,created_at)
-            VALUES
-            (:id,:uid,:plan,'razorpay',:sid,'active',:created)
-            ON CONFLICT (user_id)
-            DO UPDATE SET plan=:plan,status='active'
+            INSERT INTO subscriptions (id,user_id,plan,provider,subscription_id,status,created_at)
+            VALUES (:id,:uid,:plan,'razorpay',:sid,'active',:created)
+            ON CONFLICT (user_id) DO UPDATE SET plan=:plan, status='active'
             """),
-            {
-                "id": str(uuid.uuid4()),
-                "uid": user_id,
-                "plan": plan,
-                "sid": sub["id"],
-                "created": datetime.now(timezone.utc)
-            }
+            {"id": str(uuid.uuid4()), "uid": user_id, "plan": plan, "sid": sub["id"], "created": datetime.now(timezone.utc)}
         )
-        await db.execute(
-            text("UPDATE users SET plan=:plan WHERE id=:uid"),
-            {"plan": plan, "uid": user_id}
-        )
+        await db.execute(text("UPDATE users SET plan=:plan WHERE id=:uid"), {"plan": plan, "uid": user_id})
         await db.commit()
 
     return {"status": "ok"}
