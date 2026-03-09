@@ -1,62 +1,35 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from dotenv import load_dotenv
 import logging
 import asyncio
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-# ------------------------------------------------------------
-# Load Environment Variables
-# ------------------------------------------------------------
-
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
-
-# ------------------------------------------------------------
-# Logging Configuration
-# ------------------------------------------------------------
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-
 logger = logging.getLogger(__name__)
-
-# ------------------------------------------------------------
-# Validate Environment Variables
-# ------------------------------------------------------------
 
 from services.env_validator import validate_environment, get_config_status
 
 env_valid, env_errors, env_warnings = validate_environment()
-
 if not env_valid:
     logger.warning("Some required environment variables are missing")
 
-# ------------------------------------------------------------
-# Database
-# ------------------------------------------------------------
-
 from database import engine, AsyncSessionLocal
-
-# ------------------------------------------------------------
-# Background Task
-# ------------------------------------------------------------
 
 cron_task = None
 
-
-# ------------------------------------------------------------
-# Lifespan Events
-# ------------------------------------------------------------
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-
     global cron_task
-
     logger.info("Replyzen AI API starting up...")
 
     config_status = get_config_status()
@@ -68,35 +41,22 @@ async def lifespan(app: FastAPI):
                 f"({status['percentage']}%)"
             )
 
-    # Initialize cron job
     from services.autosend_cron import set_database, run_cron_loop
-
     set_database(AsyncSessionLocal)
-
-    cron_task = asyncio.create_task(
-        run_cron_loop(interval_minutes=30)
-    )
-
+    cron_task = asyncio.create_task(run_cron_loop(interval_minutes=30))
     logger.info("Auto-send cron job started")
 
     yield
 
-    # Shutdown
     logger.info("Replyzen AI API shutting down...")
-
     if cron_task:
         cron_task.cancel()
         try:
             await cron_task
         except asyncio.CancelledError:
             pass
-
     await engine.dispose()
 
-
-# ------------------------------------------------------------
-# FastAPI Application
-# ------------------------------------------------------------
 
 app = FastAPI(
     title="Replyzen AI API",
@@ -104,37 +64,41 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# ------------------------------------------------------------
-# CORS Configuration (PRODUCTION SAFE)
-# ------------------------------------------------------------
-
-allowed_origins = [
+# ✅ This middleware ensures CORS headers are sent even when routes crash with 500
+# Without this, a 500 error looks like a CORS error in the browser
+ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
-
-    # Production domains
     "https://replyzenai.com",
     "https://www.replyzenai.com",
-
-    # Vercel preview deployments
     "https://replyzen-ai-01-wjzx.vercel.app",
+    "https://replyzen-ai-01-3boy.vercel.app",
 ]
+
+class CORSErrorMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        origin = request.headers.get("origin", "")
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            logger.error(f"Unhandled exception: {exc}", exc_info=True)
+            response = JSONResponse(
+                status_code=500,
+                content={"detail": str(exc)}
+            )
+        if origin and (origin in ALLOWED_ORIGINS or ".vercel.app" in origin):
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        return response
+
+app.add_middleware(CORSErrorMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=ALLOWED_ORIGINS,
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
-    allow_methods=[
-        "GET",
-        "POST",
-        "PUT",
-        "DELETE",
-        "OPTIONS",
-        "PATCH"
-    ],
-    # ✅ FIX: Cannot use "*" with allow_credentials=True
-    # Browsers reject wildcard headers when credentials are included
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=[
         "Authorization",
         "Content-Type",
@@ -142,21 +106,12 @@ app.add_middleware(
         "Origin",
         "User-Agent",
         "X-Requested-With",
-        "X-CSRF-Token",
     ],
-    expose_headers=[
-        "Content-Length",
-        "Content-Range",
-    ],
+    expose_headers=["Content-Length", "Content-Range"],
     max_age=86400,
 )
 
 logger.info("CORS middleware enabled (production mode)")
-
-
-# ------------------------------------------------------------
-# Import Routers
-# ------------------------------------------------------------
 
 from routes.auth_routes import router as auth_router
 from routes.email_routes import router as email_router
@@ -172,23 +127,9 @@ app.include_router(billing_router)
 app.include_router(analytics_router)
 app.include_router(settings_router)
 
-
-# ------------------------------------------------------------
-# Health Endpoint
-# ------------------------------------------------------------
-
 @app.get("/api/health")
 async def health_check():
-    return {
-        "status": "ok",
-        "service": "replyzen-ai",
-        "version": "1.0.0"
-    }
-
-
-# ------------------------------------------------------------
-# Config Status Endpoint
-# ------------------------------------------------------------
+    return {"status": "ok", "service": "replyzen-ai", "version": "1.0.0"}
 
 @app.get("/api/config-status")
 async def config_status():
