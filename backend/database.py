@@ -11,19 +11,23 @@ DATABASE_URL = os.getenv("SUPABASE_DB_URL")
 if not DATABASE_URL:
     raise Exception("SUPABASE_DB_URL not set")
 
+# Normalize to asyncpg driver
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
 elif DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
+# ✅ Supabase requires SSL — asyncpg needs it passed via connect_args, NOT the URL
 engine = create_async_engine(
     DATABASE_URL,
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
+    connect_args={
+        "ssl": "require"
+    }
 )
 
-# ✅ engine passed positionally — bind= keyword is NOT supported by async_sessionmaker
 AsyncSessionLocal = async_sessionmaker(
     engine,
     class_=AsyncSession,
