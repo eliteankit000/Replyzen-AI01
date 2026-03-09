@@ -11,7 +11,6 @@ DATABASE_URL = os.getenv("SUPABASE_DB_URL")
 if not DATABASE_URL:
     raise Exception("SUPABASE_DB_URL not set")
 
-# Normalize URL to always use asyncpg driver (Supabase gives postgres:// or postgresql://)
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
 elif DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL:
@@ -24,10 +23,9 @@ engine = create_async_engine(
     max_overflow=10,
 )
 
-# ✅ FIX: Use async_sessionmaker (not orm sessionmaker) for SQLAlchemy 2.x + AsyncEngine
-# The old sessionmaker(bind=engine, class_=AsyncSession) falls back to sync internals
+# ✅ engine passed positionally — bind= keyword is NOT supported by async_sessionmaker
 AsyncSessionLocal = async_sessionmaker(
-    bind=engine,
+    engine,
     class_=AsyncSession,
     expire_on_commit=False,
 )
