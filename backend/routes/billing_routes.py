@@ -40,7 +40,7 @@ PLANS = {
             "description": "Get started for free",
             "price_monthly": 0,
             "price_yearly": 0,
-            "features": ["10 follow-ups/month", "1 email account", "Basic AI replies"],
+            "features": ["30 follow-ups per month", "1 email account connection", "Basic AI follow-up drafts", "Manual follow-up sending", "Inbox scan for silent conversations", "Follow-up queue dashboard", "Basic settings"],
         },
         {
             "id": "pro",
@@ -48,7 +48,7 @@ PLANS = {
             "description": "For professionals",
             "price_monthly": 19,
             "price_yearly": 190,
-            "features": ["200 follow-ups/month", "3 email accounts", "Advanced AI replies", "Analytics"],
+            "features": ["2,500 follow-ups per month", "Connect up to 3 email accounts", "Advanced AI tones", "Manual sending", "Auto-send automation", "Analytics dashboard", "Inbox scanning", "Follow-up detection", "Priority support"],
         },
         {
             "id": "business",
@@ -56,7 +56,7 @@ PLANS = {
             "description": "For teams and power users",
             "price_monthly": 49,
             "price_yearly": 490,
-            "features": ["Unlimited follow-ups", "10 email accounts", "Priority AI", "Advanced analytics", "Priority support"],
+            "features": ["Unlimited follow-ups", "Connect up to 10 email accounts", "All AI tones", "Manual sending", "Auto-send automation", "Inbox scanning", "Follow-up detection", "Dedicated support"],
         },
     ],
     "INR": [
@@ -66,7 +66,7 @@ PLANS = {
             "description": "Get started for free",
             "price_monthly": 0,
             "price_yearly": 0,
-            "features": ["10 follow-ups/month", "1 email account", "Basic AI replies"],
+            "features": ["30 follow-ups per month", "1 email account connection", "Basic AI follow-up drafts", "Manual follow-up sending", "Inbox scan for silent conversations", "Follow-up queue dashboard", "Basic settings"],
         },
         {
             "id": "pro",
@@ -74,7 +74,7 @@ PLANS = {
             "description": "For professionals",
             "price_monthly": 999,
             "price_yearly": 9990,
-            "features": ["200 follow-ups/month", "3 email accounts", "Advanced AI replies", "Analytics"],
+            "features": ["2,500 follow-ups per month", "Connect up to 3 email accounts", "Advanced AI tones", "Manual sending", "Auto-send automation", "Analytics dashboard", "Inbox scanning", "Follow-up detection", "Priority support"],
         },
         {
             "id": "business",
@@ -82,7 +82,7 @@ PLANS = {
             "description": "For teams and power users",
             "price_monthly": 2499,
             "price_yearly": 24990,
-            "features": ["Unlimited follow-ups", "10 email accounts", "Priority AI", "Advanced analytics", "Priority support"],
+            "features": ["Unlimited follow-ups", "Connect up to 10 email accounts", "All AI tones", "Manual sending", "Auto-send automation", "Inbox scanning", "Follow-up detection", "Dedicated support"],
         },
     ],
 }
