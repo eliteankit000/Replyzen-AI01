@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -134,15 +133,21 @@ app.add_middleware(
         "OPTIONS",
         "PATCH"
     ],
+    # ✅ FIX: Cannot use "*" with allow_credentials=True
+    # Browsers reject wildcard headers when credentials are included
     allow_headers=[
-        "*",
         "Authorization",
         "Content-Type",
         "Accept",
         "Origin",
         "User-Agent",
+        "X-Requested-With",
+        "X-CSRF-Token",
     ],
-    expose_headers=["*"],
+    expose_headers=[
+        "Content-Length",
+        "Content-Range",
+    ],
     max_age=86400,
 )
 
