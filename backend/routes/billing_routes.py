@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
-
 # Razorpay setup
 rzp_key_id = os.environ.get("RAZORPAY_KEY_ID", "")
 rzp_key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
@@ -41,25 +40,19 @@ class CheckoutRequest(BaseModel):
 
 @router.get("/detect-location")
 async def detect_location(request: Request):
-
     forwarded_for = request.headers.get("X-Forwarded-For", "")
     client_ip = forwarded_for.split(",")[0].strip() if forwarded_for else request.client.host
-
     country = "US"
-
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.get(f"http://ip-api.com/json/{client_ip}?fields=countryCode")
-
             if resp.status_code == 200:
                 data = resp.json()
                 country = data.get("countryCode", "US")
-
     except Exception as e:
         logger.warning(f"Location detection failed: {e}")
 
     is_india = country == "IN"
-
     return {
         "country": country,
         "currency": "INR" if is_india else "USD",
@@ -73,24 +66,36 @@ async def detect_location(request: Request):
 
 @router.get("/plans")
 async def get_plans():
-
     return [
-        {
-            "id": "free",
-            "name": "Free",
-            "price": 0
-        },
-        {
-            "id": "pro",
-            "name": "Pro",
-            "price": 19
-        },
-        {
-            "id": "business",
-            "name": "Business",
-            "price": 49
-        }
+        {"id": "free",     "name": "Free",     "price": 0},
+        {"id": "pro",      "name": "Pro",       "price": 19},
+        {"id": "business", "name": "Business",  "price": 49}
     ]
+
+
+# -------------------------------------------------------------------
+# ✅ NEW: Plan Limits (was missing — caused 404)
+# -------------------------------------------------------------------
+
+PLAN_LIMITS = {
+    "free":     {"followups_per_month": 10,  "email_accounts": 1, "ai_replies": 10},
+    "pro":      {"followups_per_month": 200, "email_accounts": 3, "ai_replies": 200},
+    "business": {"followups_per_month": -1,  "email_accounts": 10, "ai_replies": -1},
+}
+
+@router.get("/plan-limits")
+async def get_plan_limits(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        text("SELECT plan FROM users WHERE id = :uid"),
+        {"uid": current_user["user_id"]}
+    )
+    row = result.fetchone()
+    plan = row[0] if row else "free"
+    limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+    return {"plan": plan, **limits}
 
 
 # -------------------------------------------------------------------
@@ -102,24 +107,24 @@ async def get_subscription(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-
-    result = await db.execute(
-        text("""
-        SELECT plan, status, provider
-        FROM subscriptions
-        WHERE user_id = :uid
-        AND status IN ('active','trialing')
-        LIMIT 1
-        """),
-        {"uid": current_user["user_id"]}
-    )
-
-    sub = result.fetchone()
-
-    if not sub:
+    try:
+        result = await db.execute(
+            text("""
+            SELECT plan, status, provider
+            FROM subscriptions
+            WHERE user_id = :uid
+            AND status IN ('active','trialing')
+            LIMIT 1
+            """),
+            {"uid": current_user["user_id"]}
+        )
+        sub = result.fetchone()
+        if not sub:
+            return {"plan": "free", "status": "active"}
+        return dict(sub._mapping)
+    except Exception as e:
+        logger.warning(f"Subscriptions table error: {e}")
         return {"plan": "free", "status": "active"}
-
-    return dict(sub._mapping)
 
 
 # -------------------------------------------------------------------
@@ -131,9 +136,7 @@ async def cancel_subscription(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-
     user_id = current_user["user_id"]
-
     result = await db.execute(
         text("""
         SELECT id, provider, subscription_id
@@ -143,12 +146,9 @@ async def cancel_subscription(
         """),
         {"uid": user_id}
     )
-
     sub = result.fetchone()
-
     if not sub:
         raise HTTPException(status_code=400, detail="No active subscription")
-
     sub = dict(sub._mapping)
 
     if sub["provider"] == "razorpay" and rzp_client:
@@ -158,27 +158,15 @@ async def cancel_subscription(
             logger.error(f"Razorpay cancel error: {e}")
 
     now = datetime.now(timezone.utc)
-
     await db.execute(
-        text("""
-        UPDATE subscriptions
-        SET status = 'cancelled', cancelled_at = :now
-        WHERE id = :id
-        """),
+        text("UPDATE subscriptions SET status = 'cancelled', cancelled_at = :now WHERE id = :id"),
         {"id": sub["id"], "now": now}
     )
-
     await db.execute(
-        text("""
-        UPDATE users
-        SET plan = 'free'
-        WHERE id = :uid
-        """),
+        text("UPDATE users SET plan = 'free' WHERE id = :uid"),
         {"uid": user_id}
     )
-
     await db.commit()
-
     return {"message": "Subscription cancelled"}
 
 
@@ -191,9 +179,7 @@ async def razorpay_webhook(
     request: Request,
     db: AsyncSession = Depends(get_db)
 ):
-
     body = await request.body()
-
     signature = request.headers.get("X-Razorpay-Signature", "")
     webhook_secret = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "")
 
@@ -203,21 +189,16 @@ async def razorpay_webhook(
             body,
             hashlib.sha256
         ).hexdigest()
-
         if not hmac.compare_digest(expected, signature):
             raise HTTPException(status_code=400, detail="Invalid signature")
 
     data = json.loads(body)
-
     event = data.get("event", "")
 
     if event == "subscription.activated":
-
         sub = data["payload"]["subscription"]["entity"]
-
         user_id = sub.get("notes", {}).get("user_id")
         plan = sub.get("notes", {}).get("plan")
-
         await db.execute(
             text("""
             INSERT INTO subscriptions
@@ -235,12 +216,10 @@ async def razorpay_webhook(
                 "created": datetime.now(timezone.utc)
             }
         )
-
         await db.execute(
             text("UPDATE users SET plan=:plan WHERE id=:uid"),
             {"plan": plan, "uid": user_id}
         )
-
         await db.commit()
 
     return {"status": "ok"}
