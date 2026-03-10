@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
@@ -167,7 +166,34 @@ async def get_me(
 
 
 # ---------------------------------------------------
-# Google OAuth Login
+# Google OAuth URL — returns JSON { url } for frontend
+# ---------------------------------------------------
+
+@router.get("/google/url")
+async def google_url(redirect_uri: Optional[str] = None):
+
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="Google OAuth not configured")
+
+    # Use redirect_uri from query param if provided, else fall back to env var
+    effective_redirect = redirect_uri or GOOGLE_REDIRECT_URI
+
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": effective_redirect,
+        "response_type": "code",
+        "scope": GOOGLE_SCOPES,
+        "access_type": "offline",
+        "prompt": "consent"
+    }
+
+    url = GOOGLE_AUTH_URL + "?" + urllib.parse.urlencode(params)
+
+    return {"url": url}
+
+
+# ---------------------------------------------------
+# Google OAuth Login — direct browser redirect
 # ---------------------------------------------------
 
 @router.get("/google/login")
