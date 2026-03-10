@@ -1,21 +1,36 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "@/lib/auth-context";
 
 export default function AuthCallback() {
   const navigate = useNavigate();
-  const { login } = useAuth();
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const token = params.get("token");
 
     if (token) {
-      // Save token via auth context (same as normal login)
-      login(token);
-      navigate("/dashboard", { replace: true });
+      // Decode JWT payload to extract user info (no library needed)
+      try {
+        const payload = JSON.parse(atob(token.split(".")[1]));
+
+        const userData = {
+          id: payload.user_id || payload.sub || "",
+          email: payload.email || "",
+          full_name: payload.full_name || "",
+          plan: payload.plan || "free",
+        };
+
+        // Use the same localStorage keys as auth-context.js
+        localStorage.setItem("replyzen_token", token);
+        localStorage.setItem("replyzen_user", JSON.stringify(userData));
+
+        // Use window.location.href so AuthProvider re-reads localStorage fresh
+        window.location.href = "/dashboard";
+      } catch (err) {
+        console.error("Failed to parse token:", err);
+        navigate("/login?error=invalid_token", { replace: true });
+      }
     } else {
-      // No token — something went wrong on the backend
       navigate("/login?error=google_auth_failed", { replace: true });
     }
   }, []);
