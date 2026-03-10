@@ -85,15 +85,23 @@ def get_oauth_flow(redirect_uri: Optional[str] = None) -> Flow:
 
 
 def get_auth_url(state: Optional[str] = None, redirect_uri: Optional[str] = None) -> str:
-    """Generate OAuth authorization URL for Gmail."""
-    flow = get_oauth_flow(redirect_uri)
-    auth_url, _ = flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes="true",
-        prompt="consent",
-        state=state or ""
-    )
-    return auth_url
+    """Generate OAuth authorization URL for Gmail.
+    Built manually to avoid google_auth_oauthlib auto-adding PKCE
+    code_challenge which forces a code_verifier on token exchange
+    causing: invalid_grant Missing code verifier.
+    """
+    import urllib.parse
+    params = {
+        "client_id": GMAIL_CLIENT_ID,
+        "redirect_uri": redirect_uri or GMAIL_REDIRECT_URI,
+        "response_type": "code",
+        "scope": " ".join(SCOPES),
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "true",
+        "state": state or "",
+    }
+    return "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
 
 
 def exchange_code_for_tokens(code: str, redirect_uri: Optional[str] = None) -> Dict[str, Any]:
