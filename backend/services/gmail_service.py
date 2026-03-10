@@ -169,6 +169,8 @@ def get_gmail_service(encrypted_tokens: Dict[str, str]):
     if tokens.get("expiry"):
         try:
             expiry = datetime.fromisoformat(tokens["expiry"].replace("Z", "+00:00"))
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
         except Exception:
             pass
 
