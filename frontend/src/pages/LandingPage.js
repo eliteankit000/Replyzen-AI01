@@ -4,10 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   Mail, Zap, BarChart3, Clock, ArrowRight, Check,
-  MessageSquare, Send, Shield, ChevronRight
+  MessageSquare, Send, Shield, ChevronRight, Loader2
 } from "lucide-react";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+// ✅ Fix 1: Always has a fallback — no more undefined BACKEND_URL
+const BACKEND_URL =
+  process.env.REACT_APP_BACKEND_URL ||
+  "https://replyzen-ai01-production.up.railway.app";
 
 const NAV_LINKS = [
   { label: "Features", href: "#features" },
@@ -45,6 +48,7 @@ const STEPS = [
   { num: "04", title: "Send & Track", desc: "Review, edit, and send. Track responses and optimize your follow-up game." },
 ];
 
+// ✅ Fix 2: Prices now match backend billing_routes.py exactly
 function getPricingPlans(currency) {
   const isINR = currency === "INR";
   const sym = isINR ? "₹" : "$";
@@ -69,7 +73,7 @@ function getPricingPlans(currency) {
     },
     {
       name: "Pro",
-      price: isINR ? `${sym}1599` : `${sym}19`,
+      price: isINR ? `${sym}999` : `${sym}19`,   // ✅ was ₹1599, now matches backend
       period: "/month",
       desc: "For professionals",
       features: [
@@ -88,7 +92,7 @@ function getPricingPlans(currency) {
     },
     {
       name: "Business",
-      price: isINR ? `${sym}3999` : `${sym}49`,
+      price: isINR ? `${sym}2499` : `${sym}49`,  // ✅ was ₹3999, now matches backend
       period: "/month",
       desc: "For teams",
       features: [
@@ -109,25 +113,30 @@ function getPricingPlans(currency) {
 
 export default function LandingPage() {
   const navigate = useNavigate();
-  const [currency, setCurrency] = useState("USD");
+  const [currency, setCurrency] = useState(null); // ✅ Fix 3: null = loading
+  const [detectedCurrency, setDetectedCurrency] = useState("USD");
 
   useEffect(() => {
-    // Detect location for pricing
     async function detectLocation() {
       try {
         const res = await fetch(`${BACKEND_URL}/api/billing/detect-location`);
         if (res.ok) {
           const data = await res.json();
-          setCurrency(data.currency || "USD");
+          const detected = data.currency || "USD";
+          setDetectedCurrency(detected);
+          setCurrency(detected);
+        } else {
+          setCurrency("USD");
         }
       } catch (e) {
-        // Default to USD on error
+        setCurrency("USD"); // Default to USD on any error
       }
     }
     detectLocation();
   }, []);
 
-  const PLANS = getPricingPlans(currency);
+  const PLANS = getPricingPlans(currency || "USD");
+  const isLoading = currency === null;
 
   return (
     <div className="min-h-screen bg-background">
@@ -228,48 +237,103 @@ export default function LandingPage() {
       {/* Pricing */}
       <section id="pricing" className="py-24 px-6">
         <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-16">
+          <div className="text-center mb-10">
             <h2 className="text-base md:text-lg font-semibold text-primary mb-2">Pricing</h2>
             <p className="text-2xl sm:text-3xl font-bold">Simple, transparent pricing</p>
-            <p className="text-sm text-muted-foreground mt-2">
-              Prices shown in {currency === "INR" ? "₹ INR" : "$ USD"}
-            </p>
-          </div>
-          <div className="grid md:grid-cols-3 gap-6">
-            {PLANS.map((p) => (
-              <div
-                key={p.name}
-                className={`relative rounded-xl border p-8 ${p.popular ? "border-primary bg-card shadow-lg ring-1 ring-primary/20" : "border-border bg-card"}`}
-                data-testid={`plan-${p.name.toLowerCase()}`}
-              >
-                {p.popular && (
-                  <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-white">Most Popular</Badge>
-                )}
-                <h3 className="text-lg font-semibold">{p.name}</h3>
-                <p className="text-sm text-muted-foreground mt-1">{p.desc}</p>
-                <div className="mt-6 mb-6">
-                  <span className="text-4xl font-bold">{p.price}</span>
-                  <span className="text-sm text-muted-foreground">{p.period}</span>
+
+            {/* ✅ Currency toggle — auto-detected + manual override */}
+            <div className="mt-4 flex items-center justify-center gap-2">
+              {isLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Detecting your location...
                 </div>
-                <Button
-                  className={`w-full mb-6 ${p.popular ? "bg-primary hover:bg-primary/90 text-white" : ""}`}
-                  variant={p.popular ? "default" : "outline"}
-                  onClick={() => navigate("/login")}
-                  data-testid={`plan-${p.name.toLowerCase()}-cta`}
-                >
-                  {p.cta} <ChevronRight className="w-4 h-4 ml-1" />
-                </Button>
-                <ul className="space-y-3">
-                  {p.features.map((feat) => (
-                    <li key={feat} className="flex items-start gap-2 text-sm">
-                      <Check className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-                      <span>{feat}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
+              ) : (
+                <div className="flex items-center gap-1 p-1 rounded-lg bg-muted border border-border">
+                  <button
+                    onClick={() => setCurrency("USD")}
+                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
+                      currency === "USD"
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    $ USD
+                  </button>
+                  <button
+                    onClick={() => setCurrency("INR")}
+                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
+                      currency === "INR"
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    ₹ INR
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Show auto-detected label */}
+            {!isLoading && detectedCurrency === currency && (
+              <p className="text-xs text-muted-foreground mt-2">
+                📍 Prices auto-detected for your region
+              </p>
+            )}
           </div>
+
+          {isLoading ? (
+            // ✅ Fix 3: Show skeleton while detecting location — no flicker
+            <div className="grid md:grid-cols-3 gap-6">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="rounded-xl border border-border bg-card p-8 animate-pulse">
+                  <div className="h-5 bg-muted rounded w-16 mb-2" />
+                  <div className="h-4 bg-muted rounded w-24 mb-6" />
+                  <div className="h-10 bg-muted rounded w-28 mb-6" />
+                  <div className="h-9 bg-muted rounded w-full mb-6" />
+                  {[1,2,3,4].map(j => (
+                    <div key={j} className="h-3 bg-muted rounded w-full mb-3" />
+                  ))}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-3 gap-6">
+              {PLANS.map((p) => (
+                <div
+                  key={p.name}
+                  className={`relative rounded-xl border p-8 ${p.popular ? "border-primary bg-card shadow-lg ring-1 ring-primary/20" : "border-border bg-card"}`}
+                  data-testid={`plan-${p.name.toLowerCase()}`}
+                >
+                  {p.popular && (
+                    <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-white">Most Popular</Badge>
+                  )}
+                  <h3 className="text-lg font-semibold">{p.name}</h3>
+                  <p className="text-sm text-muted-foreground mt-1">{p.desc}</p>
+                  <div className="mt-6 mb-6">
+                    <span className="text-4xl font-bold">{p.price}</span>
+                    <span className="text-sm text-muted-foreground">{p.period}</span>
+                  </div>
+                  <Button
+                    className={`w-full mb-6 ${p.popular ? "bg-primary hover:bg-primary/90 text-white" : ""}`}
+                    variant={p.popular ? "default" : "outline"}
+                    onClick={() => navigate("/login")}
+                    data-testid={`plan-${p.name.toLowerCase()}-cta`}
+                  >
+                    {p.cta} <ChevronRight className="w-4 h-4 ml-1" />
+                  </Button>
+                  <ul className="space-y-3">
+                    {p.features.map((feat) => (
+                      <li key={feat} className="flex items-start gap-2 text-sm">
+                        <Check className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                        <span>{feat}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
