@@ -1,4 +1,4 @@
-```python
+
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
@@ -282,4 +282,3 @@ async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
     redirect_url = f"{FRONTEND_URL}/auth/callback?token={token}"
 
     return RedirectResponse(redirect_url)
-```
