@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
+const BACKEND_URL = "https://replyzen-ai01-production.up.railway.app";
+
 export default function AuthCallback() {
   const navigate = useNavigate();
 
@@ -9,27 +11,27 @@ export default function AuthCallback() {
     const token = params.get("token");
 
     if (token) {
-      // Decode JWT payload to extract user info (no library needed)
-      try {
-        const payload = JSON.parse(atob(token.split(".")[1]));
+      // Save token first
+      localStorage.setItem("replyzen_token", token);
 
-        const userData = {
-          id: payload.user_id || payload.sub || "",
-          email: payload.email || "",
-          full_name: payload.full_name || "",
-          plan: payload.plan || "free",
-        };
-
-        // Use the same localStorage keys as auth-context.js
-        localStorage.setItem("replyzen_token", token);
-        localStorage.setItem("replyzen_user", JSON.stringify(userData));
-
-        // Use window.location.href so AuthProvider re-reads localStorage fresh
-        window.location.href = "/dashboard";
-      } catch (err) {
-        console.error("Failed to parse token:", err);
-        navigate("/login?error=invalid_token", { replace: true });
-      }
+      // Fetch full user data from /me to get name, email, plan correctly
+      fetch(`${BACKEND_URL}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error("Failed to fetch user");
+          return res.json();
+        })
+        .then((userData) => {
+          localStorage.setItem("replyzen_user", JSON.stringify(userData));
+          // Full page reload so AuthProvider re-reads localStorage fresh
+          window.location.href = "/dashboard";
+        })
+        .catch((err) => {
+          console.error("Failed to fetch user info:", err);
+          // Still proceed to dashboard — name will just be missing
+          window.location.href = "/dashboard";
+        });
     } else {
       navigate("/login?error=google_auth_failed", { replace: true });
     }
