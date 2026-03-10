@@ -7,6 +7,7 @@ import AppLayout from "@/components/AppLayout";
 
 const LandingPage = lazy(() => import("@/pages/LandingPage"));
 const LoginPage = lazy(() => import("@/pages/LoginPage"));
+const AuthCallback = lazy(() => import("@/pages/AuthCallback"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const FollowupQueue = lazy(() => import("@/pages/FollowupQueue"));
 const Analytics = lazy(() => import("@/pages/Analytics"));
@@ -47,6 +48,9 @@ function App() {
             {/* Public routes */}
             <Route path="/" element={<PublicRoute><LandingPage /></PublicRoute>} />
             <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
+
+            {/* Google OAuth callback — must be outside PublicRoute and ProtectedRoute */}
+            <Route path="/auth/callback" element={<AuthCallback />} />
 
             {/* Protected routes - wrapped in AppLayout */}
             <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
