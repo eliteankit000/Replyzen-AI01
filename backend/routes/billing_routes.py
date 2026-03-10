@@ -127,6 +127,108 @@ async def get_plans(currency: str = "USD"):
 
 
 # -------------------------------------------------------------------
+# Checkout — creates Razorpay subscription or returns Paddle price_id
+# -------------------------------------------------------------------
+
+# Razorpay Plan IDs — set these in Railway env vars
+# RAZORPAY_PLAN_PRO_MONTHLY, RAZORPAY_PLAN_PRO_YEARLY, etc.
+RAZORPAY_PLAN_IDS = {
+    "pro": {
+        "monthly": os.environ.get("RAZORPAY_PLAN_PRO_MONTHLY", ""),
+        "yearly":  os.environ.get("RAZORPAY_PLAN_PRO_YEARLY", ""),
+    },
+    "business": {
+        "monthly": os.environ.get("RAZORPAY_PLAN_BUSINESS_MONTHLY", ""),
+        "yearly":  os.environ.get("RAZORPAY_PLAN_BUSINESS_YEARLY", ""),
+    },
+}
+
+# Paddle Price IDs — set these in Railway env vars
+PADDLE_PRICE_IDS = {
+    "pro": {
+        "monthly": os.environ.get("PADDLE_PRICE_PRO_MONTHLY", ""),
+        "yearly":  os.environ.get("PADDLE_PRICE_PRO_YEARLY", ""),
+    },
+    "business": {
+        "monthly": os.environ.get("PADDLE_PRICE_BUSINESS_MONTHLY", ""),
+        "yearly":  os.environ.get("PADDLE_PRICE_BUSINESS_YEARLY", ""),
+    },
+}
+
+@router.post("/checkout")
+async def create_checkout(
+    req: CheckoutRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    user_id = current_user["user_id"]
+
+    if req.plan_id not in ("pro", "business"):
+        raise HTTPException(status_code=400, detail="Invalid plan")
+
+    billing_cycle = req.billing_cycle if req.billing_cycle in ("monthly", "yearly") else "monthly"
+    provider = req.provider if req.provider in ("razorpay", "paddle") else "razorpay"
+
+    # ── Razorpay (India) ──────────────────────────────────────────
+    if provider == "razorpay":
+        if not rzp_client:
+            raise HTTPException(status_code=500, detail="Razorpay is not configured. Please set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.")
+
+        plan_id = RAZORPAY_PLAN_IDS.get(req.plan_id, {}).get(billing_cycle, "")
+        if not plan_id:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Razorpay plan ID not configured for {req.plan_id}/{billing_cycle}. "
+                       f"Please set RAZORPAY_PLAN_{req.plan_id.upper()}_{billing_cycle.upper()} in environment variables."
+            )
+
+        try:
+            subscription = rzp_client.subscription.create({
+                "plan_id": plan_id,
+                "customer_notify": 1,
+                "total_count": 12 if billing_cycle == "monthly" else 1,
+                "notes": {
+                    "user_id": user_id,
+                    "plan": req.plan_id,
+                    "billing_cycle": billing_cycle,
+                }
+            })
+        except Exception as e:
+            logger.error(f"Razorpay subscription creation failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to create Razorpay subscription: {str(e)}")
+
+        return {
+            "provider": "razorpay",
+            "subscription_id": subscription["id"],
+            "key_id": rzp_key_id,
+            "plan": req.plan_id,
+            "billing_cycle": billing_cycle,
+            "user_id": user_id,
+        }
+
+    # ── Paddle (International) ────────────────────────────────────
+    else:
+        price_id = PADDLE_PRICE_IDS.get(req.plan_id, {}).get(billing_cycle, "")
+        if not price_id:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Paddle price ID not configured for {req.plan_id}/{billing_cycle}. "
+                       f"Please set PADDLE_PRICE_{req.plan_id.upper()}_{billing_cycle.upper()} in environment variables."
+            )
+
+        paddle_vendor_id = os.environ.get("PADDLE_VENDOR_ID", "")
+
+        return {
+            "provider": "paddle",
+            "price_id": price_id,
+            "vendor_id": paddle_vendor_id,
+            "plan": req.plan_id,
+            "billing_cycle": billing_cycle,
+            "user_id": user_id,
+        }
+
+
+# -------------------------------------------------------------------
 # Plan Limits
 # -------------------------------------------------------------------
 
