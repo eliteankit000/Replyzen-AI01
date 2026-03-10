@@ -4,10 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   Mail, Zap, BarChart3, Clock, ArrowRight, Check,
-  MessageSquare, Send, Shield, ChevronRight, Loader2
+  Send, Shield, ChevronRight, Loader2
 } from "lucide-react";
 
-// ✅ Fix 1: Always has a fallback — no more undefined BACKEND_URL
 const BACKEND_URL =
   process.env.REACT_APP_BACKEND_URL ||
   "https://replyzen-ai01-production.up.railway.app";
@@ -48,16 +47,29 @@ const STEPS = [
   { num: "04", title: "Send & Track", desc: "Review, edit, and send. Track responses and optimize your follow-up game." },
 ];
 
-// ✅ Fix 2: Prices now match backend billing_routes.py exactly
-function getPricingPlans(currency) {
-  const isINR = currency === "INR";
-  const sym = isINR ? "₹" : "$";
+// ✅ Prices match Razorpay dashboard exactly
+const PRICING = {
+  USD: {
+    pro:      { monthly: 19,   yearly: 190,   yearlyPerMonth: 16   },
+    business: { monthly: 49,   yearly: 490,   yearlyPerMonth: 41   },
+  },
+  INR: {
+    pro:      { monthly: 1599, yearly: 15999, yearlyPerMonth: 1333 },
+    business: { monthly: 3999, yearly: 39999, yearlyPerMonth: 3333 },
+  },
+};
+
+function getPricingPlans(currency, billingCycle) {
+  const sym = currency === "INR" ? "₹" : "$";
+  const p = PRICING[currency] || PRICING.USD;
+  const isYearly = billingCycle === "yearly";
 
   return [
     {
       name: "Free",
       price: `${sym}0`,
       period: "forever",
+      billedNote: null,
       desc: "Get started",
       features: [
         "30 follow-ups per month",
@@ -73,8 +85,9 @@ function getPricingPlans(currency) {
     },
     {
       name: "Pro",
-      price: isINR ? `${sym}999` : `${sym}19`,   // ✅ was ₹1599, now matches backend
+      price: isYearly ? `${sym}${p.pro.yearlyPerMonth}` : `${sym}${p.pro.monthly}`,
       period: "/month",
+      billedNote: isYearly ? `Billed ${sym}${p.pro.yearly}/year` : null,
       desc: "For professionals",
       features: [
         "2,500 follow-ups per month",
@@ -92,8 +105,9 @@ function getPricingPlans(currency) {
     },
     {
       name: "Business",
-      price: isINR ? `${sym}2499` : `${sym}49`,  // ✅ was ₹3999, now matches backend
+      price: isYearly ? `${sym}${p.business.yearlyPerMonth}` : `${sym}${p.business.monthly}`,
       period: "/month",
+      billedNote: isYearly ? `Billed ${sym}${p.business.yearly}/year` : null,
       desc: "For teams",
       features: [
         "Unlimited follow-ups",
@@ -113,8 +127,8 @@ function getPricingPlans(currency) {
 
 export default function LandingPage() {
   const navigate = useNavigate();
-  const [currency, setCurrency] = useState(null); // ✅ Fix 3: null = loading
-  const [detectedCurrency, setDetectedCurrency] = useState("USD");
+  const [currency, setCurrency] = useState(null); // null = detecting
+  const [billingCycle, setBillingCycle] = useState("monthly");
 
   useEffect(() => {
     async function detectLocation() {
@@ -122,21 +136,19 @@ export default function LandingPage() {
         const res = await fetch(`${BACKEND_URL}/api/billing/detect-location`);
         if (res.ok) {
           const data = await res.json();
-          const detected = data.currency || "USD";
-          setDetectedCurrency(detected);
-          setCurrency(detected);
+          setCurrency(data.currency || "USD");
         } else {
           setCurrency("USD");
         }
-      } catch (e) {
-        setCurrency("USD"); // Default to USD on any error
+      } catch {
+        setCurrency("USD");
       }
     }
     detectLocation();
   }, []);
 
-  const PLANS = getPricingPlans(currency || "USD");
   const isLoading = currency === null;
+  const PLANS = getPricingPlans(currency || "USD", billingCycle);
 
   return (
     <div className="min-h-screen bg-background">
@@ -180,7 +192,7 @@ export default function LandingPage() {
             <Button size="lg" onClick={() => navigate("/login")} data-testid="hero-cta-btn" className="bg-primary hover:bg-primary/90 text-white px-8 h-12 text-base">
               Start for Free <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
-            <Button variant="outline" size="lg" className="h-12 text-base" onClick={() => { const el = document.getElementById("how-it-works"); el?.scrollIntoView({ behavior: "smooth" }); }}>
+            <Button variant="outline" size="lg" className="h-12 text-base" onClick={() => { document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" }); }}>
               See How it Works
             </Button>
           </div>
@@ -241,49 +253,45 @@ export default function LandingPage() {
             <h2 className="text-base md:text-lg font-semibold text-primary mb-2">Pricing</h2>
             <p className="text-2xl sm:text-3xl font-bold">Simple, transparent pricing</p>
 
-            {/* ✅ Currency toggle — auto-detected + manual override */}
-            <div className="mt-4 flex items-center justify-center gap-2">
+            {/* Monthly / Yearly toggle */}
+            <div className="mt-6 flex items-center justify-center">
               {isLoading ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Detecting your location...
+                  Loading prices...
                 </div>
               ) : (
                 <div className="flex items-center gap-1 p-1 rounded-lg bg-muted border border-border">
                   <button
-                    onClick={() => setCurrency("USD")}
-                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-                      currency === "USD"
+                    onClick={() => setBillingCycle("monthly")}
+                    className={`px-5 py-1.5 rounded-md text-sm font-medium transition-all ${
+                      billingCycle === "monthly"
                         ? "bg-background text-foreground shadow-sm"
                         : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
-                    $ USD
+                    Monthly
                   </button>
                   <button
-                    onClick={() => setCurrency("INR")}
-                    className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-                      currency === "INR"
+                    onClick={() => setBillingCycle("yearly")}
+                    className={`flex items-center gap-2 px-5 py-1.5 rounded-md text-sm font-medium transition-all ${
+                      billingCycle === "yearly"
                         ? "bg-background text-foreground shadow-sm"
                         : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
-                    ₹ INR
+                    Yearly
+                    <span className="text-xs font-semibold text-primary bg-primary/10 px-1.5 py-0.5 rounded-full">
+                      Save 17%
+                    </span>
                   </button>
                 </div>
               )}
             </div>
-
-            {/* Show auto-detected label */}
-            {!isLoading && detectedCurrency === currency && (
-              <p className="text-xs text-muted-foreground mt-2">
-                📍 Prices auto-detected for your region
-              </p>
-            )}
           </div>
 
+          {/* Plan cards — skeleton while detecting */}
           {isLoading ? (
-            // ✅ Fix 3: Show skeleton while detecting location — no flicker
             <div className="grid md:grid-cols-3 gap-6">
               {[1, 2, 3].map((i) => (
                 <div key={i} className="rounded-xl border border-border bg-card p-8 animate-pulse">
@@ -291,9 +299,7 @@ export default function LandingPage() {
                   <div className="h-4 bg-muted rounded w-24 mb-6" />
                   <div className="h-10 bg-muted rounded w-28 mb-6" />
                   <div className="h-9 bg-muted rounded w-full mb-6" />
-                  {[1,2,3,4].map(j => (
-                    <div key={j} className="h-3 bg-muted rounded w-full mb-3" />
-                  ))}
+                  {[1,2,3,4].map(j => <div key={j} className="h-3 bg-muted rounded w-full mb-3" />)}
                 </div>
               ))}
             </div>
@@ -302,18 +308,27 @@ export default function LandingPage() {
               {PLANS.map((p) => (
                 <div
                   key={p.name}
-                  className={`relative rounded-xl border p-8 ${p.popular ? "border-primary bg-card shadow-lg ring-1 ring-primary/20" : "border-border bg-card"}`}
+                  className={`relative rounded-xl border p-8 ${
+                    p.popular
+                      ? "border-primary bg-card shadow-lg ring-1 ring-primary/20"
+                      : "border-border bg-card"
+                  }`}
                   data-testid={`plan-${p.name.toLowerCase()}`}
                 >
                   {p.popular && (
-                    <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-white">Most Popular</Badge>
+                    <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-white">
+                      Most Popular
+                    </Badge>
                   )}
                   <h3 className="text-lg font-semibold">{p.name}</h3>
                   <p className="text-sm text-muted-foreground mt-1">{p.desc}</p>
-                  <div className="mt-6 mb-6">
+                  <div className="mt-6 mb-1">
                     <span className="text-4xl font-bold">{p.price}</span>
                     <span className="text-sm text-muted-foreground">{p.period}</span>
                   </div>
+                  <p className="text-xs text-muted-foreground mb-5 h-4">
+                    {p.billedNote || ""}
+                  </p>
                   <Button
                     className={`w-full mb-6 ${p.popular ? "bg-primary hover:bg-primary/90 text-white" : ""}`}
                     variant={p.popular ? "default" : "outline"}
