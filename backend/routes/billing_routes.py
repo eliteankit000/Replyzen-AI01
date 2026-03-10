@@ -32,6 +32,7 @@ class CheckoutRequest(BaseModel):
     provider: str = "razorpay"
 
 
+# ✅ Correct prices matching Razorpay dashboard
 PLANS = {
     "USD": [
         {
@@ -72,16 +73,16 @@ PLANS = {
             "id": "pro",
             "name": "Pro",
             "description": "For professionals",
-            "price_monthly": 999,
-            "price_yearly": 9990,
+            "price_monthly": 1599,   # ✅ matches Razorpay: Replyzen Pro Monthly
+            "price_yearly": 15999,   # ✅ matches Razorpay: Replyzen Pro Yearly
             "features": ["2,500 follow-ups per month", "Connect up to 3 email accounts", "Advanced AI tones", "Manual sending", "Auto-send automation", "Analytics dashboard", "Inbox scanning", "Follow-up detection", "Priority support"],
         },
         {
             "id": "business",
             "name": "Business",
             "description": "For teams and power users",
-            "price_monthly": 2499,
-            "price_yearly": 24990,
+            "price_monthly": 3999,   # ✅ matches Razorpay: Replyzen Business Monthly
+            "price_yearly": 39999,   # ✅ matches Razorpay: Replyzen Business Yearly
             "features": ["Unlimited follow-ups", "Connect up to 10 email accounts", "All AI tones", "Manual sending", "Auto-send automation", "Inbox scanning", "Follow-up detection", "Dedicated support"],
         },
     ],
@@ -110,12 +111,13 @@ async def detect_location(request: Request):
     return {
         "country": country,
         "currency": "INR" if is_india else "USD",
+        "symbol": "₹" if is_india else "$",
         "payment_provider": "razorpay" if is_india else "paddle",
     }
 
 
 # -------------------------------------------------------------------
-# Plans — returns price_monthly, price_yearly, features, description
+# Plans
 # -------------------------------------------------------------------
 
 @router.get("/plans")
@@ -129,9 +131,9 @@ async def get_plans(currency: str = "USD"):
 # -------------------------------------------------------------------
 
 PLAN_LIMITS = {
-    "free":     {"followups_per_month": 10,  "followups_used": 0, "email_accounts": 1,  "ai_replies": 10},
-    "pro":      {"followups_per_month": 200, "followups_used": 0, "email_accounts": 3,  "ai_replies": 200},
-    "business": {"followups_per_month": -1,  "followups_used": 0, "email_accounts": 10, "ai_replies": -1},
+    "free":     {"followups_per_month": 30,  "max_email_accounts": 1,  "ai_replies": 30},
+    "pro":      {"followups_per_month": 2500,"max_email_accounts": 3,  "ai_replies": 2500},
+    "business": {"followups_per_month": -1,  "max_email_accounts": 10, "ai_replies": -1},
 }
 
 @router.get("/plan-limits")
