@@ -12,54 +12,27 @@ import {
   ArrowRight, Plus, RefreshCw
 } from "lucide-react";
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   SyncBanner — rendered INSIDE the page JSX using its own isolated state.
-   loadData() only touches: loading, stats, silentThreads, recentFollowups.
-   It NEVER touches syncBanner, so the banner survives every re-render.
-───────────────────────────────────────────────────────────────────────────── */
-function SyncBanner({ banner, onClose }) {
-  if (!banner) return null;
-  const isError = banner.variant === "error";
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 10,
-      padding: "12px 16px", borderRadius: 10, marginBottom: 4,
-      background: isError ? "#fef2f2" : "#f0fdf4",
-      border: `1.5px solid ${isError ? "#f87171" : "#4ade80"}`,
-      color: isError ? "#7f1d1d" : "#14532d",
-      fontSize: 14, fontWeight: 500,
-      boxShadow: "0 2px 12px rgba(0,0,0,0.08)",
-    }}>
-      {isError
-        ? <XCircle style={{ width: 18, height: 18, color: "#dc2626", flexShrink: 0 }} />
-        : <CheckCircle style={{ width: 18, height: 18, color: "#16a34a", flexShrink: 0 }} />
-      }
-      <span style={{ flex: 1 }}>{banner.message}</span>
-      <button
-        onClick={onClose}
-        style={{ all: "unset", cursor: "pointer", opacity: 0.5, display: "flex" }}
-      >
-        <X style={{ width: 15, height: 15 }} />
-      </button>
-    </div>
-  );
-}
-
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  // ── Isolated banner state — loadData() never touches this ──
-  const [syncBanner, setSyncBanner] = useState(null);
-  const bannerTimerRef = useRef(null);
+  // ── Banner: stored in ref (survives re-renders) AND state (triggers paint) ──
+  const bannerRef   = useRef(null);
+  const timerRef    = useRef(null);
+  const [banner, setBanner] = useState(null); // { msg, type: "success"|"error" }
 
-  const showBanner = (message, variant = "success") => {
-    if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
-    setSyncBanner({ message, variant });
-    bannerTimerRef.current = setTimeout(() => setSyncBanner(null), 6000);
+  const showBanner = (msg, type = "success") => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    const value = { msg, type };
+    bannerRef.current = value;
+    setBanner(value);
+    timerRef.current = setTimeout(() => {
+      bannerRef.current = null;
+      setBanner(null);
+    }, 7000);
   };
 
-  // ── Data state — touched only by loadData() ──
+  // ── Data state ──
   const [stats, setStats]                     = useState(null);
   const [silentThreads, setSilentThreads]     = useState([]);
   const [recentFollowups, setRecentFollowups] = useState([]);
@@ -68,7 +41,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadData();
-    return () => { if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current); };
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
   }, []);
 
   const loadData = async () => {
@@ -83,7 +56,7 @@ export default function Dashboard() {
       setSilentThreads(threadsRes.data.threads || []);
       setRecentFollowups(followupsRes.data.followups || []);
     } catch (err) {
-      console.error("Failed to load dashboard:", err);
+      console.error("loadData failed:", err);
     } finally {
       setLoading(false);
     }
@@ -91,26 +64,29 @@ export default function Dashboard() {
 
   const handleSync = async () => {
     setSyncing(true);
+    let succeeded = false;
+    let errorMsg  = "";
+
     try {
       const res = await emailAPI.syncEmails();
-      const newThreads = res?.data?.new_threads ?? 0;
-
-      // ✅ Set banner BEFORE loadData — they use separate state, won't interfere
-      showBanner(
-        newThreads > 0
-          ? `Sync complete ✅ — ${newThreads} new thread${newThreads === 1 ? "" : "s"} synced from Gmail.`
-          : "Sync complete ✅ — Your inbox is already up to date."
-      );
-
-      await loadData();
-    } catch (err) {
-      console.error("Sync failed:", err);
-      showBanner(
-        err?.response?.data?.message || err?.message || "Sync failed. Please try again.",
-        "error"
-      );
-    } finally {
+      console.log("[Sync] response:", res);
+      succeeded = true;
+      const n = res?.data?.new_threads ?? 0;
+      errorMsg = "";
+      // ── Stop spinning FIRST so re-render happens before banner ──
       setSyncing(false);
+      showBanner(
+        n > 0
+          ? `Sync complete ✅  —  ${n} new thread${n === 1 ? "" : "s"} synced from Gmail.`
+          : "Sync complete ✅  —  Your inbox is already up to date."
+      );
+      // Reload data in background AFTER banner is queued
+      loadData();
+    } catch (err) {
+      console.error("[Sync] error:", err);
+      errorMsg = err?.response?.data?.message || err?.message || "Sync failed. Please try again.";
+      setSyncing(false);
+      showBanner(errorMsg, "error");
     }
   };
 
@@ -129,11 +105,46 @@ export default function Dashboard() {
     return `${diffDays} days ago`;
   };
 
-  return (
-    <div className="space-y-8" data-testid="dashboard-page">
+  const isError = banner?.type === "error";
 
-      {/* ── Sync banner — always visible when set, lives at top of page ── */}
-      <SyncBanner banner={syncBanner} onClose={() => setSyncBanner(null)} />
+  return (
+    <div className="space-y-6" data-testid="dashboard-page">
+
+      {/* ── SYNC BANNER ─────────────────────────────────────────────────────
+           Rendered inline at the top of the page. Uses only React state —
+           no portals, no DOM injection. Completely isolated from loadData.
+      ──────────────────────────────────────────────────────────────────── */}
+      {banner && (
+        <div
+          role="alert"
+          style={{
+            display:      "flex",
+            alignItems:   "center",
+            gap:          12,
+            padding:      "13px 18px",
+            borderRadius: 10,
+            background:   isError ? "#fef2f2" : "#f0fdf4",
+            border:       `1.5px solid ${isError ? "#f87171" : "#4ade80"}`,
+            color:        isError ? "#7f1d1d" : "#14532d",
+            fontSize:     14,
+            fontWeight:   500,
+            boxShadow:    "0 2px 12px rgba(0,0,0,0.09)",
+          }}
+        >
+          {isError
+            ? <XCircle    style={{ width: 18, height: 18, color: "#dc2626", flexShrink: 0 }} />
+            : <CheckCircle style={{ width: 18, height: 18, color: "#16a34a", flexShrink: 0 }} />
+          }
+          <span style={{ flex: 1 }}>{banner.msg}</span>
+          <button
+            onClick={() => { if (timerRef.current) clearTimeout(timerRef.current); setBanner(null); }}
+            style={{ all: "unset", cursor: "pointer", opacity: 0.45, display: "flex" }}
+            aria-label="Dismiss"
+          >
+            <X style={{ width: 14, height: 14 }} />
+          </button>
+        </div>
+      )}
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
