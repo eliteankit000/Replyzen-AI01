@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { analyticsAPI, emailAPI, followupAPI } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
@@ -7,108 +7,69 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  CheckCircle, XCircle, X,
   MessageSquare, Mail, Send, TrendingUp, Clock, Zap,
   ArrowRight, Plus, RefreshCw
 } from "lucide-react";
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   Pure-DOM toast — no React state, no portals, no re-render interference.
-   Calling showToast() writes directly to document.body and is 100% immune
-   to React batching, StrictMode double-invokes, and layout CSS constraints.
+   SyncBanner — rendered INSIDE the page JSX using its own isolated state.
+   loadData() only touches: loading, stats, silentThreads, recentFollowups.
+   It NEVER touches syncBanner, so the banner survives every re-render.
 ───────────────────────────────────────────────────────────────────────────── */
-function showToast({ title, description, variant = "success" }) {
-  const isError = variant === "destructive";
-
-  // Ensure container exists
-  let container = document.getElementById("__app_toast_container__");
-  if (!container) {
-    container = document.createElement("div");
-    container.id = "__app_toast_container__";
-    Object.assign(container.style, {
-      position:      "fixed",
-      bottom:        "24px",
-      right:         "24px",
-      zIndex:        "2147483647",
-      display:       "flex",
-      flexDirection: "column",
-      gap:           "10px",
-      alignItems:    "flex-end",
-      pointerEvents: "none",
-    });
-    document.body.appendChild(container);
-  }
-
-  // Build toast element
-  const toast = document.createElement("div");
-  Object.assign(toast.style, {
-    display:         "flex",
-    alignItems:      "flex-start",
-    gap:             "12px",
-    padding:         "14px 16px",
-    borderRadius:    "10px",
-    boxShadow:       "0 8px 32px rgba(0,0,0,0.22)",
-    border:          `1.5px solid ${isError ? "#f87171" : "#4ade80"}`,
-    background:      isError ? "#fef2f2" : "#f0fdf4",
-    color:           isError ? "#7f1d1d" : "#14532d",
-    fontSize:        "14px",
-    minWidth:        "300px",
-    maxWidth:        "380px",
-    pointerEvents:   "all",
-    transition:      "opacity 0.3s ease",
-    opacity:         "1",
-  });
-
-  const icon = document.createElement("span");
-  icon.innerHTML = isError
-    ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`
-    : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`;
-
-  const body = document.createElement("div");
-  body.style.flex = "1";
-
-  const titleEl = document.createElement("div");
-  titleEl.style.cssText = "font-weight:700;line-height:1.3;";
-  titleEl.textContent = title;
-  body.appendChild(titleEl);
-
-  if (description) {
-    const desc = document.createElement("div");
-    desc.style.cssText = "margin-top:3px;font-size:12px;opacity:0.8;";
-    desc.textContent = description;
-    body.appendChild(desc);
-  }
-
-  const closeBtn = document.createElement("button");
-  closeBtn.style.cssText = "all:unset;cursor:pointer;opacity:0.5;flex-shrink:0;margin-top:1px;";
-  closeBtn.setAttribute("aria-label", "Dismiss");
-  closeBtn.innerHTML = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-
-  const dismiss = () => {
-    toast.style.opacity = "0";
-    setTimeout(() => toast.remove(), 300);
-  };
-  closeBtn.addEventListener("click", dismiss);
-
-  toast.appendChild(icon);
-  toast.appendChild(body);
-  toast.appendChild(closeBtn);
-  container.appendChild(toast);
-
-  // Auto-dismiss after 5s
-  setTimeout(dismiss, 5000);
+function SyncBanner({ banner, onClose }) {
+  if (!banner) return null;
+  const isError = banner.variant === "error";
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 10,
+      padding: "12px 16px", borderRadius: 10, marginBottom: 4,
+      background: isError ? "#fef2f2" : "#f0fdf4",
+      border: `1.5px solid ${isError ? "#f87171" : "#4ade80"}`,
+      color: isError ? "#7f1d1d" : "#14532d",
+      fontSize: 14, fontWeight: 500,
+      boxShadow: "0 2px 12px rgba(0,0,0,0.08)",
+    }}>
+      {isError
+        ? <XCircle style={{ width: 18, height: 18, color: "#dc2626", flexShrink: 0 }} />
+        : <CheckCircle style={{ width: 18, height: 18, color: "#16a34a", flexShrink: 0 }} />
+      }
+      <span style={{ flex: 1 }}>{banner.message}</span>
+      <button
+        onClick={onClose}
+        style={{ all: "unset", cursor: "pointer", opacity: 0.5, display: "flex" }}
+      >
+        <X style={{ width: 15, height: 15 }} />
+      </button>
+    </div>
+  );
 }
 
-/* ─── Dashboard ──────────────────────────────────────────────────────────── */
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
+
+  // ── Isolated banner state — loadData() never touches this ──
+  const [syncBanner, setSyncBanner] = useState(null);
+  const bannerTimerRef = useRef(null);
+
+  const showBanner = (message, variant = "success") => {
+    if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+    setSyncBanner({ message, variant });
+    bannerTimerRef.current = setTimeout(() => setSyncBanner(null), 6000);
+  };
+
+  // ── Data state — touched only by loadData() ──
   const [stats, setStats]                     = useState(null);
   const [silentThreads, setSilentThreads]     = useState([]);
   const [recentFollowups, setRecentFollowups] = useState([]);
   const [loading, setLoading]                 = useState(true);
   const [syncing, setSyncing]                 = useState(false);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => {
+    loadData();
+    return () => { if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current); };
+  }, []);
 
   const loadData = async () => {
     setLoading(true);
@@ -132,27 +93,22 @@ export default function Dashboard() {
     setSyncing(true);
     try {
       const res = await emailAPI.syncEmails();
-
-      // Show toast immediately — pure DOM, React can't touch it
       const newThreads = res?.data?.new_threads ?? 0;
-      showToast({
-        title: "Sync complete ✅",
-        description: newThreads > 0
-          ? `${newThreads} new thread${newThreads === 1 ? "" : "s"} synced from Gmail.`
-          : "Your inbox is already up to date.",
-      });
+
+      // ✅ Set banner BEFORE loadData — they use separate state, won't interfere
+      showBanner(
+        newThreads > 0
+          ? `Sync complete ✅ — ${newThreads} new thread${newThreads === 1 ? "" : "s"} synced from Gmail.`
+          : "Sync complete ✅ — Your inbox is already up to date."
+      );
 
       await loadData();
     } catch (err) {
       console.error("Sync failed:", err);
-      showToast({
-        variant: "destructive",
-        title: "Sync failed",
-        description:
-          err?.response?.data?.message ||
-          err?.message ||
-          "Something went wrong while syncing. Please try again.",
-      });
+      showBanner(
+        err?.response?.data?.message || err?.message || "Sync failed. Please try again.",
+        "error"
+      );
     } finally {
       setSyncing(false);
     }
@@ -175,6 +131,9 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-8" data-testid="dashboard-page">
+
+      {/* ── Sync banner — always visible when set, lives at top of page ── */}
+      <SyncBanner banner={syncBanner} onClose={() => setSyncBanner(null)} />
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
