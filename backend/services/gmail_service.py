@@ -117,35 +117,34 @@ def exchange_code_for_tokens(code: str, redirect_uri: Optional[str] = None) -> D
 
     token_data = response.json()
 
-    expiry = None
+    # ✅ Keep expiry as a datetime object (not a string) so it can be
+    #    passed directly to PostgreSQL and Google Credentials without conversion
+    expiry: Optional[datetime] = None
     if token_data.get("expires_in"):
-        expiry = (
-            datetime.now(timezone.utc) + timedelta(seconds=token_data["expires_in"])
-        ).isoformat()
+        expiry = datetime.now(timezone.utc) + timedelta(seconds=token_data["expires_in"])
 
     return {
         "access_token": token_data.get("access_token"),
         "refresh_token": token_data.get("refresh_token"),
         "token_uri": token_url,
-        "expiry": expiry,
+        "expiry": expiry,  # datetime | None
     }
 
 
-def encrypt_tokens(tokens: Dict[str, Any]) -> Dict[str, str]:
+def encrypt_tokens(tokens: Dict[str, Any]) -> Dict[str, Any]:
     """
     Encrypt OAuth tokens for secure storage.
-    Returns keys that match the DB column names:
-      access_token, refresh_token, token_expiry
+    Returns keys matching DB column names: access_token, refresh_token, token_expiry
+    token_expiry is kept as datetime so PostgreSQL accepts it directly.
     """
     return {
-        # ✅ Keys now match DB column names directly
         "access_token": token_encryption.encrypt(tokens["access_token"]) if tokens.get("access_token") else "",
         "refresh_token": token_encryption.encrypt(tokens["refresh_token"]) if tokens.get("refresh_token") else "",
-        "token_expiry": tokens.get("expiry", ""),
+        "token_expiry": tokens.get("expiry"),  # ✅ datetime object, not a string
     }
 
 
-def decrypt_tokens(db_row: Dict[str, str]) -> Dict[str, Any]:
+def decrypt_tokens(db_row: Dict[str, Any]) -> Dict[str, Any]:
     """
     Decrypt stored OAuth tokens.
     Accepts DB column names: access_token, refresh_token, token_expiry
@@ -153,26 +152,30 @@ def decrypt_tokens(db_row: Dict[str, str]) -> Dict[str, Any]:
     return {
         "access_token": token_encryption.decrypt(db_row["access_token"]) if db_row.get("access_token") else None,
         "refresh_token": token_encryption.decrypt(db_row["refresh_token"]) if db_row.get("refresh_token") else None,
-        "expiry": db_row.get("token_expiry"),
+        "expiry": db_row.get("token_expiry"),  # datetime | None
     }
 
 
-def get_gmail_service(db_tokens: Dict[str, str]):
+def get_gmail_service(db_tokens: Dict[str, Any]):
     """
     Create Gmail API service from DB token row.
     Accepts a dict with keys: access_token, refresh_token, token_expiry
     """
     tokens = decrypt_tokens(db_tokens)
 
-    expiry = None
-    if tokens.get("expiry"):
+    expiry = tokens.get("expiry")
+
+    # expiry may be a datetime (from DB) or None
+    if isinstance(expiry, str):
+        # Fallback: parse if somehow still a string
         try:
-            expiry = datetime.fromisoformat(tokens["expiry"].replace("Z", "+00:00"))
-            # ✅ Strip tzinfo — Google's Credentials uses datetime.utcnow() (naive) internally
-            if expiry.tzinfo is not None:
-                expiry = expiry.replace(tzinfo=None)
+            expiry = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
         except Exception:
-            pass
+            expiry = None
+
+    if isinstance(expiry, datetime) and expiry.tzinfo is not None:
+        # ✅ Strip tzinfo — Google's Credentials uses datetime.utcnow() (naive) internally
+        expiry = expiry.replace(tzinfo=None)
 
     credentials = Credentials(
         token=tokens["access_token"],
@@ -189,7 +192,7 @@ def get_gmail_service(db_tokens: Dict[str, str]):
     return build("gmail", "v1", credentials=credentials), credentials
 
 
-def get_user_email(db_tokens: Dict[str, str]) -> str:
+def get_user_email(db_tokens: Dict[str, Any]) -> str:
     """Get the authenticated user's email address."""
     service, _ = get_gmail_service(db_tokens)
     profile = service.users().getProfile(userId="me").execute()
@@ -197,7 +200,7 @@ def get_user_email(db_tokens: Dict[str, str]) -> str:
 
 
 def fetch_threads(
-    db_tokens: Dict[str, str],
+    db_tokens: Dict[str, Any],
     max_results: int = 50,
     label_ids: List[str] = None
 ) -> List[Dict[str, Any]]:
@@ -262,7 +265,7 @@ def fetch_threads(
 
 
 def send_email(
-    db_tokens: Dict[str, str],
+    db_tokens: Dict[str, Any],
     to: str,
     subject: str,
     body: str,
@@ -309,7 +312,7 @@ def send_email(
 
 
 def get_message_details(
-    db_tokens: Dict[str, str],
+    db_tokens: Dict[str, Any],
     message_id: str
 ) -> Dict[str, Any]:
     """Get detailed information about a specific message."""
