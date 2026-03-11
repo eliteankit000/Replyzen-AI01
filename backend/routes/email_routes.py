@@ -36,6 +36,23 @@ class ConnectGmailRequest(BaseModel):
     email: str
 
 
+async def verify_user_exists(user_id: str, db: AsyncSession):
+    """
+    Guard: ensure user_id exists in public.users before any email_accounts insert.
+    Prevents FK violation if email_accounts still points to auth.users.
+    """
+    result = await db.execute(
+        text("SELECT id FROM users WHERE id = :uid"),
+        {"uid": user_id}
+    )
+    if not result.fetchone():
+        raise HTTPException(
+            status_code=404,
+            detail=f"User {user_id} not found in users table. "
+                   "Please re-login and try again."
+        )
+
+
 @router.get("/gmail/auth-url")
 async def get_gmail_auth_url(
     current_user: dict = Depends(get_current_user),
@@ -63,10 +80,10 @@ async def gmail_oauth_callback_get(
 ):
     user_id = state
 
-    tokens = exchange_code_for_tokens(code, GMAIL_REDIRECT_URI)
+    # ✅ Guard: verify user exists in public.users before any DB write
+    await verify_user_exists(user_id, db)
 
-    # encrypt_tokens now returns keys matching DB columns:
-    # access_token, refresh_token, token_expiry
+    tokens = exchange_code_for_tokens(code, GMAIL_REDIRECT_URI)
     encrypted = encrypt_tokens(tokens)
     gmail_email = get_user_email(encrypted)
 
@@ -94,7 +111,6 @@ async def gmail_oauth_callback_get(
                 "id": existing[0],
             },
         )
-        await db.commit()
     else:
         account_id = str(uuid.uuid4())
         await db.execute(
@@ -114,8 +130,8 @@ async def gmail_oauth_callback_get(
                 "connected": datetime.now(timezone.utc),
             },
         )
-        await db.commit()
 
+    await db.commit()
     return RedirectResponse(f"{FRONTEND_URL}/settings?gmail=connected")
 
 
@@ -130,6 +146,9 @@ async def gmail_oauth_callback_post(
 
     if state != user_id:
         raise HTTPException(status_code=400, detail="Invalid OAuth state")
+
+    # ✅ Guard: verify user exists in public.users before any DB write
+    await verify_user_exists(user_id, db)
 
     tokens = exchange_code_for_tokens(code, GMAIL_REDIRECT_URI)
     encrypted = encrypt_tokens(tokens)
