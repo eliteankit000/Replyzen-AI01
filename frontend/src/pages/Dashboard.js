@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/components/ui/use-toast";
 import {
   MessageSquare, Mail, Send, TrendingUp, Clock, Zap,
   ArrowRight, Plus, RefreshCw
@@ -14,6 +15,7 @@ import {
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { toast } = useToast();
   const [stats, setStats] = useState(null);
   const [silentThreads, setSilentThreads] = useState([]);
   const [recentFollowups, setRecentFollowups] = useState([]);
@@ -45,10 +47,26 @@ export default function Dashboard() {
   const handleSync = async () => {
     setSyncing(true);
     try {
-      await emailAPI.syncEmails();
+      const res = await emailAPI.syncEmails();
       await loadData();
+      const newThreads = res?.data?.new_threads ?? 0;
+      toast({
+        title: "Sync complete ✅",
+        description:
+          newThreads > 0
+            ? `${newThreads} new thread${newThreads === 1 ? "" : "s"} synced from Gmail.`
+            : "Your inbox is already up to date.",
+      });
     } catch (err) {
       console.error("Sync failed:", err);
+      toast({
+        variant: "destructive",
+        title: "Sync failed",
+        description:
+          err?.response?.data?.message ||
+          err?.message ||
+          "Something went wrong while syncing. Please try again.",
+      });
     } finally {
       setSyncing(false);
     }
