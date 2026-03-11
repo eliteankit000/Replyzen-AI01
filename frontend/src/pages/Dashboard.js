@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { analyticsAPI, emailAPI, followupAPI } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
@@ -6,21 +6,52 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useToast } from "@/components/ui/use-toast";
-import {
-  MessageSquare, Mail, Send, TrendingUp, Clock, Zap,
-  ArrowRight, Plus, RefreshCw
-} from "lucide-react";
+import { CheckCircle, XCircle, X, MessageSquare, Mail, Send, TrendingUp, Clock, Zap, ArrowRight, Plus, RefreshCw } from "lucide-react";
+
+function InlineToast({ toast, onDismiss }) {
+  useEffect(() => {
+    const timer = setTimeout(() => onDismiss(toast.id), 4000);
+    return () => clearTimeout(timer);
+  }, [toast.id, onDismiss]);
+
+  const isError = toast.variant === "destructive";
+  return (
+    <div
+      className={`flex items-start gap-3 px-4 py-3 rounded-lg shadow-lg border text-sm animate-fade-in max-w-sm w-full
+        ${isError ? "bg-red-50 border-red-200 text-red-900" : "bg-white border-emerald-200 text-gray-900"}`}
+    >
+      {isError
+        ? <XCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+        : <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />}
+      <div className="flex-1 min-w-0">
+        <p className="font-semibold leading-tight">{toast.title}</p>
+        {toast.description && <p className="mt-0.5 text-xs opacity-80">{toast.description}</p>}
+      </div>
+      <button onClick={() => onDismiss(toast.id)} className="shrink-0 opacity-50 hover:opacity-100 transition-opacity">
+        <X className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { toast } = useToast();
+  const [toasts, setToasts] = useState([]);
   const [stats, setStats] = useState(null);
   const [silentThreads, setSilentThreads] = useState([]);
   const [recentFollowups, setRecentFollowups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+
+  const showToast = useCallback((t) => {
+    const id = Date.now();
+    setToasts((prev) => [...prev, { ...t, id }]);
+  }, []);
+
+  const dismissToast = useCallback((id) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
 
   useEffect(() => {
     loadData();
@@ -50,7 +81,7 @@ export default function Dashboard() {
       const res = await emailAPI.syncEmails();
       await loadData();
       const newThreads = res?.data?.new_threads ?? 0;
-      toast({
+      showToast({
         title: "Sync complete ✅",
         description:
           newThreads > 0
@@ -59,7 +90,7 @@ export default function Dashboard() {
       });
     } catch (err) {
       console.error("Sync failed:", err);
-      toast({
+      showToast({
         variant: "destructive",
         title: "Sync failed",
         description:
@@ -92,6 +123,12 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-8" data-testid="dashboard-page">
+      {/* Toast notifications */}
+      <div className="fixed bottom-5 right-5 z-50 flex flex-col gap-2 items-end">
+        {toasts.map((t) => (
+          <InlineToast key={t.id} toast={t} onDismiss={dismissToast} />
+        ))}
+      </div>
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
