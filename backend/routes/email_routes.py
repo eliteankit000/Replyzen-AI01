@@ -51,7 +51,6 @@ async def get_gmail_auth_url(
     if not GMAIL_CLIENT_ID:
         raise HTTPException(status_code=500, detail="Gmail OAuth not configured")
 
-    # ✅ Fix: pass redirect_uri so Google knows where to redirect back
     auth_url = get_auth_url(state=user_id, redirect_uri=GMAIL_REDIRECT_URI)
 
     return {"auth_url": auth_url}
@@ -71,8 +70,9 @@ async def gmail_oauth_callback_get(
     encrypted = encrypt_tokens(tokens)
     gmail_email = get_user_email(encrypted)
 
+    # ✅ FIX: column is 'email_address', not 'email'
     result = await db.execute(
-        text("SELECT id FROM email_accounts WHERE user_id=:uid AND email=:email"),
+        text("SELECT id FROM email_accounts WHERE user_id=:uid AND email_address=:email"),
         {"uid": user_id, "email": gmail_email},
     )
     existing = result.fetchone()
@@ -99,9 +99,9 @@ async def gmail_oauth_callback_get(
         await db.execute(
             text("""
             INSERT INTO email_accounts
-            (id,user_id,email,provider,status,access_token_encrypted,refresh_token_encrypted,connected_at)
+            (id, user_id, email_address, provider, is_active, access_token_encrypted, refresh_token_encrypted, created_at)
             VALUES
-            (:id,:uid,:email,'gmail','connected',:access,:refresh,:connected)
+            (:id, :uid, :email, 'gmail', true, :access, :refresh, :connected)
             """),
             {
                 "id": account_id,
@@ -135,8 +135,9 @@ async def gmail_oauth_callback_post(
     encrypted = encrypt_tokens(tokens)
     gmail_email = get_user_email(encrypted)
 
+    # ✅ FIX: column is 'email_address', not 'email'
     result = await db.execute(
-        text("SELECT id FROM email_accounts WHERE user_id=:uid AND email=:email"),
+        text("SELECT id FROM email_accounts WHERE user_id=:uid AND email_address=:email"),
         {"uid": user_id, "email": gmail_email},
     )
     existing = result.fetchone()
@@ -164,9 +165,8 @@ async def gmail_oauth_callback_post(
     await db.execute(
         text("""
         INSERT INTO email_accounts
-        (id,user_id,email,provider,status,access_token_encrypted,refresh_token_encrypted,connected_at)
-        VALUES
-        (:id,:uid,:email,'gmail','connected',:access,:refresh,:connected)
+        (id, user_id, email_address, provider, is_active, access_token_encrypted, refresh_token_encrypted, created_at)
+        VALUES (:id, :uid, :email, 'gmail', true, :access, :refresh, :connected)
         """),
         {
             "id": account_id,
@@ -186,8 +186,9 @@ async def list_accounts(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    # ✅ FIX: column is 'email_address', not 'email'
     result = await db.execute(
-        text("SELECT id,email,provider,status,connected_at FROM email_accounts WHERE user_id=:uid"),
+        text("SELECT id, email_address, provider, is_active, created_at FROM email_accounts WHERE user_id=:uid"),
         {"uid": current_user["user_id"]},
     )
     accounts = [dict(row._mapping) for row in result]
@@ -227,8 +228,9 @@ async def connect_gmail_demo(
     if not account_check["allowed"]:
         raise HTTPException(status_code=403, detail="Email account limit reached")
 
+    # ✅ FIX: column is 'email_address', not 'email'
     result = await db.execute(
-        text("SELECT id FROM email_accounts WHERE user_id=:uid AND email=:email"),
+        text("SELECT id FROM email_accounts WHERE user_id=:uid AND email_address=:email"),
         {"uid": user_id, "email": req.email},
     )
     if result.fetchone():
@@ -238,8 +240,8 @@ async def connect_gmail_demo(
     await db.execute(
         text("""
         INSERT INTO email_accounts
-        (id,user_id,email,provider,status,connected_at)
-        VALUES (:id,:uid,:email,'gmail','connected',:connected)
+        (id, user_id, email_address, provider, is_active, created_at)
+        VALUES (:id, :uid, :email, 'gmail', true, :connected)
         """),
         {
             "id": account_id,
