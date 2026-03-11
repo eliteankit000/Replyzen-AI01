@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { analyticsAPI, emailAPI, followupAPI } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
@@ -6,74 +7,85 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CheckCircle, XCircle, X, MessageSquare, Mail, Send, TrendingUp, Clock, Zap, ArrowRight, Plus, RefreshCw } from "lucide-react";
+import {
+  CheckCircle, XCircle, X,
+  MessageSquare, Mail, Send, TrendingUp, Clock, Zap,
+  ArrowRight, Plus, RefreshCw
+} from "lucide-react";
 
-function InlineToast({ toast, onDismiss }) {
+/* ─── Toast item ─────────────────────────────────────────────────────────── */
+function ToastItem({ id, title, description, variant, onDismiss }) {
   useEffect(() => {
-    const timer = setTimeout(() => onDismiss(toast.id), 5000);
-    return () => clearTimeout(timer);
-  }, [toast.id, onDismiss]);
+    const t = setTimeout(() => onDismiss(id), 5000);
+    return () => clearTimeout(t);
+  }, [id, onDismiss]);
 
-  const isError = toast.variant === "destructive";
+  const isError = variant === "destructive";
 
   return (
     <div style={{
-      display: "flex",
-      alignItems: "flex-start",
-      gap: "12px",
-      padding: "14px 16px",
-      borderRadius: "10px",
-      boxShadow: "0 4px 24px rgba(0,0,0,0.18)",
-      border: `1px solid ${isError ? "#fca5a5" : "#6ee7b7"}`,
-      backgroundColor: isError ? "#fff1f2" : "#f0fdf4",
+      display: "flex", gap: 12, alignItems: "flex-start",
+      padding: "14px 16px", borderRadius: 10,
+      boxShadow: "0 8px 32px rgba(0,0,0,0.22)",
+      border: `1.5px solid ${isError ? "#f87171" : "#4ade80"}`,
+      background: isError ? "#fef2f2" : "#f0fdf4",
       color: isError ? "#7f1d1d" : "#14532d",
-      fontSize: "14px",
-      minWidth: "300px",
-      maxWidth: "380px",
-      width: "100%",
-      pointerEvents: "all",
+      fontSize: 14, minWidth: 300, maxWidth: 380,
     }}>
       {isError
-        ? <XCircle style={{ width: 20, height: 20, color: "#ef4444", flexShrink: 0, marginTop: 2 }} />
-        : <CheckCircle style={{ width: 20, height: 20, color: "#22c55e", flexShrink: 0, marginTop: 2 }} />}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ fontWeight: 600, lineHeight: 1.3, margin: 0 }}>{toast.title}</p>
-        {toast.description && (
-          <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.75 }}>{toast.description}</p>
-        )}
+        ? <XCircle style={{ width: 20, height: 20, color: "#dc2626", flexShrink: 0, marginTop: 1 }} />
+        : <CheckCircle style={{ width: 20, height: 20, color: "#16a34a", flexShrink: 0, marginTop: 1 }} />
+      }
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: 700, lineHeight: 1.3 }}>{title}</div>
+        {description && <div style={{ marginTop: 3, fontSize: 12, opacity: 0.8 }}>{description}</div>}
       </div>
       <button
-        onClick={() => onDismiss(toast.id)}
-        style={{ background: "none", border: "none", cursor: "pointer", padding: 0, opacity: 0.45, flexShrink: 0 }}
+        onClick={() => onDismiss(id)}
+        style={{ all: "unset", cursor: "pointer", opacity: 0.5, marginTop: 1 }}
+        aria-label="Dismiss"
       >
-        <X style={{ width: 16, height: 16 }} />
+        <X style={{ width: 15, height: 15 }} />
       </button>
     </div>
   );
 }
 
+/* ─── Toast portal — renders straight into document.body ─────────────────── */
+function ToastPortal({ toasts, onDismiss }) {
+  return createPortal(
+    <div style={{
+      position: "fixed", bottom: 24, right: 24, zIndex: 2147483647,
+      display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-end",
+    }}>
+      {toasts.map((t) => (
+        <ToastItem key={t.id} {...t} onDismiss={onDismiss} />
+      ))}
+    </div>,
+    document.body
+  );
+}
+
+/* ─── Dashboard ──────────────────────────────────────────────────────────── */
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [toasts, setToasts] = useState([]);
-  const [stats, setStats] = useState(null);
+  const [toasts, setToasts]               = useState([]);
+  const [stats, setStats]                 = useState(null);
   const [silentThreads, setSilentThreads] = useState([]);
   const [recentFollowups, setRecentFollowups] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
+  const [loading, setLoading]             = useState(true);
+  const [syncing, setSyncing]             = useState(false);
 
-  const showToast = useCallback((t) => {
-    const id = Date.now();
-    setToasts((prev) => [...prev, { ...t, id }]);
+  const showToast = useCallback(({ title, description, variant }) => {
+    setToasts((prev) => [...prev, { id: Date.now(), title, description, variant }]);
   }, []);
 
   const dismissToast = useCallback((id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
     setLoading(true);
@@ -101,10 +113,9 @@ export default function Dashboard() {
       const newThreads = res?.data?.new_threads ?? 0;
       showToast({
         title: "Sync complete ✅",
-        description:
-          newThreads > 0
-            ? `${newThreads} new thread${newThreads === 1 ? "" : "s"} synced from Gmail.`
-            : "Your inbox is already up to date.",
+        description: newThreads > 0
+          ? `${newThreads} new thread${newThreads === 1 ? "" : "s"} synced from Gmail.`
+          : "Your inbox is already up to date.",
       });
     } catch (err) {
       console.error("Sync failed:", err);
@@ -122,18 +133,15 @@ export default function Dashboard() {
   };
 
   const statCards = [
-    { label: "Total Threads", value: stats?.total_threads || 0, icon: Mail, color: "text-blue-600", bg: "bg-blue-50" },
-    { label: "Silent Threads", value: stats?.silent_threads || 0, icon: Clock, color: "text-amber-600", bg: "bg-amber-50" },
-    { label: "Follow-ups Sent", value: stats?.followups_sent || 0, icon: Send, color: "text-emerald-600", bg: "bg-emerald-50" },
-    { label: "Response Rate", value: `${stats?.response_rate || 0}%`, icon: TrendingUp, color: "text-primary", bg: "bg-accent" },
+    { label: "Total Threads",  value: stats?.total_threads  || 0,    icon: Mail,       color: "text-blue-600",    bg: "bg-blue-50"  },
+    { label: "Silent Threads", value: stats?.silent_threads || 0,    icon: Clock,      color: "text-amber-600",   bg: "bg-amber-50" },
+    { label: "Follow-ups Sent",value: stats?.followups_sent || 0,    icon: Send,       color: "text-emerald-600", bg: "bg-emerald-50" },
+    { label: "Response Rate",  value: `${stats?.response_rate || 0}%`, icon: TrendingUp, color: "text-primary",   bg: "bg-accent"   },
   ];
 
   const formatDate = (iso) => {
     if (!iso) return "";
-    const d = new Date(iso);
-    const now = new Date();
-    const diffMs = now - d;
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const diffDays = Math.floor((Date.now() - new Date(iso)) / 86400000);
     if (diffDays === 0) return "Today";
     if (diffDays === 1) return "Yesterday";
     return `${diffDays} days ago`;
@@ -142,22 +150,8 @@ export default function Dashboard() {
   return (
     <div className="space-y-8" data-testid="dashboard-page">
 
-      {/* Toast container — fixed bottom-right, z-index 9999, no Tailwind dependency */}
-      <div style={{
-        position: "fixed",
-        bottom: "24px",
-        right: "24px",
-        zIndex: 9999,
-        display: "flex",
-        flexDirection: "column",
-        gap: "10px",
-        alignItems: "flex-end",
-        pointerEvents: "none",
-      }}>
-        {toasts.map((t) => (
-          <InlineToast key={t.id} toast={t} onDismiss={dismissToast} />
-        ))}
-      </div>
+      {/* Toasts — rendered into document.body via portal */}
+      <ToastPortal toasts={toasts} onDismiss={dismissToast} />
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -186,11 +180,10 @@ export default function Dashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs text-muted-foreground font-medium">{s.label}</p>
-                  {loading ? (
-                    <Skeleton className="h-8 w-16 mt-1" />
-                  ) : (
-                    <p className="text-2xl font-bold mt-1">{s.value}</p>
-                  )}
+                  {loading
+                    ? <Skeleton className="h-8 w-16 mt-1" />
+                    : <p className="text-2xl font-bold mt-1">{s.value}</p>
+                  }
                 </div>
                 <div className={`w-10 h-10 rounded-xl ${s.bg} flex items-center justify-center`}>
                   <s.icon className={`w-5 h-5 ${s.color}`} />
@@ -212,9 +205,7 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             {loading ? (
-              <div className="space-y-3">
-                {[1, 2, 3].map((i) => <Skeleton key={i} className="h-16 w-full" />)}
-              </div>
+              <div className="space-y-3">{[1,2,3].map((i) => <Skeleton key={i} className="h-16 w-full" />)}</div>
             ) : silentThreads.length === 0 ? (
               <div className="text-center py-8">
                 <Mail className="w-10 h-10 text-muted-foreground/40 mx-auto mb-3" />
@@ -249,9 +240,7 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             {loading ? (
-              <div className="space-y-3">
-                {[1, 2, 3].map((i) => <Skeleton key={i} className="h-16 w-full" />)}
-              </div>
+              <div className="space-y-3">{[1,2,3].map((i) => <Skeleton key={i} className="h-16 w-full" />)}</div>
             ) : recentFollowups.length === 0 ? (
               <div className="text-center py-8">
                 <Zap className="w-10 h-10 text-muted-foreground/40 mx-auto mb-3" />
@@ -275,7 +264,7 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Quick Actions */}
+      {/* Connect Gmail prompt */}
       {stats && stats.accounts_connected === 0 && (
         <Card className="border-dashed border-2 border-primary/30 bg-accent/30" data-testid="connect-gmail-prompt">
           <CardContent className="py-8 text-center">
