@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { analyticsAPI, emailAPI, followupAPI } from "@/lib/api";
@@ -13,7 +13,38 @@ import {
   ArrowRight, Plus, RefreshCw
 } from "lucide-react";
 
-/* ─── Toast item ─────────────────────────────────────────────────────────── */
+/* ─── Portal container ───────────────────────────────────────────────────────
+   We create a real <div> on document.body ourselves and keep it alive for the
+   full lifetime of the Dashboard. This is immune to overflow:hidden, CSS
+   transforms, stacking contexts, and React batched-render interruptions.
+──────────────────────────────────────────────────────────────────────────── */
+function useToastPortalRoot() {
+  const rootRef = useRef(null);
+  if (!rootRef.current) {
+    const div = document.createElement("div");
+    div.id = "dashboard-toast-root";
+    Object.assign(div.style, {
+      position: "fixed",
+      bottom: "24px",
+      right: "24px",
+      zIndex: "2147483647",
+      display: "flex",
+      flexDirection: "column",
+      gap: "10px",
+      alignItems: "flex-end",
+      pointerEvents: "none",
+    });
+    document.body.appendChild(div);
+    rootRef.current = div;
+  }
+  useEffect(() => {
+    const el = rootRef.current;
+    return () => { if (el && document.body.contains(el)) document.body.removeChild(el); };
+  }, []);
+  return rootRef.current;
+}
+
+/* ─── Single toast ────────────────────────────────────────────────────────── */
 function ToastItem({ id, title, description, variant, onDismiss }) {
   useEffect(() => {
     const t = setTimeout(() => onDismiss(id), 5000);
@@ -21,7 +52,6 @@ function ToastItem({ id, title, description, variant, onDismiss }) {
   }, [id, onDismiss]);
 
   const isError = variant === "destructive";
-
   return (
     <div style={{
       display: "flex", gap: 12, alignItems: "flex-start",
@@ -31,6 +61,7 @@ function ToastItem({ id, title, description, variant, onDismiss }) {
       background: isError ? "#fef2f2" : "#f0fdf4",
       color: isError ? "#7f1d1d" : "#14532d",
       fontSize: 14, minWidth: 300, maxWidth: 380,
+      pointerEvents: "all",
     }}>
       {isError
         ? <XCircle style={{ width: 20, height: 20, color: "#dc2626", flexShrink: 0, marginTop: 1 }} />
@@ -42,7 +73,7 @@ function ToastItem({ id, title, description, variant, onDismiss }) {
       </div>
       <button
         onClick={() => onDismiss(id)}
-        style={{ all: "unset", cursor: "pointer", opacity: 0.5, marginTop: 1 }}
+        style={{ all: "unset", cursor: "pointer", opacity: 0.5, marginTop: 1, pointerEvents: "all" }}
         aria-label="Dismiss"
       >
         <X style={{ width: 15, height: 15 }} />
@@ -51,18 +82,13 @@ function ToastItem({ id, title, description, variant, onDismiss }) {
   );
 }
 
-/* ─── Toast portal — renders straight into document.body ─────────────────── */
+/* ─── Toast portal ────────────────────────────────────────────────────────── */
 function ToastPortal({ toasts, onDismiss }) {
+  const portalRoot = useToastPortalRoot();
+  if (!portalRoot) return null;
   return createPortal(
-    <div style={{
-      position: "fixed", bottom: 24, right: 24, zIndex: 2147483647,
-      display: "flex", flexDirection: "column", gap: 10, alignItems: "flex-end",
-    }}>
-      {toasts.map((t) => (
-        <ToastItem key={t.id} {...t} onDismiss={onDismiss} />
-      ))}
-    </div>,
-    document.body
+    toasts.map((t) => <ToastItem key={t.id} {...t} onDismiss={onDismiss} />),
+    portalRoot
   );
 }
 
@@ -70,14 +96,15 @@ function ToastPortal({ toasts, onDismiss }) {
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [toasts, setToasts]               = useState([]);
-  const [stats, setStats]                 = useState(null);
-  const [silentThreads, setSilentThreads] = useState([]);
+  const [toasts, setToasts]                   = useState([]);
+  const [stats, setStats]                     = useState(null);
+  const [silentThreads, setSilentThreads]     = useState([]);
   const [recentFollowups, setRecentFollowups] = useState([]);
-  const [loading, setLoading]             = useState(true);
-  const [syncing, setSyncing]             = useState(false);
+  const [loading, setLoading]                 = useState(true);
+  const [syncing, setSyncing]                 = useState(false);
 
   const showToast = useCallback(({ title, description, variant }) => {
+    console.log("[Toast] showToast called:", { title, description, variant });
     setToasts((prev) => [...prev, { id: Date.now(), title, description, variant }]);
   }, []);
 
@@ -106,10 +133,14 @@ export default function Dashboard() {
   };
 
   const handleSync = async () => {
+    console.log("[Sync] started");
     setSyncing(true);
     try {
       const res = await emailAPI.syncEmails();
-      await loadData();
+      console.log("[Sync] emailAPI.syncEmails() resolved:", res);
+
+      // ✅ Show toast BEFORE loadData() — prevents batched re-renders
+      //    from swallowing the state update that queues the toast.
       const newThreads = res?.data?.new_threads ?? 0;
       showToast({
         title: "Sync complete ✅",
@@ -117,8 +148,12 @@ export default function Dashboard() {
           ? `${newThreads} new thread${newThreads === 1 ? "" : "s"} synced from Gmail.`
           : "Your inbox is already up to date.",
       });
+
+      // Reload data after toast is already queued
+      await loadData();
+
     } catch (err) {
-      console.error("Sync failed:", err);
+      console.error("[Sync] error:", err);
       showToast({
         variant: "destructive",
         title: "Sync failed",
@@ -133,10 +168,10 @@ export default function Dashboard() {
   };
 
   const statCards = [
-    { label: "Total Threads",  value: stats?.total_threads  || 0,    icon: Mail,       color: "text-blue-600",    bg: "bg-blue-50"  },
-    { label: "Silent Threads", value: stats?.silent_threads || 0,    icon: Clock,      color: "text-amber-600",   bg: "bg-amber-50" },
-    { label: "Follow-ups Sent",value: stats?.followups_sent || 0,    icon: Send,       color: "text-emerald-600", bg: "bg-emerald-50" },
-    { label: "Response Rate",  value: `${stats?.response_rate || 0}%`, icon: TrendingUp, color: "text-primary",   bg: "bg-accent"   },
+    { label: "Total Threads",   value: stats?.total_threads  || 0,      icon: Mail,       color: "text-blue-600",    bg: "bg-blue-50"    },
+    { label: "Silent Threads",  value: stats?.silent_threads || 0,      icon: Clock,      color: "text-amber-600",   bg: "bg-amber-50"   },
+    { label: "Follow-ups Sent", value: stats?.followups_sent || 0,      icon: Send,       color: "text-emerald-600", bg: "bg-emerald-50" },
+    { label: "Response Rate",   value: `${stats?.response_rate || 0}%`, icon: TrendingUp, color: "text-primary",     bg: "bg-accent"     },
   ];
 
   const formatDate = (iso) => {
@@ -150,7 +185,6 @@ export default function Dashboard() {
   return (
     <div className="space-y-8" data-testid="dashboard-page">
 
-      {/* Toasts — rendered into document.body via portal */}
       <ToastPortal toasts={toasts} onDismiss={dismissToast} />
 
       {/* Header */}
