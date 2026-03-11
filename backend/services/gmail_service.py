@@ -74,22 +74,16 @@ def get_oauth_flow(redirect_uri: Optional[str] = None) -> Flow:
             "redirect_uris": [redirect_uri or GMAIL_REDIRECT_URI],
         }
     }
-
     flow = Flow.from_client_config(
         client_config,
         scopes=SCOPES,
         redirect_uri=redirect_uri or GMAIL_REDIRECT_URI
     )
-
     return flow
 
 
 def get_auth_url(state: Optional[str] = None, redirect_uri: Optional[str] = None) -> str:
-    """Generate OAuth authorization URL for Gmail.
-    Built manually to avoid google_auth_oauthlib auto-adding PKCE
-    code_challenge which forces a code_verifier on token exchange
-    causing: invalid_grant Missing code verifier.
-    """
+    """Generate OAuth authorization URL for Gmail."""
     import urllib.parse
     params = {
         "client_id": GMAIL_CLIENT_ID,
@@ -105,13 +99,7 @@ def get_auth_url(state: Optional[str] = None, redirect_uri: Optional[str] = None
 
 
 def exchange_code_for_tokens(code: str, redirect_uri: Optional[str] = None) -> Dict[str, Any]:
-    """Exchange authorization code for access and refresh tokens.
-
-    Uses httpx directly instead of Flow.fetch_token() to avoid the PKCE
-    code_verifier mismatch — creating a new Flow on callback generates a
-    different code_verifier than the one used in get_auth_url(), causing
-    Google to return: (invalid_grant) Missing code verifier.
-    """
+    """Exchange authorization code for access and refresh tokens."""
     effective_redirect = redirect_uri or GMAIL_REDIRECT_URI
     token_url = "https://oauth2.googleapis.com/token"
 
@@ -144,34 +132,43 @@ def exchange_code_for_tokens(code: str, redirect_uri: Optional[str] = None) -> D
 
 
 def encrypt_tokens(tokens: Dict[str, Any]) -> Dict[str, str]:
-    """Encrypt OAuth tokens for secure storage."""
+    """
+    Encrypt OAuth tokens for secure storage.
+    Returns keys that match the DB column names:
+      access_token, refresh_token, token_expiry
+    """
     return {
-        "access_token_encrypted": token_encryption.encrypt(tokens["access_token"]) if tokens.get("access_token") else "",
-        "refresh_token_encrypted": token_encryption.encrypt(tokens["refresh_token"]) if tokens.get("refresh_token") else "",
+        # ✅ Keys now match DB column names directly
+        "access_token": token_encryption.encrypt(tokens["access_token"]) if tokens.get("access_token") else "",
+        "refresh_token": token_encryption.encrypt(tokens["refresh_token"]) if tokens.get("refresh_token") else "",
         "token_expiry": tokens.get("expiry", ""),
     }
 
 
-def decrypt_tokens(encrypted_data: Dict[str, str]) -> Dict[str, Any]:
-    """Decrypt stored OAuth tokens."""
+def decrypt_tokens(db_row: Dict[str, str]) -> Dict[str, Any]:
+    """
+    Decrypt stored OAuth tokens.
+    Accepts DB column names: access_token, refresh_token, token_expiry
+    """
     return {
-        "access_token": token_encryption.decrypt(encrypted_data["access_token_encrypted"]) if encrypted_data.get("access_token_encrypted") else None,
-        "refresh_token": token_encryption.decrypt(encrypted_data["refresh_token_encrypted"]) if encrypted_data.get("refresh_token_encrypted") else None,
-        "expiry": encrypted_data.get("token_expiry"),
+        "access_token": token_encryption.decrypt(db_row["access_token"]) if db_row.get("access_token") else None,
+        "refresh_token": token_encryption.decrypt(db_row["refresh_token"]) if db_row.get("refresh_token") else None,
+        "expiry": db_row.get("token_expiry"),
     }
 
 
-def get_gmail_service(encrypted_tokens: Dict[str, str]):
-    """Create Gmail API service from encrypted tokens."""
-    tokens = decrypt_tokens(encrypted_tokens)
+def get_gmail_service(db_tokens: Dict[str, str]):
+    """
+    Create Gmail API service from DB token row.
+    Accepts a dict with keys: access_token, refresh_token, token_expiry
+    """
+    tokens = decrypt_tokens(db_tokens)
 
     expiry = None
     if tokens.get("expiry"):
         try:
             expiry = datetime.fromisoformat(tokens["expiry"].replace("Z", "+00:00"))
-            # ✅ FIX: Google's Credentials class uses datetime.utcnow() (timezone-naive)
-            # internally to check expiry. We must strip tzinfo to avoid:
-            # "can't compare offset-naive and offset-aware datetimes"
+            # ✅ Strip tzinfo — Google's Credentials uses datetime.utcnow() (naive) internally
             if expiry.tzinfo is not None:
                 expiry = expiry.replace(tzinfo=None)
         except Exception:
@@ -186,27 +183,26 @@ def get_gmail_service(encrypted_tokens: Dict[str, str]):
         expiry=expiry
     )
 
-    # Refresh if expired
     if credentials.expired and credentials.refresh_token:
         credentials.refresh(Request())
 
     return build("gmail", "v1", credentials=credentials), credentials
 
 
-def get_user_email(encrypted_tokens: Dict[str, str]) -> str:
+def get_user_email(db_tokens: Dict[str, str]) -> str:
     """Get the authenticated user's email address."""
-    service, _ = get_gmail_service(encrypted_tokens)
+    service, _ = get_gmail_service(db_tokens)
     profile = service.users().getProfile(userId="me").execute()
     return profile.get("emailAddress", "")
 
 
 def fetch_threads(
-    encrypted_tokens: Dict[str, str],
+    db_tokens: Dict[str, str],
     max_results: int = 50,
     label_ids: List[str] = None
 ) -> List[Dict[str, Any]]:
     """Fetch email threads from Gmail."""
-    service, _ = get_gmail_service(encrypted_tokens)
+    service, _ = get_gmail_service(db_tokens)
     threads = []
 
     try:
@@ -266,7 +262,7 @@ def fetch_threads(
 
 
 def send_email(
-    encrypted_tokens: Dict[str, str],
+    db_tokens: Dict[str, str],
     to: str,
     subject: str,
     body: str,
@@ -277,8 +273,8 @@ def send_email(
     """Send an email via Gmail API."""
     from email.mime.text import MIMEText
 
-    service, credentials = get_gmail_service(encrypted_tokens)
-    user_email = get_user_email(encrypted_tokens)
+    service, credentials = get_gmail_service(db_tokens)
+    user_email = get_user_email(db_tokens)
 
     message = MIMEText(body)
     message["to"] = to
@@ -313,11 +309,11 @@ def send_email(
 
 
 def get_message_details(
-    encrypted_tokens: Dict[str, str],
+    db_tokens: Dict[str, str],
     message_id: str
 ) -> Dict[str, Any]:
     """Get detailed information about a specific message."""
-    service, _ = get_gmail_service(encrypted_tokens)
+    service, _ = get_gmail_service(db_tokens)
 
     message = service.users().messages().get(
         userId="me",
