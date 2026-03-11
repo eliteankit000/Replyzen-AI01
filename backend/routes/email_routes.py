@@ -26,7 +26,6 @@ router = APIRouter(prefix="/api/emails", tags=["emails"])
 
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 
-# ✅ Must match exactly what's registered in Google Cloud Console
 GMAIL_REDIRECT_URI = os.environ.get(
     "GMAIL_REDIRECT_URI",
     "https://replyzen-ai01-production.up.railway.app/api/emails/gmail/callback"
@@ -52,11 +51,9 @@ async def get_gmail_auth_url(
         raise HTTPException(status_code=500, detail="Gmail OAuth not configured")
 
     auth_url = get_auth_url(state=user_id, redirect_uri=GMAIL_REDIRECT_URI)
-
     return {"auth_url": auth_url}
 
 
-# ✅ GET callback — Google redirects browser here after user approves
 @router.get("/gmail/callback")
 async def gmail_oauth_callback_get(
     request: Request,
@@ -67,10 +64,12 @@ async def gmail_oauth_callback_get(
     user_id = state
 
     tokens = exchange_code_for_tokens(code, GMAIL_REDIRECT_URI)
+
+    # encrypt_tokens now returns keys matching DB columns:
+    # access_token, refresh_token, token_expiry
     encrypted = encrypt_tokens(tokens)
     gmail_email = get_user_email(encrypted)
 
-    # ✅ FIX: column is 'email_address', not 'email'
     result = await db.execute(
         text("SELECT id FROM email_accounts WHERE user_id=:uid AND email_address=:email"),
         {"uid": user_id, "email": gmail_email},
@@ -81,14 +80,16 @@ async def gmail_oauth_callback_get(
         await db.execute(
             text("""
             UPDATE email_accounts
-            SET access_token_encrypted=:access,
-                refresh_token_encrypted=:refresh,
+            SET access_token=:access,
+                refresh_token=:refresh,
+                token_expiry=:expiry,
                 updated_at=:updated
             WHERE id=:id
             """),
             {
-                "access": encrypted["access_token_encrypted"],
-                "refresh": encrypted["refresh_token_encrypted"],
+                "access": encrypted["access_token"],
+                "refresh": encrypted["refresh_token"],
+                "expiry": encrypted.get("token_expiry"),
                 "updated": datetime.now(timezone.utc),
                 "id": existing[0],
             },
@@ -99,26 +100,25 @@ async def gmail_oauth_callback_get(
         await db.execute(
             text("""
             INSERT INTO email_accounts
-            (id, user_id, email_address, provider, is_active, access_token_encrypted, refresh_token_encrypted, created_at)
+            (id, user_id, email_address, provider, is_active, access_token, refresh_token, token_expiry, created_at)
             VALUES
-            (:id, :uid, :email, 'gmail', true, :access, :refresh, :connected)
+            (:id, :uid, :email, 'gmail', true, :access, :refresh, :expiry, :connected)
             """),
             {
                 "id": account_id,
                 "uid": user_id,
                 "email": gmail_email,
-                "access": encrypted["access_token_encrypted"],
-                "refresh": encrypted["refresh_token_encrypted"],
+                "access": encrypted["access_token"],
+                "refresh": encrypted["refresh_token"],
+                "expiry": encrypted.get("token_expiry"),
                 "connected": datetime.now(timezone.utc),
             },
         )
         await db.commit()
 
-    # ✅ Redirect user back to settings page after connecting
     return RedirectResponse(f"{FRONTEND_URL}/settings?gmail=connected")
 
 
-# Keep POST for any direct API calls
 @router.post("/gmail/callback")
 async def gmail_oauth_callback_post(
     code: str,
@@ -135,7 +135,6 @@ async def gmail_oauth_callback_post(
     encrypted = encrypt_tokens(tokens)
     gmail_email = get_user_email(encrypted)
 
-    # ✅ FIX: column is 'email_address', not 'email'
     result = await db.execute(
         text("SELECT id FROM email_accounts WHERE user_id=:uid AND email_address=:email"),
         {"uid": user_id, "email": gmail_email},
@@ -146,14 +145,16 @@ async def gmail_oauth_callback_post(
         await db.execute(
             text("""
             UPDATE email_accounts
-            SET access_token_encrypted=:access,
-                refresh_token_encrypted=:refresh,
+            SET access_token=:access,
+                refresh_token=:refresh,
+                token_expiry=:expiry,
                 updated_at=:updated
             WHERE id=:id
             """),
             {
-                "access": encrypted["access_token_encrypted"],
-                "refresh": encrypted["refresh_token_encrypted"],
+                "access": encrypted["access_token"],
+                "refresh": encrypted["refresh_token"],
+                "expiry": encrypted.get("token_expiry"),
                 "updated": datetime.now(timezone.utc),
                 "id": existing[0],
             },
@@ -165,15 +166,16 @@ async def gmail_oauth_callback_post(
     await db.execute(
         text("""
         INSERT INTO email_accounts
-        (id, user_id, email_address, provider, is_active, access_token_encrypted, refresh_token_encrypted, created_at)
-        VALUES (:id, :uid, :email, 'gmail', true, :access, :refresh, :connected)
+        (id, user_id, email_address, provider, is_active, access_token, refresh_token, token_expiry, created_at)
+        VALUES (:id, :uid, :email, 'gmail', true, :access, :refresh, :expiry, :connected)
         """),
         {
             "id": account_id,
             "uid": user_id,
             "email": gmail_email,
-            "access": encrypted["access_token_encrypted"],
-            "refresh": encrypted["refresh_token_encrypted"],
+            "access": encrypted["access_token"],
+            "refresh": encrypted["refresh_token"],
+            "expiry": encrypted.get("token_expiry"),
             "connected": datetime.now(timezone.utc),
         },
     )
@@ -186,7 +188,6 @@ async def list_accounts(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    # ✅ FIX: column is 'email_address', not 'email'
     result = await db.execute(
         text("SELECT id, email_address, provider, is_active, created_at FROM email_accounts WHERE user_id=:uid"),
         {"uid": current_user["user_id"]},
@@ -228,7 +229,6 @@ async def connect_gmail_demo(
     if not account_check["allowed"]:
         raise HTTPException(status_code=403, detail="Email account limit reached")
 
-    # ✅ FIX: column is 'email_address', not 'email'
     result = await db.execute(
         text("SELECT id FROM email_accounts WHERE user_id=:uid AND email_address=:email"),
         {"uid": user_id, "email": req.email},
