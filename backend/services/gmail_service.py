@@ -169,8 +169,11 @@ def get_gmail_service(encrypted_tokens: Dict[str, str]):
     if tokens.get("expiry"):
         try:
             expiry = datetime.fromisoformat(tokens["expiry"].replace("Z", "+00:00"))
-            if expiry.tzinfo is None:
-                expiry = expiry.replace(tzinfo=timezone.utc)
+            # ✅ FIX: Google's Credentials class uses datetime.utcnow() (timezone-naive)
+            # internally to check expiry. We must strip tzinfo to avoid:
+            # "can't compare offset-naive and offset-aware datetimes"
+            if expiry.tzinfo is not None:
+                expiry = expiry.replace(tzinfo=None)
         except Exception:
             pass
 
