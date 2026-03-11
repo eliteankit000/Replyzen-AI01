@@ -44,7 +44,7 @@ async def verify_user_exists(user_id: str, db: AsyncSession):
     if not result.fetchone():
         raise HTTPException(
             status_code=404,
-            detail=f"User {user_id} not found in users table. Please re-login and try again."
+            detail=f"User {user_id} not found. Please re-login and try again."
         )
 
 
@@ -134,7 +134,6 @@ async def gmail_oauth_callback_post(
         raise HTTPException(status_code=400, detail="Invalid OAuth state")
 
     await verify_user_exists(user_id, db)
-
     tokens = exchange_code_for_tokens(code, GMAIL_REDIRECT_URI)
     encrypted = encrypt_tokens(tokens)
     gmail_email = get_user_email(encrypted)
@@ -198,7 +197,6 @@ async def list_accounts(
     return accounts
 
 
-# ✅ NEW: POST /emails/sync — fetch latest threads from Gmail and store them
 @router.post("/sync")
 async def sync_emails(
     current_user: dict = Depends(get_current_user),
@@ -206,7 +204,6 @@ async def sync_emails(
 ):
     user_id = current_user["user_id"]
 
-    # Get all connected email accounts for this user
     result = await db.execute(
         text("SELECT id, access_token, refresh_token, token_expiry FROM email_accounts WHERE user_id=:uid AND is_active=true"),
         {"uid": user_id}
@@ -235,9 +232,9 @@ async def sync_emails(
             continue
 
         for thread in threads:
-            # Check if thread already exists
+            # ✅ Use correct column: thread_id (not gmail_thread_id)
             existing = await db.execute(
-                text("SELECT id FROM email_threads WHERE gmail_thread_id=:tid AND user_id=:uid"),
+                text("SELECT id FROM email_threads WHERE thread_id=:tid AND user_id=:uid"),
                 {"tid": thread["gmail_thread_id"], "uid": user_id}
             )
             existing_row = existing.fetchone()
@@ -250,49 +247,44 @@ async def sync_emails(
                     parsed = eu.parsedate_to_datetime(thread["last_message_date"])
                     last_message_at = parsed.astimezone(timezone.utc).replace(tzinfo=None)
                 except Exception:
-                    last_message_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    last_message_at = datetime.utcnow()
 
             if existing_row:
                 await db.execute(
                     text("""
                     UPDATE email_threads
-                    SET subject=:subject, snippet=:snippet,
-                        message_count=:count, last_message_at=:last_at,
-                        updated_at=:updated
-                    WHERE gmail_thread_id=:tid AND user_id=:uid
+                    SET subject=:subject,
+                        last_message_at=:last_at,
+                        last_message_from=:from_email
+                    WHERE thread_id=:tid AND user_id=:uid
                     """),
                     {
                         "subject": thread["subject"],
-                        "snippet": thread["snippet"],
-                        "count": thread["message_count"],
                         "last_at": last_message_at,
-                        "updated": datetime.utcnow(),
+                        "from_email": thread["from_email"],
                         "tid": thread["gmail_thread_id"],
                         "uid": user_id,
                     }
                 )
             else:
-                thread_id = str(uuid.uuid4())
+                thread_row_id = str(uuid.uuid4())
                 await db.execute(
                     text("""
                     INSERT INTO email_threads
-                    (id, user_id, account_id, gmail_thread_id, subject, snippet,
-                     from_email, to_email, message_count, last_message_at, created_at)
+                    (id, user_id, account_id, thread_id, subject,
+                     last_message_at, last_message_from, created_at, is_silent, needs_followup)
                     VALUES
-                    (:id, :uid, :account_id, :tid, :subject, :snippet,
-                     :from_email, :to_email, :count, :last_at, :created)
+                    (:id, :uid, :account_id, :tid, :subject,
+                     :last_at, :from_email, :created, false, false)
                     """),
                     {
-                        "id": thread_id,
+                        "id": thread_row_id,
                         "uid": user_id,
                         "account_id": account_id,
                         "tid": thread["gmail_thread_id"],
                         "subject": thread["subject"],
-                        "snippet": thread["snippet"],
-                        "from_email": thread["from_email"],
-                        "to_email": thread["to_email"],
-                        "count": thread["message_count"],
                         "last_at": last_message_at,
+                        "from_email": thread["from_email"],
                         "created": datetime.utcnow(),
                     }
                 )
@@ -300,10 +292,9 @@ async def sync_emails(
 
         await db.commit()
 
-    return {"message": f"Sync complete", "new_threads": total_synced}
+    return {"message": "Sync complete", "new_threads": total_synced}
 
 
-# ✅ NEW: GET /emails/threads/silent — threads with no reply for X days
 @router.get("/threads/silent")
 async def get_silent_threads(
     days: int = 3,
@@ -318,13 +309,12 @@ async def get_silent_threads(
         text("""
         SELECT
             id,
-            gmail_thread_id,
+            thread_id,
             subject,
-            snippet,
-            from_email,
-            to_email,
-            message_count,
+            last_message_from,
             last_message_at,
+            priority,
+            is_silent,
             EXTRACT(DAY FROM (NOW() - last_message_at))::int AS days_silent
         FROM email_threads
         WHERE user_id = :uid
@@ -338,7 +328,8 @@ async def get_silent_threads(
     threads = []
     for row in result:
         row_dict = dict(row._mapping)
-        row_dict["participant_names"] = [row_dict.get("from_email", "")]
+        # Map to what Dashboard.js expects
+        row_dict["participant_names"] = [row_dict.get("last_message_from", "")]
         threads.append(row_dict)
 
     return {"threads": threads}
@@ -370,7 +361,6 @@ async def connect_gmail_demo(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Demo mode — connects a Gmail account without real OAuth"""
     user_id = current_user["user_id"]
 
     account_check = await check_account_limit(user_id, db)
