@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { billingAPI } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
@@ -9,34 +9,71 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter
 } from "@/components/ui/dialog";
-import { Check, CreditCard, Zap, Crown, Loader2, AlertTriangle } from "lucide-react";
-import { toast } from "sonner";
+import { Check, CreditCard, Zap, Crown, Loader2, AlertTriangle, CheckCircle, XCircle, X } from "lucide-react";
+
+/* ── Inline banner — no Toaster dependency ── */
+function Banner({ banner, onClose }) {
+  if (!banner) return null;
+  const isError = banner.type === "error";
+  return (
+    <div role="alert" style={{
+      display: "flex", alignItems: "center", gap: 10,
+      padding: "13px 18px", borderRadius: 10,
+      background: isError ? "#fef2f2" : "#f0fdf4",
+      border: `1.5px solid ${isError ? "#f87171" : "#4ade80"}`,
+      color: isError ? "#7f1d1d" : "#14532d",
+      fontSize: 14, fontWeight: 500,
+      boxShadow: "0 2px 12px rgba(0,0,0,0.09)",
+      marginBottom: 8,
+    }}>
+      {isError
+        ? <XCircle    style={{ width: 18, height: 18, color: "#dc2626", flexShrink: 0 }} />
+        : <CheckCircle style={{ width: 18, height: 18, color: "#16a34a", flexShrink: 0 }} />
+      }
+      <span style={{ flex: 1 }}>{banner.msg}</span>
+      <button onClick={onClose} style={{ all: "unset", cursor: "pointer", opacity: 0.45, display: "flex" }} aria-label="Dismiss">
+        <X style={{ width: 14, height: 14 }} />
+      </button>
+    </div>
+  );
+}
 
 export default function Billing() {
   const { user, refreshUser } = useAuth();
-  const [plans, setPlans] = useState([]);
+
+  /* ── Banner state ── */
+  const [banner, setBanner] = useState(null);
+  const timerRef = useRef(null);
+  const showBanner = (msg, type = "success") => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setBanner({ msg, type });
+    timerRef.current = setTimeout(() => setBanner(null), 6000);
+  };
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+
+  /* ── Data state ── */
+  const [plans, setPlans]             = useState([]);
   const [subscription, setSubscription] = useState(null);
-  const [planLimits, setPlanLimits] = useState(null);
-  const [cycle, setCycle] = useState("monthly");
-  const [loading, setLoading] = useState(true);
+  const [planLimits, setPlanLimits]   = useState(null);
+  const [cycle, setCycle]             = useState("monthly");
+  const [loading, setLoading]         = useState(true);
   const [checkingOut, setCheckingOut] = useState(null);
   const [cancelDialog, setCancelDialog] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
-  const [locationInfo, setLocationInfo] = useState({ currency: "USD", payment_provider: "paddle", country: "US" });
+  const [cancelling, setCancelling]   = useState(false);
+  const [locationInfo, setLocationInfo] = useState({
+    currency: "USD", payment_provider: "paddle", country: "US"
+  });
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      // Detect location first
       let locInfo = { currency: "USD", payment_provider: "paddle", country: "US" };
       try {
         const locRes = await billingAPI.detectLocation();
         locInfo = locRes.data;
-      } catch (e) {
+      } catch {
         console.warn("Location detection failed, defaulting to USD/Paddle");
       }
       setLocationInfo(locInfo);
@@ -51,7 +88,7 @@ export default function Billing() {
       setPlanLimits(limitsRes.data);
     } catch (err) {
       console.error("Failed to load billing:", err);
-      toast.error("Failed to load billing information.");
+      showBanner("Failed to load billing information.", "error");
     } finally {
       setLoading(false);
     }
@@ -67,9 +104,10 @@ export default function Billing() {
         provider,
       });
 
+      /* ── Razorpay (India) ── */
       if (res.data.provider === "razorpay") {
         if (typeof window.Razorpay === "undefined") {
-          toast.error("Razorpay SDK not loaded. Please refresh the page and try again.");
+          showBanner("Razorpay SDK not loaded. Please refresh and try again.", "error");
           return;
         }
         const options = {
@@ -77,36 +115,48 @@ export default function Billing() {
           subscription_id: res.data.subscription_id,
           name: "Replyzen AI",
           description: `${planId.charAt(0).toUpperCase() + planId.slice(1)} Plan - ${cycle}`,
-          handler: function (response) {
-            toast.success("Payment successful! Your plan has been activated.");
+          handler: () => {
+            showBanner("Payment successful! Your plan has been activated. ✅");
             refreshUser();
             loadData();
           },
-          modal: {
-            ondismiss: function () {
-              toast.info("Payment was cancelled.");
-            },
-          },
+          modal: { ondismiss: () => showBanner("Payment was cancelled.", "error") },
           theme: { color: "#ea580c" },
         };
         const rzp = new window.Razorpay(options);
-        rzp.on("payment.failed", function (response) {
-          toast.error("Payment failed. Please try again.");
-        });
+        rzp.on("payment.failed", () => showBanner("Payment failed. Please try again.", "error"));
         rzp.open();
+
+      /* ── Paddle (International) ── */
       } else if (res.data.provider === "paddle") {
         if (typeof window.Paddle === "undefined") {
-          toast.error("Paddle SDK not loaded. Please refresh the page and try again.");
+          showBanner("Paddle SDK not loaded. Please refresh and try again.", "error");
           return;
         }
         try {
-          const vendorId = process.env.REACT_APP_PADDLE_VENDOR_ID || res.data.vendor_id;
+          // ✅ FIX 1: Use import.meta.env (Vite), not process.env (CRA)
+          // ✅ FIX 2: Use VITE_PADDLE_PUBLIC_KEY as token for Paddle Billing v2
+          // ✅ FIX 3: Use Paddle.Initialize() not Paddle.Setup()
           if (!window.Paddle.Initialized) {
-            window.Paddle.Environment.set && window.Paddle.Environment.set("production");
-            window.Paddle.Setup && window.Paddle.Setup({ 
-              seller: parseInt(vendorId || "0") || undefined 
-            });
+            const paddleToken = import.meta.env.VITE_PADDLE_PUBLIC_KEY;
+            const vendorId    = import.meta.env.VITE_PADDLE_VENDOR_ID || res.data.vendor_id;
+
+            if (!paddleToken && !vendorId) {
+              showBanner("Paddle is not configured. Please contact support.", "error");
+              return;
+            }
+
+            // Paddle Billing v2 uses Initialize + token
+            // Paddle Classic uses Setup + seller (vendorId)
+            if (paddleToken) {
+              window.Paddle.Environment && window.Paddle.Environment.set("production");
+              window.Paddle.Initialize({ token: paddleToken });
+            } else {
+              window.Paddle.Environment && window.Paddle.Environment.set("production");
+              window.Paddle.Setup({ seller: parseInt(vendorId) });
+            }
           }
+
           window.Paddle.Checkout.open({
             items: [{ priceId: res.data.price_id, quantity: 1 }],
             customData: { user_id: res.data.user_id, plan: planId },
@@ -116,17 +166,17 @@ export default function Billing() {
             },
           });
         } catch (paddleErr) {
-          toast.error("Unable to open checkout. Please try again.");
           console.error("Paddle error:", paddleErr);
+          showBanner("Unable to open Paddle checkout. Please try again.", "error");
         }
       }
     } catch (err) {
       if (err.response?.data?.detail) {
-        toast.error(err.response.data.detail);
+        showBanner(err.response.data.detail, "error");
       } else if (err.message === "Network Error") {
-        toast.error("Unable to create checkout session. Please check your connection.");
+        showBanner("Unable to create checkout session. Please check your connection.", "error");
       } else {
-        toast.error("Unable to create checkout session. Please try again.");
+        showBanner("Unable to create checkout session. Please try again.", "error");
       }
     } finally {
       setCheckingOut(null);
@@ -137,24 +187,28 @@ export default function Billing() {
     setCancelling(true);
     try {
       await billingAPI.cancelSubscription();
-      toast.success("Subscription cancelled successfully.");
+      showBanner("Subscription cancelled successfully. ✅");
       setCancelDialog(false);
       refreshUser();
       loadData();
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Cancellation failed. Please try again.");
+      showBanner(err.response?.data?.detail || "Cancellation failed. Please try again.", "error");
     } finally {
       setCancelling(false);
     }
   };
 
-  const currentPlan = user?.plan || subscription?.plan || "free";
-  const planIcons = { free: CreditCard, pro: Zap, business: Crown };
+  const currentPlan    = user?.plan || subscription?.plan || "free";
+  const planIcons      = { free: CreditCard, pro: Zap, business: Crown };
   const currencySymbol = locationInfo.currency === "INR" ? "₹" : "$";
-  const providerLabel = locationInfo.payment_provider === "razorpay" ? "Razorpay" : "Paddle";
+  const providerLabel  = locationInfo.payment_provider === "razorpay" ? "Razorpay" : "Paddle";
 
   return (
     <div className="space-y-8" data-testid="billing-page">
+
+      {/* ── Banner ── */}
+      <Banner banner={banner} onClose={() => setBanner(null)} />
+
       <div>
         <h1 className="text-2xl font-bold" data-testid="billing-heading">Billing</h1>
         <p className="text-sm text-muted-foreground mt-1">Manage your subscription and billing</p>
@@ -176,9 +230,7 @@ export default function Billing() {
                   </Badge>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  {currentPlan === "free"
-                    ? "Upgrade to unlock more features"
-                    : "Your plan renews automatically"}
+                  {currentPlan === "free" ? "Upgrade to unlock more features" : "Your plan renews automatically"}
                 </p>
                 {planLimits && planLimits.followups_per_month !== -1 && (
                   <div className="mt-2">
@@ -234,9 +286,9 @@ export default function Billing() {
       ) : (
         <div className="grid md:grid-cols-3 gap-6">
           {plans.map((plan) => {
-            const isCurrent = plan.id === currentPlan;
-            const isPopular = plan.id === "pro";
-            const price = cycle === "yearly" ? plan.price_yearly : plan.price_monthly;
+            const isCurrent  = plan.id === currentPlan;
+            const isPopular  = plan.id === "pro";
+            const price      = cycle === "yearly" ? plan.price_yearly : plan.price_monthly;
             const priceLabel = price === 0
               ? `${currencySymbol}0`
               : cycle === "yearly"
