@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { settingsAPI, emailAPI, billingAPI } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
@@ -17,29 +17,65 @@ import {
 } from "@/components/ui/dialog";
 import {
   User, Mail, Bell, Clock, Shield, Trash2, Plus, Save,
-  Loader2, CheckCircle2, Lock, ArrowUpRight
+  Loader2, CheckCircle2, Lock, ArrowUpRight, CheckCircle, XCircle, X
 } from "lucide-react";
-import { toast } from "sonner";
+
+/* ── Inline banner — no Toaster, no portal, guaranteed visible ── */
+function Banner({ banner, onClose }) {
+  if (!banner) return null;
+  const isError = banner.type === "error";
+  return (
+    <div role="alert" style={{
+      display: "flex", alignItems: "center", gap: 10,
+      padding: "13px 18px", borderRadius: 10,
+      background: isError ? "#fef2f2" : "#f0fdf4",
+      border: `1.5px solid ${isError ? "#f87171" : "#4ade80"}`,
+      color: isError ? "#7f1d1d" : "#14532d",
+      fontSize: 14, fontWeight: 500,
+      boxShadow: "0 2px 12px rgba(0,0,0,0.09)",
+      marginBottom: 8,
+    }}>
+      {isError
+        ? <XCircle    style={{ width: 18, height: 18, color: "#dc2626", flexShrink: 0 }} />
+        : <CheckCircle style={{ width: 18, height: 18, color: "#16a34a", flexShrink: 0 }} />
+      }
+      <span style={{ flex: 1 }}>{banner.msg}</span>
+      <button onClick={onClose} style={{ all: "unset", cursor: "pointer", opacity: 0.45, display: "flex" }} aria-label="Dismiss">
+        <X style={{ width: 14, height: 14 }} />
+      </button>
+    </div>
+  );
+}
 
 export default function Settings() {
   const navigate = useNavigate();
   const { user, refreshUser } = useAuth();
-  const [settings, setSettings] = useState(null);
-  const [accounts, setAccounts] = useState([]);
-  const [planLimits, setPlanLimits] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [connectDialog, setConnectDialog] = useState(false);
-  const [connectEmail, setConnectEmail] = useState("");
-  const [connecting, setConnecting] = useState(false);
-  const [fullName, setFullName] = useState("");
 
-  const userPlan = user?.plan || "free";
+  /* ── Banner state ── */
+  const [banner, setBanner] = useState(null);
+  const timerRef = useRef(null);
+  const showBanner = (msg, type = "success") => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    setBanner({ msg, type });
+    timerRef.current = setTimeout(() => setBanner(null), 6000);
+  };
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+
+  /* ── Data state ── */
+  const [settings, setSettings]       = useState(null);
+  const [accounts, setAccounts]       = useState([]);
+  const [planLimits, setPlanLimits]   = useState(null);
+  const [loading, setLoading]         = useState(true);
+  const [saving, setSaving]           = useState(false);
+  const [connectDialog, setConnectDialog] = useState(false);
+  const [connectEmail, setConnectEmail]   = useState("");
+  const [connecting, setConnecting]       = useState(false);
+  const [fullName, setFullName]           = useState("");
+
+  const userPlan       = user?.plan || "free";
   const autoSendAllowed = isAutoSendAllowed(userPlan);
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  useEffect(() => { loadData(); }, []);
 
   const loadData = async () => {
     setLoading(true);
@@ -65,9 +101,9 @@ export default function Settings() {
     try {
       await settingsAPI.updateProfile({ full_name: fullName });
       await refreshUser();
-      toast.success("Profile updated");
-    } catch (err) {
-      toast.error("Failed to update profile");
+      showBanner("Profile updated ✅");
+    } catch {
+      showBanner("Failed to update profile", "error");
     } finally {
       setSaving(false);
     }
@@ -77,14 +113,13 @@ export default function Settings() {
     try {
       await settingsAPI.update({ [field]: value });
       setSettings((prev) => ({ ...prev, [field]: value }));
-      toast.success("Settings saved");
+      showBanner("Settings saved ✅");
     } catch (err) {
       const detail = err.response?.data?.detail;
-      if (err.response?.status === 403 && detail) {
-        toast.error(detail);
-      } else {
-        toast.error("Failed to save");
-      }
+      showBanner(
+        (err.response?.status === 403 && detail) ? detail : "Failed to save",
+        "error"
+      );
     }
   };
 
@@ -92,51 +127,47 @@ export default function Settings() {
     try {
       await settingsAPI.updateSilenceRules({ [field]: value });
       setSettings((prev) => ({ ...prev, [field]: value }));
-      toast.success("Silence rules updated");
-    } catch (err) {
-      toast.error("Failed to save");
+      showBanner("Silence rules updated ✅");
+    } catch {
+      showBanner("Failed to save", "error");
     }
   };
 
   const handleConnectGmail = async () => {
     setConnecting(true);
     try {
-      // Try to get OAuth URL first
       const response = await emailAPI.getGmailAuthUrl();
       if (response.data?.auth_url) {
-        // Redirect to Google OAuth
         window.location.href = response.data.auth_url;
         return;
       }
-      
-      // Fallback to demo mode if OAuth not configured
       if (connectEmail) {
         await emailAPI.connectGmail(connectEmail);
-        toast.success("Demo Gmail account connected!");
+        setConnecting(false);
+        showBanner("Gmail account connected ✅");
         setConnectDialog(false);
         setConnectEmail("");
         loadData();
       }
     } catch (err) {
       const detail = err.response?.data?.detail;
-      // If OAuth not configured, try demo mode
       if (err.response?.status === 500 && connectEmail) {
         try {
           await emailAPI.connectGmail(connectEmail);
-          toast.success("Demo Gmail account connected!");
+          setConnecting(false);
+          showBanner("Gmail account connected ✅");
           setConnectDialog(false);
           setConnectEmail("");
           loadData();
           return;
         } catch (demoErr) {
-          toast.error(demoErr.response?.data?.detail || "Failed to connect");
+          showBanner(demoErr.response?.data?.detail || "Failed to connect", "error");
         }
       } else if (err.response?.status === 403 && detail) {
-        toast.error(detail);
+        showBanner(detail, "error");
       } else {
-        toast.error(detail || "Failed to connect Gmail");
+        showBanner(detail || "Failed to connect Gmail", "error");
       }
-    } finally {
       setConnecting(false);
     }
   };
@@ -144,10 +175,10 @@ export default function Settings() {
   const handleDisconnect = async (accountId) => {
     try {
       await settingsAPI.disconnectEmail(accountId);
-      toast.success("Account disconnected");
+      showBanner("Account disconnected ✅");
       loadData();
-    } catch (err) {
-      toast.error("Failed to disconnect");
+    } catch {
+      showBanner("Failed to disconnect", "error");
     }
   };
 
@@ -164,6 +195,10 @@ export default function Settings() {
 
   return (
     <div className="space-y-8 max-w-3xl" data-testid="settings-page">
+
+      {/* ── Banner ── */}
+      <Banner banner={banner} onClose={() => setBanner(null)} />
+
       <div>
         <h1 className="text-2xl font-bold" data-testid="settings-heading">Settings</h1>
         <p className="text-sm text-muted-foreground mt-1">Manage your account and preferences</p>
@@ -179,12 +214,7 @@ export default function Settings() {
         <CardContent className="space-y-4">
           <div>
             <Label className="text-sm">Full Name</Label>
-            <Input
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              className="mt-1.5 max-w-sm"
-              data-testid="profile-name-input"
-            />
+            <Input value={fullName} onChange={(e) => setFullName(e.target.value)} className="mt-1.5 max-w-sm" data-testid="profile-name-input" />
           </div>
           <div>
             <Label className="text-sm">Email</Label>
@@ -216,18 +246,11 @@ export default function Settings() {
               </p>
             )}
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setConnectDialog(true)}
-            disabled={accountLimitReached}
-            data-testid="connect-gmail-settings-btn"
-          >
-            {accountLimitReached ? (
-              <><Lock className="w-4 h-4 mr-1.5" /> Limit Reached</>
-            ) : (
-              <><Plus className="w-4 h-4 mr-1.5" /> Connect Gmail</>
-            )}
+          <Button size="sm" variant="outline" onClick={() => setConnectDialog(true)} disabled={accountLimitReached} data-testid="connect-gmail-settings-btn">
+            {accountLimitReached
+              ? <><Lock className="w-4 h-4 mr-1.5" /> Limit Reached</>
+              : <><Plus className="w-4 h-4 mr-1.5" /> Connect Gmail</>
+            }
           </Button>
         </CardHeader>
         <CardContent>
@@ -257,9 +280,9 @@ export default function Settings() {
                     <div>
                       <p className="text-sm font-medium">{a.email}</p>
                       <p className="text-xs text-muted-foreground">
-                        {a.status === "connected" ? (
-                          <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-500" /> Connected</span>
-                        ) : a.status}
+                        {a.status === "connected"
+                          ? <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-500" /> Connected</span>
+                          : a.status}
                       </p>
                     </div>
                   </div>
@@ -289,10 +312,7 @@ export default function Settings() {
             <Slider
               value={[settings?.silence_delay_days || 3]}
               onValueChange={([val]) => handleSaveSilenceRules("silence_delay_days", val)}
-              min={1}
-              max={10}
-              step={1}
-              className="max-w-sm"
+              min={1} max={10} step={1} className="max-w-sm"
               data-testid="silence-threshold-slider"
             />
             <p className="text-xs text-muted-foreground mt-1">Threads with no reply after this many days are flagged as silent</p>
@@ -303,22 +323,14 @@ export default function Settings() {
               <p className="text-sm font-medium">Ignore Newsletters</p>
               <p className="text-xs text-muted-foreground">Skip automated newsletter emails</p>
             </div>
-            <Switch
-              checked={settings?.ignore_newsletters ?? true}
-              onCheckedChange={(v) => handleSaveSilenceRules("ignore_newsletters", v)}
-              data-testid="ignore-newsletters-switch"
-            />
+            <Switch checked={settings?.ignore_newsletters ?? true} onCheckedChange={(v) => handleSaveSilenceRules("ignore_newsletters", v)} data-testid="ignore-newsletters-switch" />
           </div>
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium">Ignore Notifications</p>
               <p className="text-xs text-muted-foreground">Skip automated system notifications</p>
             </div>
-            <Switch
-              checked={settings?.ignore_notifications ?? true}
-              onCheckedChange={(v) => handleSaveSilenceRules("ignore_notifications", v)}
-              data-testid="ignore-notifications-switch"
-            />
+            <Switch checked={settings?.ignore_notifications ?? true} onCheckedChange={(v) => handleSaveSilenceRules("ignore_notifications", v)} data-testid="ignore-notifications-switch" />
           </div>
         </CardContent>
       </Card>
@@ -336,11 +348,7 @@ export default function Settings() {
               <p className="text-sm font-medium">Daily Digest</p>
               <p className="text-xs text-muted-foreground">Receive a daily summary of silent threads</p>
             </div>
-            <Switch
-              checked={settings?.daily_digest ?? true}
-              onCheckedChange={(v) => handleSaveSettings("daily_digest", v)}
-              data-testid="daily-digest-switch"
-            />
+            <Switch checked={settings?.daily_digest ?? true} onCheckedChange={(v) => handleSaveSettings("daily_digest", v)} data-testid="daily-digest-switch" />
           </div>
           <Separator />
           <div className="flex items-center justify-between">
@@ -348,11 +356,7 @@ export default function Settings() {
               <p className="text-sm font-medium">Weekly Report</p>
               <p className="text-xs text-muted-foreground">Get a weekly follow-up performance report</p>
             </div>
-            <Switch
-              checked={settings?.weekly_report ?? true}
-              onCheckedChange={(v) => handleSaveSettings("weekly_report", v)}
-              data-testid="weekly-report-switch"
-            />
+            <Switch checked={settings?.weekly_report ?? true} onCheckedChange={(v) => handleSaveSettings("weekly_report", v)} data-testid="weekly-report-switch" />
           </div>
         </CardContent>
       </Card>
@@ -368,9 +372,7 @@ export default function Settings() {
         <CardContent className="space-y-4">
           {!autoSendAllowed ? (
             <div className="text-center py-4">
-              <p className="text-sm text-muted-foreground mb-3">
-                Auto-send is available on Pro and Business plans.
-              </p>
+              <p className="text-sm text-muted-foreground mb-3">Auto-send is available on Pro and Business plans.</p>
               <Button size="sm" onClick={() => navigate("/billing")} className="bg-primary hover:bg-primary/90 text-white" data-testid="upgrade-autosend-btn">
                 Upgrade Plan <ArrowUpRight className="w-3.5 h-3.5 ml-1.5" />
               </Button>
@@ -382,11 +384,7 @@ export default function Settings() {
                   <p className="text-sm font-medium">Enable Auto-Send</p>
                   <p className="text-xs text-muted-foreground">Automatically send approved follow-ups within your send window</p>
                 </div>
-                <Switch
-                  checked={settings?.auto_send ?? false}
-                  onCheckedChange={(v) => handleSaveSettings("auto_send", v)}
-                  data-testid="auto-send-switch"
-                />
+                <Switch checked={settings?.auto_send ?? false} onCheckedChange={(v) => handleSaveSettings("auto_send", v)} data-testid="auto-send-switch" />
               </div>
               {settings?.auto_send && (
                 <>
@@ -394,36 +392,16 @@ export default function Settings() {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <Label className="text-sm">Send Window Start</Label>
-                      <Input
-                        type="time"
-                        value={settings?.send_window_start || "09:00"}
-                        onChange={(e) => handleSaveSettings("send_window_start", e.target.value)}
-                        className="mt-1.5"
-                        data-testid="send-start-input"
-                      />
+                      <Input type="time" value={settings?.send_window_start || "09:00"} onChange={(e) => handleSaveSettings("send_window_start", e.target.value)} className="mt-1.5" data-testid="send-start-input" />
                     </div>
                     <div>
                       <Label className="text-sm">Send Window End</Label>
-                      <Input
-                        type="time"
-                        value={settings?.send_window_end || "18:00"}
-                        onChange={(e) => handleSaveSettings("send_window_end", e.target.value)}
-                        className="mt-1.5"
-                        data-testid="send-end-input"
-                      />
+                      <Input type="time" value={settings?.send_window_end || "18:00"} onChange={(e) => handleSaveSettings("send_window_end", e.target.value)} className="mt-1.5" data-testid="send-end-input" />
                     </div>
                   </div>
                   <div>
                     <Label className="text-sm">Daily Send Limit</Label>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={100}
-                      value={settings?.daily_send_limit || 20}
-                      onChange={(e) => handleSaveSettings("daily_send_limit", parseInt(e.target.value) || 20)}
-                      className="mt-1.5 max-w-[120px]"
-                      data-testid="daily-limit-input"
-                    />
+                    <Input type="number" min={1} max={100} value={settings?.daily_send_limit || 20} onChange={(e) => handleSaveSettings("daily_send_limit", parseInt(e.target.value) || 20)} className="mt-1.5 max-w-[120px]" data-testid="daily-limit-input" />
                   </div>
                 </>
               )}
@@ -442,44 +420,25 @@ export default function Settings() {
             <p className="text-sm text-muted-foreground">
               Connect your Gmail account to sync emails and detect silent conversations.
             </p>
-            <Button 
-              onClick={handleConnectGmail} 
-              disabled={connecting} 
-              className="w-full bg-primary hover:bg-primary/90 text-white"
-              data-testid="google-oauth-btn"
-            >
+            <Button onClick={handleConnectGmail} disabled={connecting} className="w-full bg-primary hover:bg-primary/90 text-white" data-testid="google-oauth-btn">
               {connecting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Mail className="w-4 h-4 mr-2" />}
               Sign in with Google
             </Button>
             <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t border-border" />
-              </div>
+              <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-border" /></div>
               <div className="relative flex justify-center text-xs">
                 <span className="bg-background px-2 text-muted-foreground">or use demo mode</span>
               </div>
             </div>
             <div>
               <Label className="text-sm">Email for Demo</Label>
-              <Input
-                type="email"
-                placeholder="you@gmail.com"
-                value={connectEmail}
-                onChange={(e) => setConnectEmail(e.target.value)}
-                className="mt-1.5"
-                data-testid="connect-email-input"
-              />
+              <Input type="email" placeholder="you@gmail.com" value={connectEmail} onChange={(e) => setConnectEmail(e.target.value)} className="mt-1.5" data-testid="connect-email-input" />
               <p className="text-xs text-muted-foreground mt-1">Demo mode creates sample email data</p>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConnectDialog(false)}>Cancel</Button>
-            <Button 
-              onClick={handleConnectGmail} 
-              disabled={connecting || !connectEmail} 
-              variant="outline"
-              data-testid="confirm-connect-btn"
-            >
+            <Button onClick={handleConnectGmail} disabled={connecting || !connectEmail} variant="outline" data-testid="confirm-connect-btn">
               {connecting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
               Connect Demo
             </Button>
