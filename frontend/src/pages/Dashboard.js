@@ -10,25 +10,43 @@ import { CheckCircle, XCircle, X, MessageSquare, Mail, Send, TrendingUp, Clock, 
 
 function InlineToast({ toast, onDismiss }) {
   useEffect(() => {
-    const timer = setTimeout(() => onDismiss(toast.id), 4000);
+    const timer = setTimeout(() => onDismiss(toast.id), 5000);
     return () => clearTimeout(timer);
   }, [toast.id, onDismiss]);
 
   const isError = toast.variant === "destructive";
+
   return (
-    <div
-      className={`flex items-start gap-3 px-4 py-3 rounded-lg shadow-lg border text-sm animate-fade-in max-w-sm w-full
-        ${isError ? "bg-red-50 border-red-200 text-red-900" : "bg-white border-emerald-200 text-gray-900"}`}
-    >
+    <div style={{
+      display: "flex",
+      alignItems: "flex-start",
+      gap: "12px",
+      padding: "14px 16px",
+      borderRadius: "10px",
+      boxShadow: "0 4px 24px rgba(0,0,0,0.18)",
+      border: `1px solid ${isError ? "#fca5a5" : "#6ee7b7"}`,
+      backgroundColor: isError ? "#fff1f2" : "#f0fdf4",
+      color: isError ? "#7f1d1d" : "#14532d",
+      fontSize: "14px",
+      minWidth: "300px",
+      maxWidth: "380px",
+      width: "100%",
+      pointerEvents: "all",
+    }}>
       {isError
-        ? <XCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
-        : <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />}
-      <div className="flex-1 min-w-0">
-        <p className="font-semibold leading-tight">{toast.title}</p>
-        {toast.description && <p className="mt-0.5 text-xs opacity-80">{toast.description}</p>}
+        ? <XCircle style={{ width: 20, height: 20, color: "#ef4444", flexShrink: 0, marginTop: 2 }} />
+        : <CheckCircle style={{ width: 20, height: 20, color: "#22c55e", flexShrink: 0, marginTop: 2 }} />}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ fontWeight: 600, lineHeight: 1.3, margin: 0 }}>{toast.title}</p>
+        {toast.description && (
+          <p style={{ margin: "4px 0 0", fontSize: 12, opacity: 0.75 }}>{toast.description}</p>
+        )}
       </div>
-      <button onClick={() => onDismiss(toast.id)} className="shrink-0 opacity-50 hover:opacity-100 transition-opacity">
-        <X className="w-4 h-4" />
+      <button
+        onClick={() => onDismiss(toast.id)}
+        style={{ background: "none", border: "none", cursor: "pointer", padding: 0, opacity: 0.45, flexShrink: 0 }}
+      >
+        <X style={{ width: 16, height: 16 }} />
       </button>
     </div>
   );
@@ -123,12 +141,24 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-8" data-testid="dashboard-page">
-      {/* Toast notifications */}
-      <div className="fixed bottom-5 right-5 z-50 flex flex-col gap-2 items-end">
+
+      {/* Toast container — fixed bottom-right, z-index 9999, no Tailwind dependency */}
+      <div style={{
+        position: "fixed",
+        bottom: "24px",
+        right: "24px",
+        zIndex: 9999,
+        display: "flex",
+        flexDirection: "column",
+        gap: "10px",
+        alignItems: "flex-end",
+        pointerEvents: "none",
+      }}>
         {toasts.map((t) => (
           <InlineToast key={t.id} toast={t} onDismiss={dismissToast} />
         ))}
       </div>
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
