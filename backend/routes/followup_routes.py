@@ -33,8 +33,10 @@ async def generate_followup(
     db: AsyncSession = Depends(get_db),
 ):
     user_id = current_user["user_id"]
-    # Ensure user exists in users table
-    await ensure_user_exists(db, user_id)
+    email = current_user.get("email")  # ✅ FIX: extract email from token
+
+    # ✅ FIX: pass email so user is properly created in users table
+    await ensure_user_exists(db, user_id, email)
 
     limit_check = await check_followup_limit(user_id, db)
     if not limit_check["allowed"]:
@@ -145,7 +147,6 @@ async def list_followups(
         query += " AND status=:status"
         params["status"] = status
 
-    # ✅ FIX: column is generated_at, not created_at
     query += " ORDER BY generated_at DESC LIMIT :limit OFFSET :offset"
 
     result = await db.execute(text(query), params)
