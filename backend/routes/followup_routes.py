@@ -1,3 +1,4 @@
+from services.user_service import ensure_user_exists
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +33,8 @@ async def generate_followup(
     db: AsyncSession = Depends(get_db),
 ):
     user_id = current_user["user_id"]
+    # Ensure user exists in users table
+    await ensure_user_exists(db, user_id)
 
     limit_check = await check_followup_limit(user_id, db)
     if not limit_check["allowed"]:
