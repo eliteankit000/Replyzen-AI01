@@ -1,4 +1,3 @@
-from services.user_service import ensure_user_exists
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,11 +31,8 @@ async def generate_followup(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # ✅ FIX: Supabase manages auth.users — no manual insert needed
     user_id = current_user["user_id"]
-    email = current_user.get("email")  # ✅ FIX: extract email from token
-
-    # ✅ FIX: pass email so user is properly created in users table
-    await ensure_user_exists(db, user_id, email)
 
     limit_check = await check_followup_limit(user_id, db)
     if not limit_check["allowed"]:
@@ -84,11 +80,6 @@ async def generate_followup(
         draft = f"Hi,\n\nFollowing up regarding \"{thread.get('subject','our discussion')}\".\n\nBest regards"
 
     followup_id = str(uuid.uuid4())
-    recipient = ""
-    participants = thread.get("participants", [])
-    if participants:
-        recipient = participants[0]
-
     now = datetime.now(timezone.utc)
 
     await db.execute(
@@ -109,7 +100,6 @@ async def generate_followup(
         },
     )
 
-    # Usage tracking
     today = now.date()
     await db.execute(
         text("""
