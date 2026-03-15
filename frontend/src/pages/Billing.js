@@ -9,47 +9,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter
 } from "@/components/ui/dialog";
-import { Check, CreditCard, Zap, Crown, Loader2, AlertTriangle, CheckCircle, XCircle, X } from "lucide-react";
-
-/* ── Inline banner — no Toaster dependency ── */
-function Banner({ banner, onClose }) {
-  if (!banner) return null;
-  const isError = banner.type === "error";
-  return (
-    <div role="alert" style={{
-      display: "flex", alignItems: "center", gap: 10,
-      padding: "13px 18px", borderRadius: 10,
-      background: isError ? "#fef2f2" : "#f0fdf4",
-      border: `1.5px solid ${isError ? "#f87171" : "#4ade80"}`,
-      color: isError ? "#7f1d1d" : "#14532d",
-      fontSize: 14, fontWeight: 500,
-      boxShadow: "0 2px 12px rgba(0,0,0,0.09)",
-      marginBottom: 8,
-    }}>
-      {isError
-        ? <XCircle    style={{ width: 18, height: 18, color: "#dc2626", flexShrink: 0 }} />
-        : <CheckCircle style={{ width: 18, height: 18, color: "#16a34a", flexShrink: 0 }} />
-      }
-      <span style={{ flex: 1 }}>{banner.msg}</span>
-      <button onClick={onClose} style={{ all: "unset", cursor: "pointer", opacity: 0.45, display: "flex" }} aria-label="Dismiss">
-        <X style={{ width: 14, height: 14 }} />
-      </button>
-    </div>
-  );
-}
+import { Check, CreditCard, Zap, Crown, Loader2, AlertTriangle } from "lucide-react";
+import { toast } from "sonner";
 
 export default function Billing() {
   const { user, refreshUser } = useAuth();
-
-  /* ── Banner state ── */
-  const [banner, setBanner] = useState(null);
-  const timerRef = useRef(null);
-  const showBanner = (msg, type = "success") => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    setBanner({ msg, type });
-    timerRef.current = setTimeout(() => setBanner(null), 6000);
-  };
-  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
   /* ── Data state ── */
   const [plans, setPlans]             = useState([]);
@@ -63,8 +27,57 @@ export default function Billing() {
   const [locationInfo, setLocationInfo] = useState({
     currency: "USD", payment_provider: "paddle", country: "US"
   });
+  const [paddleInitialized, setPaddleInitialized] = useState(false);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { 
+    loadData(); 
+    initializePaddle();
+  }, []);
+
+  // Initialize Paddle Billing v2 on component mount
+  const initializePaddle = () => {
+    if (typeof window === "undefined") return;
+    
+    // Wait for Paddle script to load
+    const checkPaddle = setInterval(() => {
+      if (window.Paddle) {
+        clearInterval(checkPaddle);
+        
+        try {
+          // Get Paddle token from environment (Paddle Billing v2 uses token)
+          const paddleToken = process.env.REACT_APP_PADDLE_PUBLIC_KEY || 
+                              process.env.VITE_PADDLE_PUBLIC_KEY;
+          const vendorId = process.env.REACT_APP_PADDLE_VENDOR_ID || 
+                           process.env.VITE_PADDLE_VENDOR_ID;
+
+          if (paddleToken) {
+            // Paddle Billing v2 initialization
+            if (window.Paddle.Environment) {
+              window.Paddle.Environment.set("production");
+            }
+            window.Paddle.Initialize({ token: paddleToken });
+            setPaddleInitialized(true);
+            console.log("Paddle Billing v2 initialized with token");
+          } else if (vendorId) {
+            // Paddle Classic fallback
+            if (window.Paddle.Environment) {
+              window.Paddle.Environment.set("production");
+            }
+            window.Paddle.Setup({ seller: parseInt(vendorId) });
+            setPaddleInitialized(true);
+            console.log("Paddle Classic initialized with vendor ID:", vendorId);
+          } else {
+            console.warn("No Paddle credentials found in environment");
+          }
+        } catch (err) {
+          console.error("Paddle initialization error:", err);
+        }
+      }
+    }, 100);
+
+    // Cleanup after 10 seconds if Paddle doesn't load
+    setTimeout(() => clearInterval(checkPaddle), 10000);
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -88,7 +101,7 @@ export default function Billing() {
       setPlanLimits(limitsRes.data);
     } catch (err) {
       console.error("Failed to load billing:", err);
-      showBanner("Failed to load billing information.", "error");
+      toast.error("Failed to load billing information");
     } finally {
       setLoading(false);
     }
@@ -97,6 +110,7 @@ export default function Billing() {
   const handleCheckout = async (planId) => {
     const provider = locationInfo.payment_provider;
     setCheckingOut(`${planId}-${provider}`);
+    
     try {
       const res = await billingAPI.createCheckout({
         plan_id: planId,
@@ -107,76 +121,109 @@ export default function Billing() {
       /* ── Razorpay (India) ── */
       if (res.data.provider === "razorpay") {
         if (typeof window.Razorpay === "undefined") {
-          showBanner("Razorpay SDK not loaded. Please refresh and try again.", "error");
+          toast.error("Razorpay SDK not loaded. Please refresh and try again.");
           return;
         }
+        
+        toast.info("Opening Razorpay checkout...");
+        
         const options = {
           key: res.data.key_id,
           subscription_id: res.data.subscription_id,
           name: "Replyzen AI",
           description: `${planId.charAt(0).toUpperCase() + planId.slice(1)} Plan - ${cycle}`,
           handler: () => {
-            showBanner("Payment successful! Your plan has been activated. ✅");
+            toast.success("Payment successful! Your plan has been activated. 🎉");
             refreshUser();
             loadData();
           },
-          modal: { ondismiss: () => showBanner("Payment was cancelled.", "error") },
+          modal: { 
+            ondismiss: () => {
+              toast.warning("Payment was cancelled");
+            }
+          },
           theme: { color: "#ea580c" },
         };
+        
         const rzp = new window.Razorpay(options);
-        rzp.on("payment.failed", () => showBanner("Payment failed. Please try again.", "error"));
+        rzp.on("payment.failed", (response) => {
+          console.error("Razorpay payment failed:", response);
+          toast.error("Payment failed. Please try again.");
+        });
         rzp.open();
 
-      /* ── Paddle (International) ── */
+      /* ── Paddle Billing (International) ── */
       } else if (res.data.provider === "paddle") {
         if (typeof window.Paddle === "undefined") {
-          showBanner("Paddle SDK not loaded. Please refresh and try again.", "error");
+          toast.error("Paddle SDK not loaded. Please refresh and try again.");
           return;
         }
-        try {
-          // ✅ FIX 1: Use import.meta.env (Vite), not process.env (CRA)
-          // ✅ FIX 2: Use VITE_PADDLE_PUBLIC_KEY as token for Paddle Billing v2
-          // ✅ FIX 3: Use Paddle.Initialize() not Paddle.Setup()
-          if (!window.Paddle.Initialized) {
-            const paddleToken = import.meta.env.VITE_PADDLE_PUBLIC_KEY;
-            const vendorId    = import.meta.env.VITE_PADDLE_VENDOR_ID || res.data.vendor_id;
 
-            if (!paddleToken && !vendorId) {
-              showBanner("Paddle is not configured. Please contact support.", "error");
-              return;
-            }
+        // Initialize Paddle if not already done
+        if (!paddleInitialized) {
+          const paddleToken = process.env.REACT_APP_PADDLE_PUBLIC_KEY || 
+                              process.env.VITE_PADDLE_PUBLIC_KEY;
+          const vendorId = res.data.vendor_id || 
+                           process.env.REACT_APP_PADDLE_VENDOR_ID || 
+                           process.env.VITE_PADDLE_VENDOR_ID;
 
-            // Paddle Billing v2 uses Initialize + token
-            // Paddle Classic uses Setup + seller (vendorId)
-            if (paddleToken) {
-              window.Paddle.Environment && window.Paddle.Environment.set("production");
-              window.Paddle.Initialize({ token: paddleToken });
-            } else {
-              window.Paddle.Environment && window.Paddle.Environment.set("production");
-              window.Paddle.Setup({ seller: parseInt(vendorId) });
-            }
+          if (!paddleToken && !vendorId) {
+            toast.error("Paddle is not configured. Please contact support.");
+            return;
           }
 
+          try {
+            if (window.Paddle.Environment) {
+              window.Paddle.Environment.set("production");
+            }
+            
+            if (paddleToken) {
+              window.Paddle.Initialize({ token: paddleToken });
+            } else {
+              window.Paddle.Setup({ seller: parseInt(vendorId) });
+            }
+          } catch (initErr) {
+            console.error("Paddle initialization failed:", initErr);
+            toast.error("Failed to initialize payment. Please refresh and try again.");
+            return;
+          }
+        }
+
+        toast.info("Opening Paddle checkout...");
+
+        try {
+          // Paddle Billing v2 checkout
           window.Paddle.Checkout.open({
             items: [{ priceId: res.data.price_id, quantity: 1 }],
-            customData: { user_id: res.data.user_id, plan: planId },
+            customData: { 
+              user_id: res.data.user_id, 
+              plan: planId,
+              billing_cycle: cycle
+            },
             settings: {
               theme: "light",
-              successUrl: window.location.href,
+              displayMode: "overlay",
+              locale: "en",
+              successUrl: window.location.href + "?payment=success",
+              allowLogout: false,
+            },
+            customer: {
+              email: user?.email || undefined,
             },
           });
         } catch (paddleErr) {
-          console.error("Paddle error:", paddleErr);
-          showBanner("Unable to open Paddle checkout. Please try again.", "error");
+          console.error("Paddle checkout error:", paddleErr);
+          toast.error("Unable to open checkout. Please try again.");
         }
       }
     } catch (err) {
+      console.error("Checkout error:", err);
       if (err.response?.data?.detail) {
-        showBanner(err.response.data.detail, "error");
+        toast.error(err.response.data.detail);
       } else if (err.message === "Network Error") {
-        showBanner("Unable to create checkout session. Please check your connection.", "error");
+        toast.error("Unable to create checkout session. Please check your connection.");
       } else {
-        showBanner("Unable to create checkout session. Please try again.", "error");
+        toast.error("Unable to create checkout session. Please try again.");
       }
     } finally {
       setCheckingOut(null);
@@ -187,16 +234,28 @@ export default function Billing() {
     setCancelling(true);
     try {
       await billingAPI.cancelSubscription();
-      showBanner("Subscription cancelled successfully. ✅");
+      toast.success("Subscription cancelled successfully");
       setCancelDialog(false);
       refreshUser();
       loadData();
     } catch (err) {
-      showBanner(err.response?.data?.detail || "Cancellation failed. Please try again.", "error");
+      toast.error(err.response?.data?.detail || "Cancellation failed. Please try again.");
     } finally {
       setCancelling(false);
     }
   };
+
+  // Check for payment success URL param
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("payment") === "success") {
+      toast.success("Payment successful! Your subscription is now active. 🎉");
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+      refreshUser();
+      loadData();
+    }
+  }, []);
 
   const currentPlan    = user?.plan || subscription?.plan || "free";
   const planIcons      = { free: CreditCard, pro: Zap, business: Crown };
@@ -205,9 +264,6 @@ export default function Billing() {
 
   return (
     <div className="space-y-8" data-testid="billing-page">
-
-      {/* ── Banner ── */}
-      <Banner banner={banner} onClose={() => setBanner(null)} />
 
       <div>
         <h1 className="text-2xl font-bold" data-testid="billing-heading">Billing</h1>

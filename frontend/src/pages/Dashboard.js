@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { analyticsAPI, emailAPI, followupAPI } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
@@ -7,30 +7,37 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  CheckCircle, XCircle, X,
   MessageSquare, Mail, Send, TrendingUp, Clock, Zap,
-  ArrowRight, Plus, RefreshCw
+  ArrowRight, Plus, RefreshCw, AlertCircle, CheckCircle2, Bot, EyeOff
 } from "lucide-react";
+import { toast } from "sonner";
+
+// Status badge component (same as FollowupQueue)
+function ThreadStatusBadge({ status, className = "" }) {
+  const statusConfig = {
+    needs_reply: { label: "Needs Reply", color: "bg-amber-50 text-amber-700 border-amber-200", icon: AlertCircle },
+    replied: { label: "Replied", color: "bg-emerald-50 text-emerald-700 border-emerald-200", icon: CheckCircle2 },
+    awaiting_response: { label: "Awaiting", color: "bg-blue-50 text-blue-700 border-blue-200", icon: Clock },
+    follow_up_scheduled: { label: "Scheduled", color: "bg-purple-50 text-purple-700 border-purple-200", icon: Zap },
+    dismissed: { label: "Dismissed", color: "bg-gray-50 text-gray-500 border-gray-200", icon: EyeOff },
+    automated: { label: "Auto", color: "bg-gray-50 text-gray-400 border-gray-200", icon: Bot },
+    reply_pending: { label: "Draft Ready", color: "bg-orange-50 text-orange-700 border-orange-200", icon: Zap },
+  };
+
+  const config = statusConfig[status] || statusConfig.needs_reply;
+  const Icon = config.icon;
+
+  return (
+    <Badge variant="outline" className={`${config.color} ${className} text-xs`}>
+      <Icon className="w-3 h-3 mr-1" />
+      {config.label}
+    </Badge>
+  );
+}
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
-
-  // ── Banner: stored in ref (survives re-renders) AND state (triggers paint) ──
-  const bannerRef   = useRef(null);
-  const timerRef    = useRef(null);
-  const [banner, setBanner] = useState(null); // { msg, type: "success"|"error" }
-
-  const showBanner = (msg, type = "success") => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    const value = { msg, type };
-    bannerRef.current = value;
-    setBanner(value);
-    timerRef.current = setTimeout(() => {
-      bannerRef.current = null;
-      setBanner(null);
-    }, 7000);
-  };
 
   // ── Data state ──
   const [stats, setStats]                     = useState(null);
@@ -41,7 +48,6 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadData();
-    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
   }, []);
 
   const loadData = async () => {
@@ -57,6 +63,7 @@ export default function Dashboard() {
       setRecentFollowups(followupsRes.data.followups || []);
     } catch (err) {
       console.error("loadData failed:", err);
+      toast.error("Failed to load dashboard data");
     } finally {
       setLoading(false);
     }
@@ -64,29 +71,29 @@ export default function Dashboard() {
 
   const handleSync = async () => {
     setSyncing(true);
-    let succeeded = false;
-    let errorMsg  = "";
-
     try {
       const res = await emailAPI.syncEmails();
-      console.log("[Sync] response:", res);
-      succeeded = true;
       const n = res?.data?.new_threads ?? 0;
-      errorMsg = "";
-      // ── Stop spinning FIRST so re-render happens before banner ──
-      setSyncing(false);
-      showBanner(
-        n > 0
-          ? `Sync complete ✅  —  ${n} new thread${n === 1 ? "" : "s"} synced from Gmail.`
-          : "Sync complete ✅  —  Your inbox is already up to date."
-      );
-      // Reload data in background AFTER banner is queued
+      
+      if (n > 0) {
+        toast.success(`Sync complete! ${n} new thread${n === 1 ? "" : "s"} synced from Gmail 📬`);
+      } else {
+        toast.success("Inbox synced - already up to date ✅");
+      }
+      
+      // Show warnings if any
+      if (res?.data?.warnings?.length > 0) {
+        toast.warning(res.data.warnings.join(", "));
+      }
+      
+      // Reload data
       loadData();
     } catch (err) {
       console.error("[Sync] error:", err);
-      errorMsg = err?.response?.data?.message || err?.message || "Sync failed. Please try again.";
+      const errorMsg = err?.response?.data?.detail || err?.message || "Sync failed. Please try again.";
+      toast.error(errorMsg);
+    } finally {
       setSyncing(false);
-      showBanner(errorMsg, "error");
     }
   };
 
@@ -105,46 +112,8 @@ export default function Dashboard() {
     return `${diffDays} days ago`;
   };
 
-  const isError = banner?.type === "error";
-
   return (
     <div className="space-y-6" data-testid="dashboard-page">
-
-      {/* ── SYNC BANNER ─────────────────────────────────────────────────────
-           Rendered inline at the top of the page. Uses only React state —
-           no portals, no DOM injection. Completely isolated from loadData.
-      ──────────────────────────────────────────────────────────────────── */}
-      {banner && (
-        <div
-          role="alert"
-          style={{
-            display:      "flex",
-            alignItems:   "center",
-            gap:          12,
-            padding:      "13px 18px",
-            borderRadius: 10,
-            background:   isError ? "#fef2f2" : "#f0fdf4",
-            border:       `1.5px solid ${isError ? "#f87171" : "#4ade80"}`,
-            color:        isError ? "#7f1d1d" : "#14532d",
-            fontSize:     14,
-            fontWeight:   500,
-            boxShadow:    "0 2px 12px rgba(0,0,0,0.09)",
-          }}
-        >
-          {isError
-            ? <XCircle    style={{ width: 18, height: 18, color: "#dc2626", flexShrink: 0 }} />
-            : <CheckCircle style={{ width: 18, height: 18, color: "#16a34a", flexShrink: 0 }} />
-          }
-          <span style={{ flex: 1 }}>{banner.msg}</span>
-          <button
-            onClick={() => { if (timerRef.current) clearTimeout(timerRef.current); setBanner(null); }}
-            style={{ all: "unset", cursor: "pointer", opacity: 0.45, display: "flex" }}
-            aria-label="Dismiss"
-          >
-            <X style={{ width: 14, height: 14 }} />
-          </button>
-        </div>
-      )}
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -210,14 +179,25 @@ export default function Dashboard() {
                 {silentThreads.map((t) => (
                   <div key={t.id} className="flex items-center justify-between p-3 rounded-lg hover:bg-muted/50 transition-colors" data-testid={`thread-${t.id}`}>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate">{t.subject}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {t.participant_names?.[0] || "Unknown"} &middot; {t.days_silent}d silent
+                      <div className="flex items-center gap-2 mb-1">
+                        <p className="text-sm font-medium truncate">{t.subject}</p>
+                        {t.thread_status && (
+                          <ThreadStatusBadge status={t.thread_status} />
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {t.participant_names?.[0] || t.last_message_from || "Unknown"} · {t.days_silent}d silent
                       </p>
                     </div>
-                    <Badge variant="outline" className="ml-3 shrink-0 text-amber-600 border-amber-200 bg-amber-50">
-                      <Clock className="w-3 h-3 mr-1" /> {t.days_silent}d
-                    </Badge>
+                    {t.show_reply ? (
+                      <Badge variant="outline" className="ml-3 shrink-0 text-amber-600 border-amber-200 bg-amber-50">
+                        <Clock className="w-3 h-3 mr-1" /> {t.days_silent}d
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="ml-3 shrink-0 text-muted-foreground border-muted">
+                        No action
+                      </Badge>
+                    )}
                   </div>
                 ))}
               </div>

@@ -153,6 +153,18 @@ export const emailAPI = {
 
   getSilentThreads: function (params) {
     return api.get("/emails/threads/silent", { params: params });
+  },
+
+  dismissThread: function (threadId) {
+    return api.post("/emails/threads/" + threadId + "/dismiss");
+  },
+
+  undismissThread: function (threadId) {
+    return api.post("/emails/threads/" + threadId + "/undismiss");
+  },
+
+  getThreadReplyStatus: function (threadId) {
+    return api.get("/emails/threads/" + threadId + "/reply-status");
   }
 };
 
@@ -163,10 +175,11 @@ export const emailAPI = {
 */
 
 export const followupAPI = {
-  generate: function (threadId, tone) {
+  generate: function (threadId, tone, forceRegenerate) {
     return api.post("/followups/generate", {
       thread_id: threadId,
-      tone: tone
+      tone: tone || "professional",
+      force_regenerate: forceRegenerate || false
     });
   },
 
@@ -184,6 +197,12 @@ export const followupAPI = {
 
   dismiss: function (id) {
     return api.post("/followups/" + id + "/dismiss");
+  },
+
+  regenerate: function (id, tone) {
+    return api.post("/followups/" + id + "/regenerate", null, {
+      params: { tone: tone || "professional" }
+    });
   }
 };
 

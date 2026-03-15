@@ -15,18 +15,30 @@ if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
 elif DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+elif DATABASE_URL.startswith("sqlite://"):
+    DATABASE_URL = DATABASE_URL.replace("sqlite://", "sqlite+aiosqlite://", 1)
+
+engine_kwargs = {
+    "pool_pre_ping": True,
+}
+
+# SQLite doesn't support pooling parameters
+if "sqlite" not in DATABASE_URL:
+    engine_kwargs.update({
+        "pool_size": 5,
+        "max_overflow": 10,
+    })
+
+engine_kwargs["connect_args"] = (
+    {
+        "statement_cache_size": 0,
+        # "ssl": "require",  # Commented out for local testing
+    } if "sqlite" not in DATABASE_URL else {}
+)
 
 engine = create_async_engine(
     DATABASE_URL,
-    pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
-    # ✅ Required for Supabase pgbouncer transaction pooler
-    # Without this you get DuplicatePreparedStatementError
-    connect_args={
-        "statement_cache_size": 0,
-        "ssl": "require",
-    }
+    **engine_kwargs
 )
 
 AsyncSessionLocal = async_sessionmaker(

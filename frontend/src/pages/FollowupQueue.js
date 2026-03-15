@@ -15,9 +15,33 @@ import {
 } from "@/components/ui/dialog";
 import {
   Zap, Send, X, Clock, Edit3, Mail, RefreshCw,
-  MessageSquare, CheckCircle2, XCircle, Loader2, Lock, ArrowUpRight
+  MessageSquare, CheckCircle2, XCircle, Loader2, Lock, ArrowUpRight,
+  AlertCircle, MailCheck, MailX, Bot, Eye, EyeOff, RotateCcw
 } from "lucide-react";
 import { toast } from "sonner";
+
+// Status badge component
+function ThreadStatusBadge({ status, className = "" }) {
+  const statusConfig = {
+    needs_reply: { label: "Needs Reply", color: "bg-amber-50 text-amber-700 border-amber-200", icon: AlertCircle },
+    replied: { label: "Replied", color: "bg-emerald-50 text-emerald-700 border-emerald-200", icon: CheckCircle2 },
+    awaiting_response: { label: "Awaiting Response", color: "bg-blue-50 text-blue-700 border-blue-200", icon: Clock },
+    follow_up_scheduled: { label: "Follow-up Scheduled", color: "bg-purple-50 text-purple-700 border-purple-200", icon: Zap },
+    dismissed: { label: "Dismissed", color: "bg-gray-50 text-gray-500 border-gray-200", icon: EyeOff },
+    automated: { label: "Automated", color: "bg-gray-50 text-gray-400 border-gray-200", icon: Bot },
+    reply_pending: { label: "Draft Ready", color: "bg-orange-50 text-orange-700 border-orange-200", icon: Edit3 },
+  };
+
+  const config = statusConfig[status] || statusConfig.needs_reply;
+  const Icon = config.icon;
+
+  return (
+    <Badge variant="outline" className={`${config.color} ${className}`}>
+      <Icon className="w-3 h-3 mr-1" />
+      {config.label}
+    </Badge>
+  );
+}
 
 export default function FollowupQueue() {
   const navigate = useNavigate();
@@ -28,6 +52,7 @@ export default function FollowupQueue() {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState({});
   const [sending, setSending] = useState({});
+  const [dismissing, setDismissing] = useState({});
   const [editDialog, setEditDialog] = useState(null);
   const [editDraft, setEditDraft] = useState("");
   const [tone, setTone] = useState("professional");
@@ -65,6 +90,7 @@ export default function FollowupQueue() {
       }
     } catch (err) {
       console.error("Failed to load:", err);
+      toast.error("Failed to load data");
     } finally {
       setLoading(false);
     }
@@ -73,14 +99,18 @@ export default function FollowupQueue() {
   const handleGenerate = async (threadId) => {
     setGenerating((prev) => ({ ...prev, [threadId]: true }));
     try {
-      await followupAPI.generate(threadId, tone);
-      toast.success("AI draft generated!");
+      const res = await followupAPI.generate(threadId, tone, false);
+      toast.success("AI draft generated! ✨");
       await loadPlanLimits();
       setTab("pending");
     } catch (err) {
       const detail = err.response?.data?.detail || "Failed to generate draft";
       if (err.response?.status === 403) {
         toast.error(detail);
+      } else if (err.response?.status === 400) {
+        toast.warning(detail);
+      } else if (err.response?.status === 429) {
+        toast.warning("Generation already in progress...");
       } else {
         toast.error(detail);
       }
@@ -93,7 +123,7 @@ export default function FollowupQueue() {
     setSending((prev) => ({ ...prev, [followupId]: true }));
     try {
       await followupAPI.send(followupId);
-      toast.success("Follow-up sent!");
+      toast.success("Follow-up sent! 📧");
       loadData();
     } catch (err) {
       toast.error("Failed to send follow-up");
@@ -102,13 +132,41 @@ export default function FollowupQueue() {
     }
   };
 
-  const handleDismiss = async (followupId) => {
+  const handleDismissFollowup = async (followupId) => {
     try {
       await followupAPI.dismiss(followupId);
       toast.success("Follow-up dismissed");
       loadData();
     } catch (err) {
       toast.error("Failed to dismiss");
+    }
+  };
+
+  const handleDismissThread = async (threadId) => {
+    setDismissing((prev) => ({ ...prev, [threadId]: true }));
+    try {
+      await emailAPI.dismissThread(threadId);
+      toast.success("Thread dismissed");
+      loadData();
+    } catch (err) {
+      toast.error("Failed to dismiss thread");
+    } finally {
+      setDismissing((prev) => ({ ...prev, [threadId]: false }));
+    }
+  };
+
+  const handleRegenerate = async (followupId) => {
+    setGenerating((prev) => ({ ...prev, [followupId]: true }));
+    try {
+      await followupAPI.regenerate(followupId, tone);
+      toast.success("Draft regenerated! ✨");
+      await loadPlanLimits();
+      loadData();
+    } catch (err) {
+      const detail = err.response?.data?.detail || "Failed to regenerate draft";
+      toast.error(detail);
+    } finally {
+      setGenerating((prev) => ({ ...prev, [followupId]: false }));
     }
   };
 
@@ -128,7 +186,15 @@ export default function FollowupQueue() {
     setSyncing(true);
     try {
       const res = await emailAPI.syncEmails();
-      toast.success(res.data.message);
+      const newThreads = res.data?.new_threads || 0;
+      if (newThreads > 0) {
+        toast.success(`Sync complete! ${newThreads} new thread${newThreads === 1 ? "" : "s"} found 📬`);
+      } else {
+        toast.success("Inbox synced - all up to date ✅");
+      }
+      if (res.data?.warnings?.length > 0) {
+        toast.warning(res.data.warnings.join(", "));
+      }
       loadData();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Sync failed. Connect Gmail first.");
@@ -233,32 +299,65 @@ export default function FollowupQueue() {
                   <CardContent className="py-4">
                     <div className="flex items-start justify-between gap-4">
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 mb-1">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <p className="text-sm font-semibold truncate">{t.subject}</p>
-                          <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50 shrink-0">
-                            {t.days_silent}d silent
-                          </Badge>
+                          <ThreadStatusBadge status={t.thread_status || "needs_reply"} />
+                          {t.days_silent > 0 && (
+                            <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50 shrink-0">
+                              {t.days_silent}d silent
+                            </Badge>
+                          )}
                         </div>
                         <p className="text-xs text-muted-foreground mb-1">
-                          To: {t.participant_names?.[0] || "Unknown"} ({t.participants?.[1] || ""})
+                          From: {t.participant_names?.[0] || t.last_message_from || "Unknown"}
                         </p>
-                        <p className="text-xs text-muted-foreground line-clamp-1">{t.snippet}</p>
-                      </div>
-                      <Button
-                        size="sm"
-                        onClick={() => handleGenerate(t.id)}
-                        disabled={generating[t.id] || limitReached}
-                        className="shrink-0 bg-primary hover:bg-primary/90 text-white"
-                        data-testid={`generate-btn-${t.id}`}
-                      >
-                        {generating[t.id] ? (
-                          <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Generating...</>
-                        ) : limitReached ? (
-                          <><Lock className="w-3.5 h-3.5 mr-1.5" /> Limit</>
-                        ) : (
-                          <><Zap className="w-3.5 h-3.5 mr-1.5" /> Generate</>
+                        {t.snippet && (
+                          <p className="text-xs text-muted-foreground line-clamp-1">{t.snippet}</p>
                         )}
-                      </Button>
+                        {!t.show_reply && t.reply_reason && (
+                          <p className="text-xs text-muted-foreground/70 mt-1 italic">
+                            {t.reply_reason}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {/* Only show Generate button if show_reply is true */}
+                        {t.show_reply ? (
+                          <Button
+                            size="sm"
+                            onClick={() => handleGenerate(t.id)}
+                            disabled={generating[t.id] || limitReached}
+                            className="shrink-0 bg-primary hover:bg-primary/90 text-white"
+                            data-testid={`generate-btn-${t.id}`}
+                          >
+                            {generating[t.id] ? (
+                              <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Generating...</>
+                            ) : limitReached ? (
+                              <><Lock className="w-3.5 h-3.5 mr-1.5" /> Limit</>
+                            ) : (
+                              <><Zap className="w-3.5 h-3.5 mr-1.5" /> Generate</>
+                            )}
+                          </Button>
+                        ) : (
+                          <Badge variant="outline" className="text-muted-foreground">
+                            No action needed
+                          </Badge>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleDismissThread(t.id)}
+                          disabled={dismissing[t.id]}
+                          className="text-muted-foreground shrink-0"
+                          title="Dismiss thread"
+                        >
+                          {dismissing[t.id] ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <EyeOff className="w-3.5 h-3.5" />
+                          )}
+                        </Button>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -279,17 +378,18 @@ export default function FollowupQueue() {
                 <Card key={f.id} className="hover-lift" data-testid={`pending-followup-${f.id}`}>
                   <CardContent className="py-4">
                     <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <p className="text-sm font-semibold">{f.original_subject}</p>
                         <Badge variant="secondary" className="text-xs">{f.tone}</Badge>
+                        <ThreadStatusBadge status="reply_pending" />
                       </div>
-                      <span className="text-xs text-muted-foreground">{formatDate(f.created_at)}</span>
+                      <span className="text-xs text-muted-foreground">{formatDate(f.generated_at)}</span>
                     </div>
                     <p className="text-xs text-muted-foreground mb-1">To: {f.recipient_name || f.recipient}</p>
                     <div className="p-3 rounded-lg bg-muted/50 text-sm mt-2 mb-3 leading-relaxed whitespace-pre-line">
                       {f.ai_draft}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <Button size="sm" onClick={() => handleSend(f.id)} disabled={sending[f.id]} className="bg-primary hover:bg-primary/90 text-white" data-testid={`send-btn-${f.id}`}>
                         {sending[f.id] ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Send className="w-3.5 h-3.5 mr-1.5" />}
                         Send
@@ -302,7 +402,21 @@ export default function FollowupQueue() {
                       >
                         <Edit3 className="w-3.5 h-3.5 mr-1.5" /> Edit
                       </Button>
-                      <Button size="sm" variant="ghost" onClick={() => handleDismiss(f.id)} className="text-muted-foreground" data-testid={`dismiss-btn-${f.id}`}>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleRegenerate(f.id)}
+                        disabled={generating[f.id] || limitReached}
+                        data-testid={`regenerate-btn-${f.id}`}
+                      >
+                        {generating[f.id] ? (
+                          <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                        ) : (
+                          <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                        )}
+                        Regenerate
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => handleDismissFollowup(f.id)} className="text-muted-foreground" data-testid={`dismiss-btn-${f.id}`}>
                         <X className="w-3.5 h-3.5 mr-1.5" /> Dismiss
                       </Button>
                     </div>
@@ -326,11 +440,9 @@ export default function FollowupQueue() {
                   <CardContent className="py-4">
                     <div className="flex items-center justify-between mb-2">
                       <p className="text-sm font-semibold">{f.original_subject}</p>
-                      <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200">
-                        <CheckCircle2 className="w-3 h-3 mr-1" /> Sent
-                      </Badge>
+                      <ThreadStatusBadge status="replied" />
                     </div>
-                    <p className="text-xs text-muted-foreground">To: {f.recipient_name || f.recipient} &middot; Sent {formatDate(f.sent_at)}</p>
+                    <p className="text-xs text-muted-foreground">To: {f.recipient_name || f.recipient} · Sent {formatDate(f.sent_at)}</p>
                   </CardContent>
                 </Card>
               ))}
@@ -349,8 +461,13 @@ export default function FollowupQueue() {
               {followups.map((f) => (
                 <Card key={f.id} className="opacity-70" data-testid={`dismissed-followup-${f.id}`}>
                   <CardContent className="py-4">
-                    <p className="text-sm font-semibold">{f.original_subject}</p>
-                    <p className="text-xs text-muted-foreground">To: {f.recipient_name || f.recipient} &middot; Dismissed</p>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-semibold">{f.original_subject}</p>
+                        <p className="text-xs text-muted-foreground">To: {f.recipient_name || f.recipient} · Dismissed</p>
+                      </div>
+                      <ThreadStatusBadge status="dismissed" />
+                    </div>
                   </CardContent>
                 </Card>
               ))}

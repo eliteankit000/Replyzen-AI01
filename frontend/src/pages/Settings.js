@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { settingsAPI, emailAPI, billingAPI } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { isAutoSendAllowed } from "@/lib/plan-utils";
@@ -17,49 +17,14 @@ import {
 } from "@/components/ui/dialog";
 import {
   User, Mail, Bell, Clock, Shield, Trash2, Plus, Save,
-  Loader2, CheckCircle2, Lock, ArrowUpRight, CheckCircle, XCircle, X
+  Loader2, CheckCircle2, Lock, ArrowUpRight
 } from "lucide-react";
-
-/* ── Inline banner — no Toaster, no portal, guaranteed visible ── */
-function Banner({ banner, onClose }) {
-  if (!banner) return null;
-  const isError = banner.type === "error";
-  return (
-    <div role="alert" style={{
-      display: "flex", alignItems: "center", gap: 10,
-      padding: "13px 18px", borderRadius: 10,
-      background: isError ? "#fef2f2" : "#f0fdf4",
-      border: `1.5px solid ${isError ? "#f87171" : "#4ade80"}`,
-      color: isError ? "#7f1d1d" : "#14532d",
-      fontSize: 14, fontWeight: 500,
-      boxShadow: "0 2px 12px rgba(0,0,0,0.09)",
-      marginBottom: 8,
-    }}>
-      {isError
-        ? <XCircle    style={{ width: 18, height: 18, color: "#dc2626", flexShrink: 0 }} />
-        : <CheckCircle style={{ width: 18, height: 18, color: "#16a34a", flexShrink: 0 }} />
-      }
-      <span style={{ flex: 1 }}>{banner.msg}</span>
-      <button onClick={onClose} style={{ all: "unset", cursor: "pointer", opacity: 0.45, display: "flex" }} aria-label="Dismiss">
-        <X style={{ width: 14, height: 14 }} />
-      </button>
-    </div>
-  );
-}
+import { toast } from "sonner";
 
 export default function Settings() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, refreshUser } = useAuth();
-
-  /* ── Banner state ── */
-  const [banner, setBanner] = useState(null);
-  const timerRef = useRef(null);
-  const showBanner = (msg, type = "success") => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    setBanner({ msg, type });
-    timerRef.current = setTimeout(() => setBanner(null), 6000);
-  };
-  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
   /* ── Data state ── */
   const [settings, setSettings]       = useState(null);
@@ -75,7 +40,16 @@ export default function Settings() {
   const userPlan       = user?.plan || "free";
   const autoSendAllowed = isAutoSendAllowed(userPlan);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { 
+    loadData(); 
+    
+    // Check for Gmail callback success
+    if (searchParams.get("gmail") === "connected") {
+      toast.success("Gmail account connected successfully! 🎉");
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
 
   const loadData = async () => {
     setLoading(true);
@@ -91,6 +65,7 @@ export default function Settings() {
       setFullName(user?.full_name || "");
     } catch (err) {
       console.error("Failed to load settings:", err);
+      toast.error("Failed to load settings");
     } finally {
       setLoading(false);
     }
@@ -101,9 +76,9 @@ export default function Settings() {
     try {
       await settingsAPI.updateProfile({ full_name: fullName });
       await refreshUser();
-      showBanner("Profile updated ✅");
+      toast.success("Profile updated successfully ✅");
     } catch {
-      showBanner("Failed to update profile", "error");
+      toast.error("Failed to update profile");
     } finally {
       setSaving(false);
     }
@@ -113,12 +88,11 @@ export default function Settings() {
     try {
       await settingsAPI.update({ [field]: value });
       setSettings((prev) => ({ ...prev, [field]: value }));
-      showBanner("Settings saved ✅");
+      toast.success("Settings saved ✅");
     } catch (err) {
       const detail = err.response?.data?.detail;
-      showBanner(
-        (err.response?.status === 403 && detail) ? detail : "Failed to save",
-        "error"
+      toast.error(
+        (err.response?.status === 403 && detail) ? detail : "Failed to save settings"
       );
     }
   };
@@ -127,9 +101,9 @@ export default function Settings() {
     try {
       await settingsAPI.updateSilenceRules({ [field]: value });
       setSettings((prev) => ({ ...prev, [field]: value }));
-      showBanner("Silence rules updated ✅");
+      toast.success("Silence rules updated ✅");
     } catch {
-      showBanner("Failed to save", "error");
+      toast.error("Failed to save silence rules");
     }
   };
 
@@ -138,13 +112,15 @@ export default function Settings() {
     try {
       const response = await emailAPI.getGmailAuthUrl();
       if (response.data?.auth_url) {
+        toast.info("Redirecting to Google for authentication...");
         window.location.href = response.data.auth_url;
         return;
       }
+      // Fallback to demo mode
       if (connectEmail) {
         await emailAPI.connectGmail(connectEmail);
         setConnecting(false);
-        showBanner("Gmail account connected ✅");
+        toast.success("Gmail account connected successfully! 🎉");
         setConnectDialog(false);
         setConnectEmail("");
         loadData();
@@ -152,21 +128,22 @@ export default function Settings() {
     } catch (err) {
       const detail = err.response?.data?.detail;
       if (err.response?.status === 500 && connectEmail) {
+        // Try demo mode fallback
         try {
           await emailAPI.connectGmail(connectEmail);
           setConnecting(false);
-          showBanner("Gmail account connected ✅");
+          toast.success("Gmail account connected (demo mode) ✅");
           setConnectDialog(false);
           setConnectEmail("");
           loadData();
           return;
         } catch (demoErr) {
-          showBanner(demoErr.response?.data?.detail || "Failed to connect", "error");
+          toast.error(demoErr.response?.data?.detail || "Failed to connect Gmail");
         }
       } else if (err.response?.status === 403 && detail) {
-        showBanner(detail, "error");
+        toast.error(detail);
       } else {
-        showBanner(detail || "Failed to connect Gmail", "error");
+        toast.error(detail || "Failed to connect Gmail");
       }
       setConnecting(false);
     }
@@ -175,10 +152,10 @@ export default function Settings() {
   const handleDisconnect = async (accountId) => {
     try {
       await settingsAPI.disconnectEmail(accountId);
-      showBanner("Account disconnected ✅");
+      toast.success("Account disconnected ✅");
       loadData();
     } catch {
-      showBanner("Failed to disconnect", "error");
+      toast.error("Failed to disconnect account");
     }
   };
 
@@ -195,9 +172,6 @@ export default function Settings() {
 
   return (
     <div className="space-y-8 max-w-3xl" data-testid="settings-page">
-
-      {/* ── Banner ── */}
-      <Banner banner={banner} onClose={() => setBanner(null)} />
 
       <div>
         <h1 className="text-2xl font-bold" data-testid="settings-heading">Settings</h1>
@@ -278,11 +252,11 @@ export default function Settings() {
                       <Mail className="w-4 h-4 text-primary" />
                     </div>
                     <div>
-                      <p className="text-sm font-medium">{a.email}</p>
+                      <p className="text-sm font-medium">{a.email_address}</p>
                       <p className="text-xs text-muted-foreground">
-                        {a.status === "connected"
+                        {a.is_active
                           ? <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-500" /> Connected</span>
-                          : a.status}
+                          : "Inactive"}
                       </p>
                     </div>
                   </div>
