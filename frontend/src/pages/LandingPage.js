@@ -364,15 +364,111 @@ export default function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="py-12 px-6 border-t border-border">
-        <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-md bg-primary flex items-center justify-center">
-              <Mail className="w-3 h-3 text-white" />
+      <footer className="py-16 px-6 border-t border-border bg-card">
+        <div className="max-w-6xl mx-auto">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
+            {/* Brand */}
+            <div className="col-span-2 md:col-span-1">
+              <div className="flex items-center gap-2 mb-4">
+                <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+                  <Mail className="w-4 h-4 text-white" />
+                </div>
+                <span className="text-lg font-bold">Replyzen AI</span>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                AI-powered follow-up automation for professionals who never want to miss an opportunity.
+              </p>
             </div>
-            <span className="text-sm font-semibold">Replyzen AI</span>
+
+            {/* Product */}
+            <div>
+              <h3 className="font-semibold mb-4">Product</h3>
+              <ul className="space-y-3">
+                <li>
+                  <a href="#features" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+                    Features
+                  </a>
+                </li>
+                <li>
+                  <a href="#pricing" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+                    Pricing
+                  </a>
+                </li>
+                <li>
+                  <a href="#how-it-works" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+                    How it Works
+                  </a>
+                </li>
+              </ul>
+            </div>
+
+            {/* Legal */}
+            <div>
+              <h3 className="font-semibold mb-4">Legal</h3>
+              <ul className="space-y-3">
+                <li>
+                  <span 
+                    onClick={() => navigate("/privacy-policy")} 
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  >
+                    Privacy Policy
+                  </span>
+                </li>
+                <li>
+                  <span 
+                    onClick={() => navigate("/terms-of-service")} 
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  >
+                    Terms of Service
+                  </span>
+                </li>
+              </ul>
+            </div>
+
+            {/* Company */}
+            <div>
+              <h3 className="font-semibold mb-4">Contact</h3>
+              <ul className="space-y-3">
+                <li>
+                  <a 
+                    href="mailto:support@replyzen.ai" 
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Support
+                  </a>
+                </li>
+                <li>
+                  <a 
+                    href="mailto:hello@replyzen.ai" 
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Contact Us
+                  </a>
+                </li>
+              </ul>
+            </div>
           </div>
-          <p className="text-xs text-muted-foreground">&copy; {new Date().getFullYear()} Replyzen AI. All rights reserved.</p>
+
+          {/* Bottom */}
+          <div className="pt-8 border-t border-border flex flex-col md:flex-row items-center justify-between gap-4">
+            <p className="text-xs text-muted-foreground">
+              &copy; {new Date().getFullYear()} Replyzen AI. All rights reserved.
+            </p>
+            <div className="flex items-center gap-6">
+              <span 
+                onClick={() => navigate("/privacy-policy")} 
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+              >
+                Privacy
+              </span>
+              <span 
+                onClick={() => navigate("/terms-of-service")} 
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+              >
+                Terms
+              </span>
+            </div>
+          </div>
         </div>
       </footer>
     </div>

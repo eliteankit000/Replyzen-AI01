@@ -13,6 +13,8 @@ const FollowupQueue = lazy(() => import("@/pages/FollowupQueue"));
 const Analytics = lazy(() => import("@/pages/Analytics"));
 const Billing = lazy(() => import("@/pages/Billing"));
 const Settings = lazy(() => import("@/pages/Settings"));
+const PrivacyPolicy = lazy(() => import("@/pages/PrivacyPolicy"));
+const TermsOfService = lazy(() => import("@/pages/TermsOfService"));
 
 function LoadingFallback() {
   return (
@@ -48,6 +50,8 @@ function App() {
             {/* Public routes */}
             <Route path="/" element={<PublicRoute><LandingPage /></PublicRoute>} />
             <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
+            <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+            <Route path="/terms-of-service" element={<TermsOfService />} />
 
             {/* Google OAuth callback — must be outside PublicRoute and ProtectedRoute */}
             <Route path="/auth/callback" element={<AuthCallback />} />
