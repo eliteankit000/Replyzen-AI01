@@ -32,7 +32,7 @@ if "sqlite" not in DATABASE_URL:
 engine_kwargs["connect_args"] = (
     {
         "statement_cache_size": 0,
-        # "ssl": "require",  # Commented out for local testing
+        "ssl": "require",  # Required for Supabase pgbouncer
     } if "sqlite" not in DATABASE_URL else {}
 )
 
