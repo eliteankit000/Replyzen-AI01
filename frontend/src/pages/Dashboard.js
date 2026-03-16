@@ -53,14 +53,43 @@ export default function Dashboard() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [statsRes, threadsRes, followupsRes] = await Promise.all([
+      // FIX (ERROR 2): Use Promise.allSettled instead of Promise.all.
+      // Previously, if any single API call failed (e.g. backend crashing on the
+      // missing user_settings columns), Promise.all would reject immediately and
+      // wipe out all data, showing "Failed to load dashboard data".
+      // allSettled lets each call succeed or fail independently so partial data
+      // still renders correctly.
+      const [statsRes, threadsRes, followupsRes] = await Promise.allSettled([
         analyticsAPI.getOverview(),
         emailAPI.getSilentThreads({ limit: 5 }),
         followupAPI.list({ limit: 5, status: "pending" }),
       ]);
-      setStats(statsRes.data);
-      setSilentThreads(threadsRes.data.threads || []);
-      setRecentFollowups(followupsRes.data.followups || []);
+
+      if (statsRes.status === "fulfilled") {
+        setStats(statsRes.value.data);
+      } else {
+        console.error("Failed to load stats:", statsRes.reason);
+      }
+
+      if (threadsRes.status === "fulfilled") {
+        setSilentThreads(threadsRes.value.data.threads || []);
+      } else {
+        console.error("Failed to load silent threads:", threadsRes.reason);
+      }
+
+      if (followupsRes.status === "fulfilled") {
+        setRecentFollowups(followupsRes.value.data.followups || []);
+      } else {
+        console.error("Failed to load followups:", followupsRes.reason);
+      }
+
+      // Only show a toast if ALL three failed
+      const allFailed = [statsRes, threadsRes, followupsRes].every(
+        (r) => r.status === "rejected"
+      );
+      if (allFailed) {
+        toast.error("Failed to load dashboard data");
+      }
     } catch (err) {
       console.error("loadData failed:", err);
       toast.error("Failed to load dashboard data");
