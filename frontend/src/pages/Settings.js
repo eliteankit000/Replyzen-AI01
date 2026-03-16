@@ -54,14 +54,37 @@ export default function Settings() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [settingsRes, accountsRes, limitsRes] = await Promise.all([
+      // FIX (ERROR 1 & 4): Use Promise.allSettled instead of Promise.all.
+      // settingsAPI.get() triggers the backend query that hits the missing
+      // ignore_newsletters / ignore_notifications columns, causing a 500.
+      // With Promise.all, that single failure crashes the entire settings page
+      // ("Failed to load data"). allSettled lets accounts and planLimits still
+      // load while settings degrades gracefully until the DB migration is applied.
+      const [settingsRes, accountsRes, limitsRes] = await Promise.allSettled([
         settingsAPI.get(),
         emailAPI.getAccounts(),
         billingAPI.getPlanLimits(),
       ]);
-      setSettings(settingsRes.data);
-      setAccounts(accountsRes.data || []);
-      setPlanLimits(limitsRes.data);
+
+      if (settingsRes.status === "fulfilled") {
+        setSettings(settingsRes.value.data);
+      } else {
+        console.error("Failed to load user settings:", settingsRes.reason);
+        toast.error("Some settings could not be loaded");
+      }
+
+      if (accountsRes.status === "fulfilled") {
+        setAccounts(accountsRes.value.data || []);
+      } else {
+        console.error("Failed to load email accounts:", accountsRes.reason);
+      }
+
+      if (limitsRes.status === "fulfilled") {
+        setPlanLimits(limitsRes.value.data);
+      } else {
+        console.error("Failed to load plan limits:", limitsRes.reason);
+      }
+
       setFullName(user?.full_name || "");
     } catch (err) {
       console.error("Failed to load settings:", err);
