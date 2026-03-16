@@ -12,6 +12,13 @@ import {
 import { Check, CreditCard, Zap, Crown, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 
+// FIX (ERROR 3): Vite exposes env vars via import.meta.env, NOT process.env.
+// process.env.VITE_* is always undefined in Vite builds, so paddleToken was
+// never found, leaving paddleInitialized=false and triggering "Paddle is not
+// configured" on every checkout attempt.
+const PADDLE_TOKEN  = import.meta.env.VITE_PADDLE_PUBLIC_KEY  || process.env.REACT_APP_PADDLE_PUBLIC_KEY;
+const PADDLE_VENDOR = import.meta.env.VITE_PADDLE_VENDOR_ID   || process.env.REACT_APP_PADDLE_VENDOR_ID;
+
 export default function Billing() {
   const { user, refreshUser } = useAuth();
 
@@ -44,28 +51,21 @@ export default function Billing() {
         clearInterval(checkPaddle);
         
         try {
-          // Get Paddle token from environment (Paddle Billing v2 uses token)
-          const paddleToken = process.env.REACT_APP_PADDLE_PUBLIC_KEY || 
-                              process.env.VITE_PADDLE_PUBLIC_KEY;
-          const vendorId = process.env.REACT_APP_PADDLE_VENDOR_ID || 
-                           process.env.VITE_PADDLE_VENDOR_ID;
-
-          if (paddleToken) {
-            // Paddle Billing v2 initialization
+          // FIX: Use module-level constants resolved via import.meta.env
+          if (PADDLE_TOKEN) {
             if (window.Paddle.Environment) {
               window.Paddle.Environment.set("production");
             }
-            window.Paddle.Initialize({ token: paddleToken });
+            window.Paddle.Initialize({ token: PADDLE_TOKEN });
             setPaddleInitialized(true);
             console.log("Paddle Billing v2 initialized with token");
-          } else if (vendorId) {
-            // Paddle Classic fallback
+          } else if (PADDLE_VENDOR) {
             if (window.Paddle.Environment) {
               window.Paddle.Environment.set("production");
             }
-            window.Paddle.Setup({ seller: parseInt(vendorId) });
+            window.Paddle.Setup({ seller: parseInt(PADDLE_VENDOR) });
             setPaddleInitialized(true);
-            console.log("Paddle Classic initialized with vendor ID:", vendorId);
+            console.log("Paddle Classic initialized with vendor ID:", PADDLE_VENDOR);
           } else {
             console.warn("No Paddle credentials found in environment");
           }
@@ -159,15 +159,11 @@ export default function Billing() {
           return;
         }
 
-        // Initialize Paddle if not already done
+        // FIX: Use module-level constants; also accept vendor_id from checkout response
         if (!paddleInitialized) {
-          const paddleToken = process.env.REACT_APP_PADDLE_PUBLIC_KEY || 
-                              process.env.VITE_PADDLE_PUBLIC_KEY;
-          const vendorId = res.data.vendor_id || 
-                           process.env.REACT_APP_PADDLE_VENDOR_ID || 
-                           process.env.VITE_PADDLE_VENDOR_ID;
+          const vendorId = res.data.vendor_id || PADDLE_VENDOR;
 
-          if (!paddleToken && !vendorId) {
+          if (!PADDLE_TOKEN && !vendorId) {
             toast.error("Paddle is not configured. Please contact support.");
             return;
           }
@@ -177,8 +173,8 @@ export default function Billing() {
               window.Paddle.Environment.set("production");
             }
             
-            if (paddleToken) {
-              window.Paddle.Initialize({ token: paddleToken });
+            if (PADDLE_TOKEN) {
+              window.Paddle.Initialize({ token: PADDLE_TOKEN });
             } else {
               window.Paddle.Setup({ seller: parseInt(vendorId) });
             }
