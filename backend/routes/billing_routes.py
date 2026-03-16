@@ -243,14 +243,32 @@ async def get_plan_limits(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    user_id = current_user["user_id"]
+
     result = await db.execute(
         text("SELECT plan FROM users WHERE id = :uid"),
-        {"uid": current_user["user_id"]}
+        {"uid": user_id}
     )
     row = result.fetchone()
     plan = str(row[0]) if row else "free"
     limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
-    return {"plan": plan, **limits}
+
+    # Count follow-ups used in the current calendar month
+    followups_used = 0
+    try:
+        usage_result = await db.execute(
+            text("""
+                SELECT COUNT(*) FROM followups
+                WHERE user_id = :uid
+                AND created_at >= date_trunc('month', now())
+            """),
+            {"uid": user_id}
+        )
+        followups_used = usage_result.scalar() or 0
+    except Exception as e:
+        logger.warning(f"Could not fetch followups_used for user {user_id}: {e}")
+
+    return {"plan": plan, "followups_used": followups_used, **limits}
 
 
 # -------------------------------------------------------------------
