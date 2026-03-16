@@ -23,33 +23,33 @@ export default function Billing() {
   const { user, refreshUser } = useAuth();
 
   /* ── Data state ── */
-  const [plans, setPlans]             = useState([]);
+  const [plans, setPlans]               = useState([]);
   const [subscription, setSubscription] = useState(null);
-  const [planLimits, setPlanLimits]   = useState(null);
-  const [cycle, setCycle]             = useState("monthly");
-  const [loading, setLoading]         = useState(true);
-  const [checkingOut, setCheckingOut] = useState(null);
+  const [planLimits, setPlanLimits]     = useState(null);
+  const [cycle, setCycle]               = useState("monthly");
+  const [loading, setLoading]           = useState(true);
+  const [checkingOut, setCheckingOut]   = useState(null);
   const [cancelDialog, setCancelDialog] = useState(false);
-  const [cancelling, setCancelling]   = useState(false);
+  const [cancelling, setCancelling]     = useState(false);
   const [locationInfo, setLocationInfo] = useState({
     currency: "USD", payment_provider: "paddle", country: "US"
   });
   const [paddleInitialized, setPaddleInitialized] = useState(false);
 
-  useEffect(() => { 
-    loadData(); 
+  useEffect(() => {
+    loadData();
     initializePaddle();
   }, []);
 
   // Initialize Paddle Billing v2 on component mount
   const initializePaddle = () => {
     if (typeof window === "undefined") return;
-    
+
     // Wait for Paddle script to load
     const checkPaddle = setInterval(() => {
       if (window.Paddle) {
         clearInterval(checkPaddle);
-        
+
         try {
           // FIX: Use module-level constants resolved via import.meta.env
           if (PADDLE_TOKEN) {
@@ -110,7 +110,7 @@ export default function Billing() {
   const handleCheckout = async (planId) => {
     const provider = locationInfo.payment_provider;
     setCheckingOut(`${planId}-${provider}`);
-    
+
     try {
       const res = await billingAPI.createCheckout({
         plan_id: planId,
@@ -124,9 +124,9 @@ export default function Billing() {
           toast.error("Razorpay SDK not loaded. Please refresh and try again.");
           return;
         }
-        
+
         toast.info("Opening Razorpay checkout...");
-        
+
         const options = {
           key: res.data.key_id,
           subscription_id: res.data.subscription_id,
@@ -137,14 +137,14 @@ export default function Billing() {
             refreshUser();
             loadData();
           },
-          modal: { 
+          modal: {
             ondismiss: () => {
               toast.warning("Payment was cancelled");
             }
           },
           theme: { color: "#ea580c" },
         };
-        
+
         const rzp = new window.Razorpay(options);
         rzp.on("payment.failed", (response) => {
           console.error("Razorpay payment failed:", response);
@@ -172,7 +172,7 @@ export default function Billing() {
             if (window.Paddle.Environment) {
               window.Paddle.Environment.set("production");
             }
-            
+
             if (PADDLE_TOKEN) {
               window.Paddle.Initialize({ token: PADDLE_TOKEN });
             } else {
@@ -191,8 +191,8 @@ export default function Billing() {
           // Paddle Billing v2 checkout
           window.Paddle.Checkout.open({
             items: [{ priceId: res.data.price_id, quantity: 1 }],
-            customData: { 
-              user_id: res.data.user_id, 
+            customData: {
+              user_id: res.data.user_id,
               plan: planId,
               billing_cycle: cycle
             },
@@ -287,7 +287,7 @@ export default function Billing() {
                 {planLimits && planLimits.followups_per_month !== -1 && (
                   <div className="mt-2">
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span>{planLimits.followups_used} / {planLimits.followups_per_month} follow-ups used this month</span>
+                      <span>{planLimits.followups_used ?? 0} / {planLimits.followups_per_month} follow-ups used this month</span>
                     </div>
                     <div className="w-48 h-1.5 bg-muted rounded-full overflow-hidden mt-1">
                       <div
