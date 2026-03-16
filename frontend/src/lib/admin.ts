@@ -3,7 +3,7 @@ export const ADMIN_EMAILS = [
   "anthoraiofficial@gmail.com",
 ];
 
-export function isAdmin(email?: string | null): boolean {
+export function isAdmin(email) {
   if (!email) return false;
   return ADMIN_EMAILS.includes(email.toLowerCase().trim());
 }
