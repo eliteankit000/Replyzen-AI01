@@ -15,6 +15,7 @@ const Billing = lazy(() => import("@/pages/Billing"));
 const Settings = lazy(() => import("@/pages/Settings"));
 const PrivacyPolicy = lazy(() => import("@/pages/PrivacyPolicy"));
 const TermsOfService = lazy(() => import("@/pages/TermsOfService"));
+const Admin = lazy(() => import("@/pages/Admin")); // ← ADDED
 
 function LoadingFallback() {
   return (
@@ -52,10 +53,8 @@ function App() {
             <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
             <Route path="/privacy-policy" element={<PrivacyPolicy />} />
             <Route path="/terms-of-service" element={<TermsOfService />} />
-
             {/* Google OAuth callback — must be outside PublicRoute and ProtectedRoute */}
             <Route path="/auth/callback" element={<AuthCallback />} />
-
             {/* Protected routes - wrapped in AppLayout */}
             <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
               <Route path="/dashboard" element={<Dashboard />} />
@@ -63,8 +62,8 @@ function App() {
               <Route path="/analytics" element={<Analytics />} />
               <Route path="/billing" element={<Billing />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="/admin" element={<Admin />} /> {/* ← ADD 2 */}
             </Route>
-
             {/* Fallback */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
