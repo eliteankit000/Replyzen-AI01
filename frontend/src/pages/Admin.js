@@ -493,47 +493,135 @@ function FollowupsTab({ token }) {
 function HealthTab({ token }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
+    setError(false);
     axios.get(`${API_BASE}/api/admin/health`, api(token))
-      .then(r => setData(r.data))
-      .catch(() => setData(null))
+      .then(r => {
+        if (typeof r.data === "object" && !Array.isArray(r.data)) {
+          setData(r.data);
+        } else {
+          setError(true);
+        }
+      })
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
   }, [token]);
 
   useEffect(() => { load(); }, [load]);
 
-  const items = data
-    ? Object.entries(data).map(([key, value]) => ({ key, value }))
+  const STATUS_ITEMS = data ? [
+    { label: "Database",    value: data.database },
+    { label: "API",         value: data.api      },
+  ] : [];
+
+  const TABLE_COUNTS = data?.table_counts
+    ? Object.entries(data.table_counts)
     : [];
 
+  const ORIGINS = data?.allowed_origins || [];
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex justify-end">
         <Button variant="outline" size="sm" onClick={load} disabled={loading}>
           <RefreshCw className={`w-4 h-4 mr-2 ${loading ? "animate-spin" : ""}`} />
           Refresh
         </Button>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {loading ? (
-          Array.from({ length: 2 }).map((_, i) => (
-            <Card key={i}><CardContent className="py-5"><Skeleton className="h-8 w-32" /></CardContent></Card>
-          ))
-        ) : items.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Could not load health data.</p>
-        ) : (
-          items.map(({ key, value }) => (
-            <Card key={key}>
-              <CardContent className="py-5 flex items-center justify-between">
-                <p className="text-sm font-medium capitalize">{key.replace(/_/g, " ")}</p>
-                <StatusBadge value={value} />
-              </CardContent>
-            </Card>
-          ))
-        )}
+
+      {error && (
+        <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          Could not load health data. Make sure the backend is running.
+        </div>
+      )}
+
+      {/* Service Status */}
+      <div>
+        <h2 className="text-sm font-semibold mb-3 text-muted-foreground uppercase tracking-wide">Service Status</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {loading ? (
+            Array.from({ length: 2 }).map((_, i) => (
+              <Card key={i}><CardContent className="py-5"><Skeleton className="h-6 w-32" /></CardContent></Card>
+            ))
+          ) : (
+            STATUS_ITEMS.map(({ label, value }) => (
+              <Card key={label}>
+                <CardContent className="py-4 flex items-center justify-between">
+                  <p className="text-sm font-medium">{label}</p>
+                  <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${
+                    value === "ok"
+                      ? "bg-green-50 text-green-600"
+                      : "bg-red-50 text-red-500"
+                  }`}>
+                    {value === "ok"
+                      ? <CheckCircle className="w-3 h-3" />
+                      : <XCircle className="w-3 h-3" />}
+                    {value}
+                  </span>
+                </CardContent>
+              </Card>
+            ))
+          )}
+        </div>
       </div>
+
+      {/* Table Row Counts */}
+      <div>
+        <h2 className="text-sm font-semibold mb-3 text-muted-foreground uppercase tracking-wide">Database Table Counts</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          {loading ? (
+            Array.from({ length: 4 }).map((_, i) => (
+              <Card key={i}><CardContent className="py-5"><Skeleton className="h-8 w-20" /></CardContent></Card>
+            ))
+          ) : TABLE_COUNTS.length === 0 ? (
+            <p className="text-sm text-muted-foreground col-span-4">No table data available.</p>
+          ) : (
+            TABLE_COUNTS.map(([table, count]) => (
+              <Card key={table}>
+                <CardContent className="pt-5 pb-4 flex flex-col gap-2">
+                  <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center">
+                    <Activity className="w-4 h-4 text-orange-500" />
+                  </div>
+                  <p className="text-2xl font-bold">
+                    {typeof count === "number" ? count.toLocaleString() : count}
+                  </p>
+                  <p className="text-xs text-muted-foreground capitalize">
+                    {table.replace(/_/g, " ")}
+                  </p>
+                </CardContent>
+              </Card>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* Allowed Origins */}
+      <div>
+        <h2 className="text-sm font-semibold mb-3 text-muted-foreground uppercase tracking-wide">Allowed CORS Origins</h2>
+        <Card>
+          <CardContent className="py-4">
+            {loading ? (
+              <Skeleton className="h-24 w-full" />
+            ) : ORIGINS.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No origins configured.</p>
+            ) : (
+              <ul className="space-y-2">
+                {ORIGINS.map(origin => (
+                  <li key={origin} className="flex items-center gap-2 text-sm">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
+                    <code className="font-mono text-xs text-muted-foreground">{origin}</code>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
     </div>
   );
 }
