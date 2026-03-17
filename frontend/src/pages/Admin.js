@@ -18,7 +18,6 @@ async function fetchAdminStats(token) {
   const results = await Promise.allSettled([
     axios.get(`${API_BASE}/api/admin/stats`, { headers }),
   ]);
-
   if (results[0].status === "fulfilled") {
     return results[0].value.data;
   }
@@ -26,10 +25,10 @@ async function fetchAdminStats(token) {
 }
 
 const STAT_CARDS = [
-  { key: "total_users",          label: "Total Users",            icon: Users,      color: "bg-blue-50 text-blue-600"   },
-  { key: "active_subscriptions", label: "Active Subscriptions",   icon: CreditCard, color: "bg-green-50 text-green-600" },
-  { key: "emails_connected",     label: "Emails Connected",       icon: Mail,       color: "bg-orange-50 text-orange-600"},
-  { key: "followups_generated",  label: "Follow-ups Generated",   icon: Zap,        color: "bg-purple-50 text-purple-600"},
+  { key: "total_users",          label: "Total Users",          icon: Users,      color: "bg-blue-50 text-blue-600"    },
+  { key: "active_subscriptions", label: "Active Subscriptions", icon: CreditCard, color: "bg-green-50 text-green-600"  },
+  { key: "emails_connected",     label: "Emails Connected",     icon: Mail,       color: "bg-orange-50 text-orange-600"},
+  { key: "followups_generated",  label: "Follow-ups Generated", icon: Zap,        color: "bg-purple-50 text-purple-600"},
 ];
 
 const COMING_SOON = [
@@ -43,12 +42,11 @@ const COMING_SOON = [
 
 export default function Admin() {
   const { user, token } = useAuth();
-  const navigate        = useNavigate();
-  const [stats, setStats]   = useState(null);
+  const navigate = useNavigate();
+  const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError]   = useState(false);
+  const [error, setError] = useState(false);
 
-  // Block non-admins client-side (server also blocks via API)
   useEffect(() => {
     if (user && !isAdmin(user.email)) {
       navigate("/dashboard", { replace: true });
@@ -67,7 +65,6 @@ export default function Admin() {
       .finally(() => setLoading(false));
   }, [user, token]);
 
-  // Don't render anything for non-admins
   if (!user || !isAdmin(user.email)) return null;
 
   return (
@@ -95,7 +92,9 @@ export default function Admin() {
       {error && (
         <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
           <AlertTriangle className="w-4 h-4 shrink-0" />
-          Could not load live stats. The <code className="font-mono text-xs">/api/admin/stats</code> endpoint may not exist yet — see setup note below.
+          Could not load live stats. The{" "}
+          <code className="font-mono text-xs">/api/admin/stats</code>{" "}
+          endpoint may not exist yet.
         </div>
       )}
 
@@ -124,7 +123,7 @@ export default function Admin() {
         ))}
       </div>
 
-      {/* Activity indicator */}
+      {/* Coming Soon */}
       <Card>
         <CardContent className="py-5">
           <div className="flex items-center gap-2 mb-4">
@@ -142,7 +141,7 @@ export default function Admin() {
         </CardContent>
       </Card>
 
-      {/* Setup note for backend */}
+      {/* Backend setup note */}
       <div className="text-xs text-muted-foreground border rounded-lg px-4 py-3 bg-muted/30 space-y-1">
         <p className="font-medium text-foreground">Backend setup needed</p>
         <p>Add this endpoint to your FastAPI backend so live stats load:</p>
