@@ -64,8 +64,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# ✅ This middleware ensures CORS headers are sent even when routes crash with 500
-# Without this, a 500 error looks like a CORS error in the browser
 ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
@@ -119,6 +117,7 @@ from routes.followup_routes import router as followup_router
 from routes.billing_routes import router as billing_router
 from routes.analytics_routes import router as analytics_router
 from routes.settings_routes import router as settings_router
+from routes.admin_routes import router as admin_router        # ← ADDED
 
 app.include_router(auth_router)
 app.include_router(email_router)
@@ -126,6 +125,7 @@ app.include_router(followup_router)
 app.include_router(billing_router)
 app.include_router(analytics_router)
 app.include_router(settings_router)
+app.include_router(admin_router)                              # ← ADDED
 
 @app.get("/api/health")
 async def health_check():
