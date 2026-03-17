@@ -426,7 +426,6 @@ export default function LandingPage() {
             </div>
 
             {/* Company */}
-
 <div>
   <h3 className="font-semibold mb-4">Contact</h3>
   <ul className="space-y-3">
@@ -448,7 +447,6 @@ export default function LandingPage() {
     </li>
   </ul>
 </div>
-
           {/* Bottom */}
           <div className="pt-8 border-t border-border flex flex-col md:flex-row items-center justify-between gap-4">
             <p className="text-xs text-muted-foreground">
