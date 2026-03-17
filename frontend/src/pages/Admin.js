@@ -11,20 +11,14 @@ import {
   AlertTriangle, RefreshCw, Search, ChevronLeft,
   ChevronRight, Activity, CheckCircle, XCircle, Trash2
 } from "lucide-react";
-import axios from "axios";
-
-const API_BASE = process.env.REACT_APP_API_URL || "";
-
-const api = (token) => ({
-  headers: { Authorization: `Bearer ${token}` }
-});
+import api from "@/lib/api";
 
 const TABS = [
-  { key: "overview",      label: "Overview",       icon: Activity  },
-  { key: "users",         label: "Users",          icon: Users     },
-  { key: "subscriptions", label: "Subscriptions",  icon: CreditCard},
-  { key: "emails",        label: "Email Accounts", icon: Mail      },
-  { key: "followups",     label: "Follow-ups",     icon: Zap       },
+  { key: "overview",      label: "Overview",       icon: Activity   },
+  { key: "users",         label: "Users",          icon: Users      },
+  { key: "subscriptions", label: "Subscriptions",  icon: CreditCard },
+  { key: "emails",        label: "Email Accounts", icon: Mail       },
+  { key: "followups",     label: "Follow-ups",     icon: Zap        },
   { key: "health",        label: "System Health",  icon: ShieldCheck},
 ];
 
@@ -80,27 +74,25 @@ function StatusBadge({ value }) {
     <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${
       active ? "bg-green-50 text-green-600" : "bg-red-50 text-red-500"
     }`}>
-      {active
-        ? <CheckCircle className="w-3 h-3" />
-        : <XCircle className="w-3 h-3" />}
+      {active ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
       {String(value)}
     </span>
   );
 }
 
 // ─── OVERVIEW TAB ─────────────────────────────────────────────────────────────
-function OverviewTab({ token }) {
+function OverviewTab() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
-    axios.get(`${API_BASE}/api/admin/stats`, api(token))
+    api.get("/admin/stats")
       .then(r => { setStats(r.data); setError(false); })
       .catch(() => setError(true))
       .finally(() => setLoading(false));
-  }, [token]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -129,7 +121,7 @@ function OverviewTab({ token }) {
 }
 
 // ─── USERS TAB ────────────────────────────────────────────────────────────────
-function UsersTab({ token }) {
+function UsersTab() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -138,30 +130,24 @@ function UsersTab({ token }) {
 
   const load = useCallback((p = 1, s = "") => {
     setLoading(true);
-    axios.get(`${API_BASE}/api/admin/users`, {
-      ...api(token),
-      params: { page: p, limit: 20, search: s || undefined }
-    })
+    api.get("/admin/users", { params: { page: p, limit: 20, search: s || undefined } })
       .then(r => setData(r.data))
       .catch(() => setData(null))
       .finally(() => setLoading(false));
-  }, [token]);
+  }, []);
 
   useEffect(() => { load(page, search); }, [page, search, load]);
 
-  const handleSearch = () => {
-    setPage(1);
-    setSearch(searchInput);
-  };
+  const handleSearch = () => { setPage(1); setSearch(searchInput); };
 
   const handleDelete = async (userId) => {
     if (!window.confirm("Delete this user? This cannot be undone.")) return;
-    await axios.delete(`${API_BASE}/api/admin/users/${userId}`, api(token));
+    await api.delete(`/admin/users/${userId}`);
     load(page, search);
   };
 
   const handlePlanChange = async (userId, plan) => {
-    await axios.patch(`${API_BASE}/api/admin/users/${userId}/plan`, { plan }, api(token));
+    await api.patch(`/admin/users/${userId}/plan`, { plan });
     load(page, search);
   };
 
@@ -182,7 +168,6 @@ function UsersTab({ token }) {
           Search
         </Button>
       </div>
-
       <Card>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -227,14 +212,9 @@ function UsersTab({ token }) {
                       <td className="px-4 py-3 text-muted-foreground">
                         {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
                       </td>
+                      <td className="px-4 py-3"><StatusBadge value={u.is_active ?? true} /></td>
                       <td className="px-4 py-3">
-                        <StatusBadge value={u.is_active ?? true} />
-                      </td>
-                      <td className="px-4 py-3">
-                        <button
-                          onClick={() => handleDelete(u.id)}
-                          className="text-red-500 hover:text-red-600 transition-colors"
-                        >
+                        <button onClick={() => handleDelete(u.id)} className="text-red-500 hover:text-red-600 transition-colors">
                           <Trash2 className="w-4 h-4" />
                         </button>
                       </td>
@@ -254,7 +234,7 @@ function UsersTab({ token }) {
 }
 
 // ─── SUBSCRIPTIONS TAB ────────────────────────────────────────────────────────
-function SubscriptionsTab({ token }) {
+function SubscriptionsTab() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -262,14 +242,11 @@ function SubscriptionsTab({ token }) {
 
   const load = useCallback((p = 1, s = "") => {
     setLoading(true);
-    axios.get(`${API_BASE}/api/admin/subscriptions`, {
-      ...api(token),
-      params: { page: p, limit: 20, status: s || undefined }
-    })
+    api.get("/admin/subscriptions", { params: { page: p, limit: 20, status: s || undefined } })
       .then(r => setData(r.data))
       .catch(() => setData(null))
       .finally(() => setLoading(false));
-  }, [token]);
+  }, []);
 
   useEffect(() => { load(page, status); }, [page, status, load]);
 
@@ -291,7 +268,6 @@ function SubscriptionsTab({ token }) {
           Refresh
         </Button>
       </div>
-
       <Card>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -323,9 +299,7 @@ function SubscriptionsTab({ token }) {
                       <td className="px-4 py-3 font-medium">{s.full_name || "—"}</td>
                       <td className="px-4 py-3 text-muted-foreground">{s.email}</td>
                       <td className="px-4 py-3">
-                        <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full font-medium capitalize">
-                          {s.plan}
-                        </span>
+                        <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full font-medium capitalize">{s.plan}</span>
                       </td>
                       <td className="px-4 py-3"><StatusBadge value={s.status} /></td>
                       <td className="px-4 py-3 text-muted-foreground">
@@ -350,21 +324,18 @@ function SubscriptionsTab({ token }) {
 }
 
 // ─── EMAIL ACCOUNTS TAB ───────────────────────────────────────────────────────
-function EmailAccountsTab({ token }) {
+function EmailAccountsTab() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
 
   const load = useCallback((p = 1) => {
     setLoading(true);
-    axios.get(`${API_BASE}/api/admin/email-accounts`, {
-      ...api(token),
-      params: { page: p, limit: 20 }
-    })
+    api.get("/admin/email-accounts", { params: { page: p, limit: 20 } })
       .then(r => setData(r.data))
       .catch(() => setData(null))
       .finally(() => setLoading(false));
-  }, [token]);
+  }, []);
 
   useEffect(() => { load(page); }, [page, load]);
 
@@ -398,9 +369,7 @@ function EmailAccountsTab({ token }) {
                   <tr key={e.id} className="border-b border-border hover:bg-muted/20 transition-colors">
                     <td className="px-4 py-3 font-medium">{e.email}</td>
                     <td className="px-4 py-3">
-                      <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full font-medium capitalize">
-                        {e.provider || "—"}
-                      </span>
+                      <span className="text-xs bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full font-medium capitalize">{e.provider || "—"}</span>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{e.user_email || "—"}</td>
                     <td className="px-4 py-3 text-muted-foreground">
@@ -422,21 +391,18 @@ function EmailAccountsTab({ token }) {
 }
 
 // ─── FOLLOWUPS TAB ────────────────────────────────────────────────────────────
-function FollowupsTab({ token }) {
+function FollowupsTab() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
 
   const load = useCallback((p = 1) => {
     setLoading(true);
-    axios.get(`${API_BASE}/api/admin/followups`, {
-      ...api(token),
-      params: { page: p, limit: 20 }
-    })
+    api.get("/admin/followups", { params: { page: p, limit: 20 } })
       .then(r => setData(r.data))
       .catch(() => setData(null))
       .finally(() => setLoading(false));
-  }, [token]);
+  }, []);
 
   useEffect(() => { load(page); }, [page, load]);
 
@@ -490,7 +456,7 @@ function FollowupsTab({ token }) {
 }
 
 // ─── SYSTEM HEALTH TAB ────────────────────────────────────────────────────────
-function HealthTab({ token }) {
+function HealthTab() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -498,7 +464,7 @@ function HealthTab({ token }) {
   const load = useCallback(() => {
     setLoading(true);
     setError(false);
-    axios.get(`${API_BASE}/api/admin/health`, api(token))
+    api.get("/admin/health")
       .then(r => {
         if (typeof r.data === "object" && !Array.isArray(r.data)) {
           setData(r.data);
@@ -508,19 +474,16 @@ function HealthTab({ token }) {
       })
       .catch(() => setError(true))
       .finally(() => setLoading(false));
-  }, [token]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
   const STATUS_ITEMS = data ? [
-    { label: "Database",    value: data.database },
-    { label: "API",         value: data.api      },
+    { label: "Database", value: data.database },
+    { label: "API",      value: data.api      },
   ] : [];
 
-  const TABLE_COUNTS = data?.table_counts
-    ? Object.entries(data.table_counts)
-    : [];
-
+  const TABLE_COUNTS = data?.table_counts ? Object.entries(data.table_counts) : [];
   const ORIGINS = data?.allowed_origins || [];
 
   return (
@@ -531,15 +494,12 @@ function HealthTab({ token }) {
           Refresh
         </Button>
       </div>
-
       {error && (
         <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
           <AlertTriangle className="w-4 h-4 shrink-0" />
-          Could not load health data. Make sure the backend is running.
+          Could not load health data.
         </div>
       )}
-
-      {/* Service Status */}
       <div>
         <h2 className="text-sm font-semibold mb-3 text-muted-foreground uppercase tracking-wide">Service Status</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -553,13 +513,9 @@ function HealthTab({ token }) {
                 <CardContent className="py-4 flex items-center justify-between">
                   <p className="text-sm font-medium">{label}</p>
                   <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${
-                    value === "ok"
-                      ? "bg-green-50 text-green-600"
-                      : "bg-red-50 text-red-500"
+                    value === "ok" ? "bg-green-50 text-green-600" : "bg-red-50 text-red-500"
                   }`}>
-                    {value === "ok"
-                      ? <CheckCircle className="w-3 h-3" />
-                      : <XCircle className="w-3 h-3" />}
+                    {value === "ok" ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
                     {value}
                   </span>
                 </CardContent>
@@ -568,8 +524,6 @@ function HealthTab({ token }) {
           )}
         </div>
       </div>
-
-      {/* Table Row Counts */}
       <div>
         <h2 className="text-sm font-semibold mb-3 text-muted-foreground uppercase tracking-wide">Database Table Counts</h2>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -589,24 +543,18 @@ function HealthTab({ token }) {
                   <p className="text-2xl font-bold">
                     {typeof count === "number" ? count.toLocaleString() : count}
                   </p>
-                  <p className="text-xs text-muted-foreground capitalize">
-                    {table.replace(/_/g, " ")}
-                  </p>
+                  <p className="text-xs text-muted-foreground capitalize">{table.replace(/_/g, " ")}</p>
                 </CardContent>
               </Card>
             ))
           )}
         </div>
       </div>
-
-      {/* Allowed Origins */}
       <div>
         <h2 className="text-sm font-semibold mb-3 text-muted-foreground uppercase tracking-wide">Allowed CORS Origins</h2>
         <Card>
           <CardContent className="py-4">
-            {loading ? (
-              <Skeleton className="h-24 w-full" />
-            ) : ORIGINS.length === 0 ? (
+            {loading ? <Skeleton className="h-24 w-full" /> : ORIGINS.length === 0 ? (
               <p className="text-sm text-muted-foreground">No origins configured.</p>
             ) : (
               <ul className="space-y-2">
@@ -621,14 +569,13 @@ function HealthTab({ token }) {
           </CardContent>
         </Card>
       </div>
-
     </div>
   );
 }
 
 // ─── MAIN ADMIN PAGE ──────────────────────────────────────────────────────────
 export default function Admin() {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("overview");
 
@@ -642,20 +589,18 @@ export default function Admin() {
 
   const renderTab = () => {
     switch (activeTab) {
-      case "overview":      return <OverviewTab token={token} />;
-      case "users":         return <UsersTab token={token} />;
-      case "subscriptions": return <SubscriptionsTab token={token} />;
-      case "emails":        return <EmailAccountsTab token={token} />;
-      case "followups":     return <FollowupsTab token={token} />;
-      case "health":        return <HealthTab token={token} />;
-      default:              return <OverviewTab token={token} />;
+      case "overview":      return <OverviewTab />;
+      case "users":         return <UsersTab />;
+      case "subscriptions": return <SubscriptionsTab />;
+      case "emails":        return <EmailAccountsTab />;
+      case "followups":     return <FollowupsTab />;
+      case "health":        return <HealthTab />;
+      default:              return <OverviewTab />;
     }
   };
 
   return (
     <div className="space-y-6" data-testid="admin-page">
-
-      {/* Header */}
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center shrink-0">
           <ShieldCheck className="w-5 h-5 text-orange-500" />
@@ -663,17 +608,11 @@ export default function Admin() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold">Admin Dashboard</h1>
-            <Badge className="bg-orange-100 text-orange-600 text-xs px-2 py-0.5">
-              ADMIN
-            </Badge>
+            <Badge className="bg-orange-100 text-orange-600 text-xs px-2 py-0.5">ADMIN</Badge>
           </div>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Logged in as {user.email}
-          </p>
+          <p className="text-sm text-muted-foreground mt-0.5">Logged in as {user.email}</p>
         </div>
       </div>
-
-      {/* Tabs */}
       <div className="flex gap-1 border-b border-border overflow-x-auto">
         {TABS.map(({ key, label, icon: Icon }) => (
           <button
@@ -690,10 +629,7 @@ export default function Admin() {
           </button>
         ))}
       </div>
-
-      {/* Tab Content */}
       {renderTab()}
-
     </div>
   );
 }
