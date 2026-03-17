@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from database import get_db
@@ -6,7 +6,6 @@ from auth import get_current_user
 import logging
 
 logger = logging.getLogger(__name__)
-
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 ADMIN_EMAILS = [
@@ -14,35 +13,248 @@ ADMIN_EMAILS = [
     "anthoraiofficial@gmail.com",
 ]
 
-
 def require_admin(current_user: dict = Depends(get_current_user)):
     email = (current_user.get("email") or "").lower().strip()
     if email not in ADMIN_EMAILS:
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
+async def safe_count(db, query, params={}):
+    try:
+        result = await db.execute(text(query), params)
+        return result.scalar() or 0
+    except Exception as e:
+        logger.warning(f"Admin query failed: {e}")
+        return 0
+
+# ─── STATS ────────────────────────────────────────────────────────────────────
 
 @router.get("/stats")
 async def get_admin_stats(
     current_user: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    async def count(query, params={}):
-        try:
-            result = await db.execute(text(query), params)
-            return result.scalar() or 0
-        except Exception as e:
-            logger.warning(f"Admin stats query failed: {e}")
-            return 0
-
-    total_users          = await count("SELECT COUNT(*) FROM users")
-    active_subscriptions = await count("SELECT COUNT(*) FROM subscriptions WHERE status = 'active'")
-    emails_connected     = await count("SELECT COUNT(*) FROM email_accounts")
-    followups_generated  = await count("SELECT COUNT(*) FROM followups")
+    total_users          = await safe_count(db, "SELECT COUNT(*) FROM users")
+    active_subscriptions = await safe_count(db, "SELECT COUNT(*) FROM subscriptions WHERE status = 'active'")
+    emails_connected     = await safe_count(db, "SELECT COUNT(*) FROM email_accounts")
+    followups_generated  = await safe_count(db, "SELECT COUNT(*) FROM followups")
 
     return {
         "total_users":          total_users,
         "active_subscriptions": active_subscriptions,
         "emails_connected":     emails_connected,
         "followups_generated":  followups_generated,
+    }
+
+# ─── USER MANAGEMENT ──────────────────────────────────────────────────────────
+
+@router.get("/users")
+async def get_all_users(
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    search: str = Query(None)
+):
+    offset = (page - 1) * limit
+    try:
+        if search:
+            query = text("""
+                SELECT id, email, full_name, plan, created_at, is_active
+                FROM users
+                WHERE email ILIKE :search OR full_name ILIKE :search
+                ORDER BY created_at DESC
+                LIMIT :limit OFFSET :offset
+            """)
+            result = await db.execute(query, {
+                "search": f"%{search}%",
+                "limit": limit,
+                "offset": offset
+            })
+        else:
+            query = text("""
+                SELECT id, email, full_name, plan, created_at, is_active
+                FROM users
+                ORDER BY created_at DESC
+                LIMIT :limit OFFSET :offset
+            """)
+            result = await db.execute(query, {"limit": limit, "offset": offset})
+
+        rows = result.mappings().all()
+        total = await safe_count(db, "SELECT COUNT(*) FROM users")
+
+        return {
+            "users": [dict(r) for r in rows],
+            "total": total,
+            "page": page,
+            "pages": -(-total // limit)
+        }
+    except Exception as e:
+        logger.error(f"Get users failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.patch("/users/{user_id}/plan")
+async def update_user_plan(
+    user_id: str,
+    body: dict,
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    plan = body.get("plan")
+    if not plan:
+        raise HTTPException(status_code=400, detail="plan is required")
+    try:
+        await db.execute(
+            text("UPDATE users SET plan = :plan WHERE id = :id"),
+            {"plan": plan, "id": user_id}
+        )
+        await db.commit()
+        return {"success": True, "user_id": user_id, "plan": plan}
+    except Exception as e:
+        logger.error(f"Update plan failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        await db.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
+        await db.commit()
+        return {"success": True, "deleted_user_id": user_id}
+    except Exception as e:
+        logger.error(f"Delete user failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ─── SUBSCRIPTIONS / PAYMENT LOGS ─────────────────────────────────────────────
+
+@router.get("/subscriptions")
+async def get_subscriptions(
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    status: str = Query(None)
+):
+    offset = (page - 1) * limit
+    try:
+        if status:
+            query = text("""
+                SELECT s.id, s.user_id, s.status, s.plan, s.created_at, s.expires_at,
+                       u.email, u.full_name
+                FROM subscriptions s
+                LEFT JOIN users u ON u.id = s.user_id
+                WHERE s.status = :status
+                ORDER BY s.created_at DESC
+                LIMIT :limit OFFSET :offset
+            """)
+            result = await db.execute(query, {"status": status, "limit": limit, "offset": offset})
+            total = await safe_count(db, "SELECT COUNT(*) FROM subscriptions WHERE status = :status", {"status": status})
+        else:
+            query = text("""
+                SELECT s.id, s.user_id, s.status, s.plan, s.created_at, s.expires_at,
+                       u.email, u.full_name
+                FROM subscriptions s
+                LEFT JOIN users u ON u.id = s.user_id
+                ORDER BY s.created_at DESC
+                LIMIT :limit OFFSET :offset
+            """)
+            result = await db.execute(query, {"limit": limit, "offset": offset})
+            total = await safe_count(db, "SELECT COUNT(*) FROM subscriptions")
+
+        rows = result.mappings().all()
+        return {
+            "subscriptions": [dict(r) for r in rows],
+            "total": total,
+            "page": page,
+            "pages": -(-total // limit)
+        }
+    except Exception as e:
+        logger.error(f"Get subscriptions failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ─── EMAIL ACCOUNT MONITORING ─────────────────────────────────────────────────
+
+@router.get("/email-accounts")
+async def get_email_accounts(
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100)
+):
+    offset = (page - 1) * limit
+    try:
+        query = text("""
+            SELECT ea.id, ea.email, ea.provider, ea.created_at, ea.is_active,
+                   u.email as user_email, u.full_name
+            FROM email_accounts ea
+            LEFT JOIN users u ON u.id = ea.user_id
+            ORDER BY ea.created_at DESC
+            LIMIT :limit OFFSET :offset
+        """)
+        result = await db.execute(query, {"limit": limit, "offset": offset})
+        rows = result.mappings().all()
+        total = await safe_count(db, "SELECT COUNT(*) FROM email_accounts")
+
+        return {
+            "email_accounts": [dict(r) for r in rows],
+            "total": total,
+            "page": page,
+            "pages": -(-total // limit)
+        }
+    except Exception as e:
+        logger.error(f"Get email accounts failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ─── FOLLOW-UP ACTIVITY ───────────────────────────────────────────────────────
+
+@router.get("/followups")
+async def get_followup_activity(
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100)
+):
+    offset = (page - 1) * limit
+    try:
+        query = text("""
+            SELECT f.id, f.status, f.created_at, f.sent_at,
+                   u.email as user_email, u.full_name
+            FROM followups f
+            LEFT JOIN users u ON u.id = f.user_id
+            ORDER BY f.created_at DESC
+            LIMIT :limit OFFSET :offset
+        """)
+        result = await db.execute(query, {"limit": limit, "offset": offset})
+        rows = result.mappings().all()
+        total = await safe_count(db, "SELECT COUNT(*) FROM followups")
+
+        return {
+            "followups": [dict(r) for r in rows],
+            "total": total,
+            "page": page,
+            "pages": -(-total // limit)
+        }
+    except Exception as e:
+        logger.error(f"Get followups failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ─── SYSTEM HEALTH ────────────────────────────────────────────────────────────
+
+@router.get("/health")
+async def system_health(
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        await db.execute(text("SELECT 1"))
+        db_status = "ok"
+    except Exception as e:
+        db_status = f"error: {e}"
+
+    return {
+        "database": db_status,
+        "api": "ok",
     }
