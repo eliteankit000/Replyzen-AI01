@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/lib/auth-context";
 import { isAnalyticsAllowed } from "@/lib/plan-utils";
-import { isAdmin } from "@/lib/admin";                  // ← ADD 1: import isAdmin
+import { isAdmin } from "@/lib/admin";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -16,7 +16,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
   LayoutDashboard, MessageSquare, BarChart3, CreditCard,
   Settings, LogOut, Mail, ChevronLeft, ChevronRight, User, Menu, Lock,
-  ShieldCheck                                            // ← ADD 2: import ShieldCheck icon
+  ShieldCheck
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -41,12 +41,8 @@ function SidebarNav({ collapsed, items, userPlan, onNavigate }) {
                 className={({ isActive }) =>
                   `sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 ${
                     isActive
-                      ? item.admin
-                        ? "bg-purple-100 text-purple-700 font-medium"
-                        : "bg-accent text-primary font-medium"
-                      : item.admin
-                        ? "text-purple-600 hover:text-purple-700 hover:bg-purple-50"
-                        : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                      ? "bg-accent text-primary font-medium"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
                   } ${collapsed ? "justify-center" : ""} ${locked ? "opacity-60" : ""}`
                 }
                 data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
@@ -134,9 +130,8 @@ export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const userPlan = user?.plan || "free";
 
-  // ← ADD 3: build nav items — append Admin Panel only for admin emails
   const navItems = isAdmin(user?.email)
-    ? [...NAV_ITEMS, { path: "/admin", label: "Admin Panel", icon: ShieldCheck, admin: true }]
+    ? [...NAV_ITEMS, { path: "/admin", label: "Admin Panel", icon: ShieldCheck }]
     : NAV_ITEMS;
 
   useEffect(() => {
@@ -154,7 +149,7 @@ export default function AppLayout() {
   return (
     <TooltipProvider>
       <div className="min-h-screen" data-testid="app-layout">
-        {/* Desktop Sidebar - FIXED position, viewport height */}
+        {/* Desktop Sidebar */}
         <aside
           className={`hidden md:flex flex-col fixed top-0 left-0 h-screen ${sidebarWidth} bg-card border-r border-border transition-[width] duration-200 ease-in-out z-30`}
           data-testid="sidebar"
@@ -173,7 +168,7 @@ export default function AppLayout() {
           <SidebarUserMenu collapsed={collapsed} user={user} onLogout={handleLogout} navigate={navigate} />
         </aside>
 
-        {/* Main content area - offset by sidebar width */}
+        {/* Main content area */}
         <div className={`flex flex-col min-h-screen transition-[margin-left] duration-200 ease-in-out ${sidebarMargin}`}>
           {/* Mobile top bar */}
           <header className="md:hidden h-14 flex items-center justify-between px-4 border-b border-border bg-card sticky top-0 z-20 shrink-0">
