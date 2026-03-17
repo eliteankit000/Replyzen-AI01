@@ -34,7 +34,7 @@ async def get_admin_stats(
     current_user: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    total_users          = await safe_count(db, "SELECT COUNT(*) FROM public.users")
+    total_users = await safe_count(db, "SELECT COUNT(*) FROM auth.users")
     active_subscriptions = await safe_count(db, "SELECT COUNT(*) FROM subscriptions WHERE status = 'active'")
     emails_connected     = await safe_count(db, "SELECT COUNT(*) FROM email_accounts")
     followups_generated  = await safe_count(db, "SELECT COUNT(*) FROM followups")
