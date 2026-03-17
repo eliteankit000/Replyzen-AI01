@@ -426,19 +426,19 @@ export default function LandingPage() {
             </div>
 
             {/* Company */}
-<div>
-  <h3 className="font-semibold mb-4">Contact</h3>
-  <ul className="space-y-3">
-    <li>
-      <span
-        onClick={() => navigate("/support")}
-        className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-      >
-        Support
-      </span>
-    </li>
-    <li>
-      <span
+              <div>
+               <h3 className="font-semibold mb-4">Contact</h3>
+               <ul className="space-y-3">
+              <li>
+             <span
+               onClick={() => navigate("/support")}
+               className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                >
+               Support
+                </span>
+                 </li>
+                 <li>
+         <span
         onClick={() => navigate("/contact")}
         className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
       >
