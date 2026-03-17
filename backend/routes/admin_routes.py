@@ -248,13 +248,32 @@ async def system_health(
     current_user: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
+    # Database check
     try:
         await db.execute(text("SELECT 1"))
         db_status = "ok"
     except Exception as e:
-        db_status = f"error: {e}"
+        db_status = f"error: {str(e)}"
+
+    # Table row counts
+    counts = {}
+    for table in ["users", "subscriptions", "email_accounts", "followups"]:
+        try:
+            result = await db.execute(text(f"SELECT COUNT(*) FROM {table}"))
+            counts[table] = result.scalar() or 0
+        except Exception:
+            counts[table] = "error"
 
     return {
-        "database": db_status,
-        "api": "ok",
+        "database":      db_status,
+        "api":           "ok",
+        "table_counts":  counts,
+        "allowed_origins": [
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "https://replyzenai.com",
+            "https://www.replyzenai.com",
+            "https://replyzen-ai-01-wjzx.vercel.app",
+            "https://replyzen-ai-01-3boy.vercel.app",
+        ]
     }
