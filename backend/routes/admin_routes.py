@@ -34,7 +34,7 @@ async def get_admin_stats(
     current_user: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    total_users          = await safe_count(db, "SELECT COUNT(*) FROM users")
+    total_users          = await safe_count(db, "SELECT COUNT(*) FROM public.users")
     active_subscriptions = await safe_count(db, "SELECT COUNT(*) FROM subscriptions WHERE status = 'active'")
     emails_connected     = await safe_count(db, "SELECT COUNT(*) FROM email_accounts")
     followups_generated  = await safe_count(db, "SELECT COUNT(*) FROM followups")
@@ -60,10 +60,13 @@ async def get_all_users(
     try:
         if search:
             query = text("""
-                SELECT id, email, full_name, plan, created_at, is_active
-                FROM users
-                WHERE email ILIKE :search OR full_name ILIKE :search
-                ORDER BY created_at DESC
+                SELECT 
+                    u.id, u.email, u.full_name, u.plan, u.created_at, u.is_active,
+                    COALESCE(u.full_name, a.raw_user_meta_data->>'full_name') as display_name
+                FROM public.users u
+                LEFT JOIN auth.users a ON a.id = u.id
+                WHERE u.email ILIKE :search OR u.full_name ILIKE :search
+                ORDER BY u.created_at DESC
                 LIMIT :limit OFFSET :offset
             """)
             result = await db.execute(query, {
@@ -71,18 +74,25 @@ async def get_all_users(
                 "limit": limit,
                 "offset": offset
             })
+            total = await safe_count(db,
+                "SELECT COUNT(*) FROM public.users WHERE email ILIKE :s OR full_name ILIKE :s",
+                {"s": f"%{search}%"}
+            )
         else:
             query = text("""
-                SELECT id, email, full_name, plan, created_at, is_active
-                FROM users
-                ORDER BY created_at DESC
+                SELECT 
+                    u.id, u.email,
+                    COALESCE(u.full_name, a.raw_user_meta_data->>'full_name') as full_name,
+                    u.plan, u.created_at, u.is_active
+                FROM public.users u
+                LEFT JOIN auth.users a ON a.id = u.id
+                ORDER BY u.created_at DESC
                 LIMIT :limit OFFSET :offset
             """)
             result = await db.execute(query, {"limit": limit, "offset": offset})
+            total = await safe_count(db, "SELECT COUNT(*) FROM public.users")
 
         rows = result.mappings().all()
-        total = await safe_count(db, "SELECT COUNT(*) FROM users")
-
         return {
             "users": [dict(r) for r in rows],
             "total": total,
@@ -91,41 +101,6 @@ async def get_all_users(
         }
     except Exception as e:
         logger.error(f"Get users failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.patch("/users/{user_id}/plan")
-async def update_user_plan(
-    user_id: str,
-    body: dict,
-    current_user: dict = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    plan = body.get("plan")
-    if not plan:
-        raise HTTPException(status_code=400, detail="plan is required")
-    try:
-        await db.execute(
-            text("UPDATE users SET plan = :plan WHERE id = :id"),
-            {"plan": plan, "id": user_id}
-        )
-        await db.commit()
-        return {"success": True, "user_id": user_id, "plan": plan}
-    except Exception as e:
-        logger.error(f"Update plan failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.delete("/users/{user_id}")
-async def delete_user(
-    user_id: str,
-    current_user: dict = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
-):
-    try:
-        await db.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
-        await db.commit()
-        return {"success": True, "deleted_user_id": user_id}
-    except Exception as e:
-        logger.error(f"Delete user failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ─── SUBSCRIPTIONS / PAYMENT LOGS ─────────────────────────────────────────────
