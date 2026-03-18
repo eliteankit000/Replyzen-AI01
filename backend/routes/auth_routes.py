@@ -50,6 +50,30 @@ class LoginRequest(BaseModel):
 
 
 # ---------------------------------------------------
+# Helper: Sync user into profiles table
+# ---------------------------------------------------
+
+async def sync_profile(db: AsyncSession, user_id: str, email: str, full_name: str):
+    try:
+        await db.execute(
+            text("""
+                INSERT INTO profiles (id, user_id, email, display_name, created_at)
+                VALUES (gen_random_uuid(), :user_id, :email, :full_name, :created_at)
+                ON CONFLICT DO NOTHING
+            """),
+            {
+                "user_id": user_id,
+                "email": email,
+                "full_name": full_name,
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
+        await db.commit()
+    except Exception as e:
+        logger.warning(f"Profile sync failed for {email}: {e}")
+
+
+# ---------------------------------------------------
 # Register
 # ---------------------------------------------------
 
@@ -88,6 +112,9 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     )
 
     await db.commit()
+
+    # ← Sync into profiles
+    await sync_profile(db, user_id, req.email, req.full_name)
 
     token = create_token(user_id, req.email)
 
@@ -175,7 +202,6 @@ async def google_url(redirect_uri: Optional[str] = None):
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=500, detail="Google OAuth not configured")
 
-    # Use redirect_uri from query param if provided, else fall back to env var
     effective_redirect = redirect_uri or GOOGLE_REDIRECT_URI
 
     params = {
@@ -227,7 +253,6 @@ async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Google OAuth not configured")
 
     async with httpx.AsyncClient() as client:
-
         token_response = await client.post(
             GOOGLE_TOKEN_URL,
             data={
@@ -244,11 +269,9 @@ async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Google authentication failed")
 
     token_data = token_response.json()
-
     access_token = token_data.get("access_token")
 
     async with httpx.AsyncClient() as client:
-
         userinfo_response = await client.get(
             GOOGLE_USERINFO_URL,
             headers={"Authorization": f"Bearer {access_token}"}
@@ -274,12 +297,13 @@ async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
     existing_user = result.fetchone()
 
     if existing_user:
-
         user = dict(existing_user._mapping)
         user_id = str(user["id"])
 
-    else:
+        # ← Sync existing user into profiles (in case they were missing)
+        await sync_profile(db, user_id, email, name)
 
+    else:
         user_id = str(uuid.uuid4())
 
         await db.execute(
@@ -303,8 +327,10 @@ async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
 
         await db.commit()
 
-    token = create_token(user_id, email)
+        # ← Sync new user into profiles
+        await sync_profile(db, user_id, email, name)
 
+    token = create_token(user_id, email)
     redirect_url = f"{FRONTEND_URL}/auth/callback?token={token}"
 
     return RedirectResponse(redirect_url)
