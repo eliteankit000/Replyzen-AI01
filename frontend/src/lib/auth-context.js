@@ -20,6 +20,13 @@ export function AuthProvider({ children }) {
       } catch {
         localStorage.removeItem("replyzen_user");
       }
+      // ← Auto refresh user from backend to get latest plan
+      authAPI.getMe()
+        .then(res => {
+          setUser(res.data);
+          localStorage.setItem("replyzen_user", JSON.stringify(res.data));
+        })
+        .catch(() => {});
     }
     setLoading(false);
   }, []);
