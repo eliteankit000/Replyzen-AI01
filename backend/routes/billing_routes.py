@@ -265,34 +265,46 @@ async def get_plan_limits(
 # -------------------------------------------------------------------
 # Current Subscription
 # -------------------------------------------------------------------
-
 @router.get("/subscription")
 async def get_subscription(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     try:
+        user_id = current_user["user_id"]
+
+        # First check subscriptions table
         result = await db.execute(
             text("""
             SELECT plan, status, provider
             FROM public.subscriptions
             WHERE user_id = :uid
             AND status IN ('active', 'trialing')
+            ORDER BY created_at DESC
             LIMIT 1
             """),
-            {"uid": current_user["user_id"]}
+            {"uid": user_id}
         )
         sub = result.fetchone()
-        if not sub:
-            # Fallback to users table plan
-            result2 = await db.execute(
-                text("SELECT plan FROM public.users WHERE id = :uid"),
-                {"uid": current_user["user_id"]}
-            )
-            row = result2.fetchone()
-            plan = row[0] if row else "free"
-            return {"plan": plan, "status": "active"}
-        return dict(sub._mapping)
+
+        # Always also check users.plan as source of truth
+        result2 = await db.execute(
+            text("SELECT plan FROM public.users WHERE id = :uid"),
+            {"uid": user_id}
+        )
+        user_row = result2.fetchone()
+        user_plan = user_row[0] if user_row else "free"
+
+        if sub:
+            sub_dict = dict(sub._mapping)
+            # If users.plan differs from subscription plan, sync it
+            if sub_dict["plan"] != user_plan:
+                sub_dict["plan"] = user_plan
+            return sub_dict
+
+        # No subscription row — return from users table directly
+        return {"plan": user_plan, "status": "active", "provider": "admin"}
+
     except Exception as e:
         logger.warning(f"Subscription fetch error: {e}")
         return {"plan": "free", "status": "active"}
