@@ -402,72 +402,71 @@ export default function LandingPage() {
               </ul>
             </div>
 
-            {/* Legal */}
+            {/* Legal — ✅ FIXED: changed <span onClick> to <a href> so Google bot can crawl */}
             <div>
               <h3 className="font-semibold mb-4">Legal</h3>
               <ul className="space-y-3">
                 <li>
-                  <span 
-                    onClick={() => navigate("/privacy-policy")} 
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  <a
+                    href="/privacy-policy"
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
                   >
                     Privacy Policy
-                  </span>
+                  </a>
                 </li>
                 <li>
-                  <span 
-                    onClick={() => navigate("/terms-of-service")} 
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  <a
+                    href="/terms-of-service"
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
                   >
                     Terms of Service
-                  </span>
+                  </a>
                 </li>
               </ul>
             </div>
 
-           {/* Contact */}
+            {/* Contact */}
             <div>
               <h3 className="font-semibold mb-4">Contact</h3>
               <ul className="space-y-3">
                 <li>
-                  <span
-                    onClick={() => navigate("/support")}
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  <a
+                    href="/support"
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
                   >
                     Support
-                  </span>
+                  </a>
                 </li>
                 <li>
-                  <span
-                    onClick={() => navigate("/contact")}
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  <a
+                    href="/contact"
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
                   >
                     Contact Us
-                  </span>
+                  </a>
                 </li>
               </ul>
             </div>
           </div>
 
-          {/* Bottom */}
-          {/* Bottom */}
+          {/* Bottom — ✅ FIXED: changed <span onClick> to <a href> so Google bot can crawl */}
           <div className="pt-8 border-t border-border flex flex-col md:flex-row items-center justify-between gap-4">
             <p className="text-xs text-muted-foreground">
               &copy; {new Date().getFullYear()} Replyzen AI. All rights reserved.
             </p>
             <div className="flex items-center gap-6">
-              <span 
-                onClick={() => navigate("/privacy-policy")} 
-                className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+              <a
+                href="/privacy-policy"
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
               >
                 Privacy
-              </span>
-              <span 
-                onClick={() => navigate("/terms-of-service")} 
-                className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+              </a>
+              <a
+                href="/terms-of-service"
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
               >
                 Terms
-              </span>
+              </a>
             </div>
           </div>
         </div>
