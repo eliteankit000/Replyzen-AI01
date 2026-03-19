@@ -1,374 +1,321 @@
-from fastapi import APIRouter, HTTPException, Depends, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from database import get_db
 from auth import get_current_user
-import os
-import uuid
-import hmac
-import hashlib
-import json
-from datetime import datetime, timezone
-from typing import Optional
 import logging
-import razorpay
-import httpx
 
 logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/admin", tags=["admin"])
 
-router = APIRouter(prefix="/api/billing", tags=["billing"])
+ADMIN_EMAILS = [
+    "aniketar111@gmail.com",
+    "anthoraiofficial@gmail.com",
+]
 
-rzp_key_id = os.environ.get("RAZORPAY_KEY_ID", "")
-rzp_key_secret = os.environ.get("RAZORPAY_KEY_SECRET", "")
-rzp_client = None
-if rzp_key_id and rzp_key_secret:
-    rzp_client = razorpay.Client(auth=(rzp_key_id, rzp_key_secret))
+def require_admin(current_user: dict = Depends(get_current_user)):
+    email = (current_user.get("email") or "").lower().strip()
+    if email not in ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
 
-
-class CheckoutRequest(BaseModel):
-    plan_id: str
-    billing_cycle: str = "monthly"
-    provider: str = "razorpay"
-
-
-# ✅ Correct prices matching Razorpay dashboard
-PLANS = {
-    "USD": [
-        {
-            "id": "free",
-            "name": "Free",
-            "description": "Get started for free",
-            "price_monthly": 0,
-            "price_yearly": 0,
-            "features": ["30 follow-ups per month", "1 email account connection", "Basic AI follow-up drafts", "Manual follow-up sending", "Inbox scan for silent conversations", "Follow-up queue dashboard", "Basic settings"],
-        },
-        {
-            "id": "pro",
-            "name": "Pro",
-            "description": "For professionals",
-            "price_monthly": 19,
-            "price_yearly": 190,
-            "features": ["2,500 follow-ups per month", "Connect up to 3 email accounts", "Advanced AI tones", "Manual sending", "Auto-send automation", "Analytics dashboard", "Inbox scanning", "Follow-up detection", "Priority support"],
-        },
-        {
-            "id": "business",
-            "name": "Business",
-            "description": "For teams and power users",
-            "price_monthly": 49,
-            "price_yearly": 490,
-            "features": ["Unlimited follow-ups", "Connect up to 10 email accounts", "All AI tones", "Manual sending", "Auto-send automation", "Inbox scanning", "Follow-up detection", "Dedicated support"],
-        },
-    ],
-    "INR": [
-        {
-            "id": "free",
-            "name": "Free",
-            "description": "Get started for free",
-            "price_monthly": 0,
-            "price_yearly": 0,
-            "features": ["30 follow-ups per month", "1 email account connection", "Basic AI follow-up drafts", "Manual follow-up sending", "Inbox scan for silent conversations", "Follow-up queue dashboard", "Basic settings"],
-        },
-        {
-            "id": "pro",
-            "name": "Pro",
-            "description": "For professionals",
-            "price_monthly": 1599,   # ✅ matches Razorpay: Replyzen Pro Monthly
-            "price_yearly": 15999,   # ✅ matches Razorpay: Replyzen Pro Yearly
-            "features": ["2,500 follow-ups per month", "Connect up to 3 email accounts", "Advanced AI tones", "Manual sending", "Auto-send automation", "Analytics dashboard", "Inbox scanning", "Follow-up detection", "Priority support"],
-        },
-        {
-            "id": "business",
-            "name": "Business",
-            "description": "For teams and power users",
-            "price_monthly": 3999,   # ✅ matches Razorpay: Replyzen Business Monthly
-            "price_yearly": 39999,   # ✅ matches Razorpay: Replyzen Business Yearly
-            "features": ["Unlimited follow-ups", "Connect up to 10 email accounts", "All AI tones", "Manual sending", "Auto-send automation", "Inbox scanning", "Follow-up detection", "Dedicated support"],
-        },
-    ],
-}
-
-
-# -------------------------------------------------------------------
-# Detect Location
-# -------------------------------------------------------------------
-
-@router.get("/detect-location")
-async def detect_location(request: Request):
-    forwarded_for = request.headers.get("X-Forwarded-For", "")
-    client_ip = forwarded_for.split(",")[0].strip() if forwarded_for else request.client.host
-    country = "US"
+async def safe_count(db, query, params={}):
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(f"http://ip-api.com/json/{client_ip}?fields=countryCode")
-            if resp.status_code == 200:
-                data = resp.json()
-                country = data.get("countryCode", "US")
+        result = await db.execute(text(query), params)
+        return result.scalar() or 0
     except Exception as e:
-        logger.warning(f"Location detection failed: {e}")
+        logger.warning(f"Admin query failed: {e}")
+        return 0
 
-    is_india = country == "IN"
+# ─── STATS ────────────────────────────────────────────────────────────────────
+
+@router.get("/stats")
+async def get_admin_stats(
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    total_users          = await safe_count(db, "SELECT COUNT(*) FROM public.users")
+    active_subscriptions = await safe_count(db, "SELECT COUNT(*) FROM public.subscriptions WHERE status = 'active'")
+    emails_connected     = await safe_count(db, "SELECT COUNT(*) FROM public.email_accounts")
+    followups_generated  = await safe_count(db, "SELECT COUNT(*) FROM public.followup_suggestions")
+
     return {
-        "country": country,
-        "currency": "INR" if is_india else "USD",
-        "symbol": "₹" if is_india else "$",
-        "payment_provider": "razorpay" if is_india else "paddle",
+        "total_users":          total_users,
+        "active_subscriptions": active_subscriptions,
+        "emails_connected":     emails_connected,
+        "followups_generated":  followups_generated,
     }
 
+# ─── USER MANAGEMENT ──────────────────────────────────────────────────────────
 
-# -------------------------------------------------------------------
-# Plans
-# -------------------------------------------------------------------
-
-@router.get("/plans")
-async def get_plans(currency: str = "USD"):
-    currency = currency.upper()
-    return PLANS.get(currency, PLANS["USD"])
-
-
-# -------------------------------------------------------------------
-# Checkout — creates Razorpay subscription or returns Paddle price_id
-# -------------------------------------------------------------------
-
-# Razorpay Plan IDs — set these in Railway env vars
-# RAZORPAY_PLAN_PRO_MONTHLY, RAZORPAY_PLAN_PRO_YEARLY, etc.
-RAZORPAY_PLAN_IDS = {
-    "pro": {
-        "monthly": os.environ.get("RAZORPAY_PLAN_PRO_MONTHLY", ""),
-        "yearly":  os.environ.get("RAZORPAY_PLAN_PRO_YEARLY", ""),
-    },
-    "business": {
-        "monthly": os.environ.get("RAZORPAY_PLAN_BUSINESS_MONTHLY", ""),
-        "yearly":  os.environ.get("RAZORPAY_PLAN_BUSINESS_YEARLY", ""),
-    },
-}
-
-# Paddle Price IDs — set these in Railway env vars
-PADDLE_PRICE_IDS = {
-    "pro": {
-        "monthly": os.environ.get("PADDLE_PRICE_PRO_MONTHLY", ""),
-        "yearly":  os.environ.get("PADDLE_PRICE_PRO_YEARLY", ""),
-    },
-    "business": {
-        "monthly": os.environ.get("PADDLE_PRICE_BUSINESS_MONTHLY", ""),
-        "yearly":  os.environ.get("PADDLE_PRICE_BUSINESS_YEARLY", ""),
-    },
-}
-
-@router.post("/checkout")
-async def create_checkout(
-    req: CheckoutRequest,
-    current_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+@router.get("/users")
+async def get_all_users(
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    search: str = Query(None)
 ):
-    user_id = current_user["user_id"]
-
-    if req.plan_id not in ("pro", "business"):
-        raise HTTPException(status_code=400, detail="Invalid plan")
-
-    billing_cycle = req.billing_cycle if req.billing_cycle in ("monthly", "yearly") else "monthly"
-    provider = req.provider if req.provider in ("razorpay", "paddle") else "razorpay"
-
-    # ── Razorpay (India) ──────────────────────────────────────────
-    if provider == "razorpay":
-        if not rzp_client:
-            raise HTTPException(status_code=500, detail="Razorpay is not configured. Please set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.")
-
-        plan_id = RAZORPAY_PLAN_IDS.get(req.plan_id, {}).get(billing_cycle, "")
-        if not plan_id:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Razorpay plan ID not configured for {req.plan_id}/{billing_cycle}. "
-                       f"Please set RAZORPAY_PLAN_{req.plan_id.upper()}_{billing_cycle.upper()} in environment variables."
-            )
-
-        try:
-            subscription = rzp_client.subscription.create({
-                "plan_id": plan_id,
-                "customer_notify": 1,
-                "total_count": 12 if billing_cycle == "monthly" else 1,
-                "notes": {
-                    "user_id": user_id,
-                    "plan": req.plan_id,
-                    "billing_cycle": billing_cycle,
-                }
+    offset = (page - 1) * limit
+    try:
+        if search:
+            query = text("""
+                SELECT id, email, full_name, plan, created_at, is_active
+                FROM public.admin_users
+                WHERE email ILIKE :search OR full_name ILIKE :search
+                ORDER BY created_at DESC
+                LIMIT :limit OFFSET :offset
+            """)
+            result = await db.execute(query, {
+                "search": f"%{search}%",
+                "limit": limit,
+                "offset": offset
             })
-        except Exception as e:
-            logger.error(f"Razorpay subscription creation failed: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to create Razorpay subscription: {str(e)}")
+            total = await safe_count(db,
+                "SELECT COUNT(*) FROM public.admin_users WHERE email ILIKE :s OR full_name ILIKE :s",
+                {"s": f"%{search}%"}
+            )
+        else:
+            query = text("""
+                SELECT id, email, full_name, plan, created_at, is_active
+                FROM public.admin_users
+                ORDER BY created_at DESC
+                LIMIT :limit OFFSET :offset
+            """)
+            result = await db.execute(query, {"limit": limit, "offset": offset})
+            total = await safe_count(db, "SELECT COUNT(*) FROM public.admin_users")
 
+        rows = result.mappings().all()
         return {
-            "provider": "razorpay",
-            "subscription_id": subscription["id"],
-            "key_id": rzp_key_id,
-            "plan": req.plan_id,
-            "billing_cycle": billing_cycle,
-            "user_id": user_id,
+            "users": [dict(r) for r in rows],
+            "total": total,
+            "page": page,
+            "pages": -(-total // limit)
         }
+    except Exception as e:
+        logger.error(f"Get users failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-    # ── Paddle (International) ────────────────────────────────────
-    else:
-        price_id = PADDLE_PRICE_IDS.get(req.plan_id, {}).get(billing_cycle, "")
-        if not price_id:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Paddle price ID not configured for {req.plan_id}/{billing_cycle}. "
-                       f"Please set PADDLE_PRICE_{req.plan_id.upper()}_{billing_cycle.upper()} in environment variables."
+
+@router.patch("/users/{user_id}/plan")
+async def update_user_plan(
+    user_id: str,
+    body: dict,
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    plan = body.get("plan")
+    if not plan:
+        raise HTTPException(status_code=400, detail="plan is required")
+    try:
+        # Update users table
+        await db.execute(
+            text("UPDATE public.users SET plan = :plan WHERE id = :id"),
+            {"plan": plan, "id": user_id}
+        )
+
+        if plan == "free":
+            # Cancel any active subscription
+            await db.execute(
+                text("""
+                    UPDATE public.subscriptions
+                    SET status = 'cancelled'
+                    WHERE user_id = :uid AND status = 'active'
+                """),
+                {"uid": user_id}
+            )
+        else:
+            # Upsert active subscription
+            await db.execute(
+                text("""
+                    INSERT INTO public.subscriptions
+                        (id, user_id, plan, status, provider, created_at)
+                    VALUES
+                        (gen_random_uuid(), :uid, :plan, 'active', 'admin', now())
+                    ON CONFLICT (user_id)
+                    DO UPDATE SET
+                        plan = :plan,
+                        status = 'active',
+                        provider = 'admin'
+                """),
+                {"uid": user_id, "plan": plan}
             )
 
-        paddle_vendor_id = os.environ.get("PADDLE_VENDOR_ID", "")
+        await db.commit()
+        return {"success": True, "user_id": user_id, "plan": plan}
+    except Exception as e:
+        logger.error(f"Update plan failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        await db.execute(
+            text("DELETE FROM public.users WHERE id = :id"),
+            {"id": user_id}
+        )
+        await db.commit()
+        return {"success": True, "deleted_user_id": user_id}
+    except Exception as e:
+        logger.error(f"Delete user failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ─── SUBSCRIPTIONS ────────────────────────────────────────────────────────────
+
+@router.get("/subscriptions")
+async def get_subscriptions(
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    status: str = Query(None)
+):
+    offset = (page - 1) * limit
+    try:
+        if status:
+            query = text("""
+                SELECT s.id, s.user_id, s.status, s.plan, s.created_at, s.expires_at,
+                       u.email, u.full_name
+                FROM public.subscriptions s
+                LEFT JOIN public.users u ON u.id = s.user_id
+                WHERE s.status = :status
+                ORDER BY s.created_at DESC
+                LIMIT :limit OFFSET :offset
+            """)
+            result = await db.execute(query, {
+                "status": status,
+                "limit": limit,
+                "offset": offset
+            })
+            total = await safe_count(db,
+                "SELECT COUNT(*) FROM public.subscriptions WHERE status = :status",
+                {"status": status}
+            )
+        else:
+            query = text("""
+                SELECT s.id, s.user_id, s.status, s.plan, s.created_at, s.expires_at,
+                       u.email, u.full_name
+                FROM public.subscriptions s
+                LEFT JOIN public.users u ON u.id = s.user_id
+                ORDER BY s.created_at DESC
+                LIMIT :limit OFFSET :offset
+            """)
+            result = await db.execute(query, {"limit": limit, "offset": offset})
+            total = await safe_count(db, "SELECT COUNT(*) FROM public.subscriptions")
+
+        rows = result.mappings().all()
+        return {
+            "subscriptions": [dict(r) for r in rows],
+            "total": total,
+            "page": page,
+            "pages": -(-total // limit)
+        }
+    except Exception as e:
+        logger.error(f"Get subscriptions failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ─── EMAIL ACCOUNT MONITORING ─────────────────────────────────────────────────
+
+@router.get("/email-accounts")
+async def get_email_accounts(
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100)
+):
+    offset = (page - 1) * limit
+    try:
+        query = text("""
+            SELECT ea.id, ea.email, ea.provider, ea.created_at, ea.is_active,
+                   u.email as user_email, u.full_name
+            FROM public.email_accounts ea
+            LEFT JOIN public.users u ON u.id = ea.user_id
+            ORDER BY ea.created_at DESC
+            LIMIT :limit OFFSET :offset
+        """)
+        result = await db.execute(query, {"limit": limit, "offset": offset})
+        rows = result.mappings().all()
+        total = await safe_count(db, "SELECT COUNT(*) FROM public.email_accounts")
 
         return {
-            "provider": "paddle",
-            "price_id": price_id,
-            "vendor_id": paddle_vendor_id,
-            "plan": req.plan_id,
-            "billing_cycle": billing_cycle,
-            "user_id": user_id,
+            "email_accounts": [dict(r) for r in rows],
+            "total": total,
+            "page": page,
+            "pages": -(-total // limit)
         }
-
-
-# -------------------------------------------------------------------
-# Plan Limits
-# -------------------------------------------------------------------
-
-PLAN_LIMITS = {
-    "free":     {"followups_per_month": 30,  "max_email_accounts": 1,  "ai_replies": 30},
-    "pro":      {"followups_per_month": 2500,"max_email_accounts": 3,  "ai_replies": 2500},
-    "business": {"followups_per_month": -1,  "max_email_accounts": 10, "ai_replies": -1},
-}
-
-@router.get("/plan-limits")
-async def get_plan_limits(
-    current_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    user_id = current_user["user_id"]
-
-    result = await db.execute(
-        text("SELECT plan FROM users WHERE id = :uid"),
-        {"uid": user_id}
-    )
-    row = result.fetchone()
-    plan = str(row[0]) if row else "free"
-    limits = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
-
-    # Count follow-ups used in the current calendar month
-    followups_used = 0
-    try:
-        usage_result = await db.execute(
-            text("""
-                SELECT COUNT(*) FROM followups
-                WHERE user_id = :uid
-                AND created_at >= date_trunc('month', now())
-            """),
-            {"uid": user_id}
-        )
-        followups_used = usage_result.scalar() or 0
     except Exception as e:
-        logger.warning(f"Could not fetch followups_used for user {user_id}: {e}")
+        logger.error(f"Get email accounts failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-    return {"plan": plan, "followups_used": followups_used, **limits}
+# ─── FOLLOW-UP ACTIVITY ───────────────────────────────────────────────────────
 
+@router.get("/followups")
+async def get_followup_activity(
+    current_user: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100)
+):
+    offset = (page - 1) * limit
+    try:
+        query = text("""
+            SELECT f.id, f.status, f.generated_at as created_at, f.sent_at,
+                   u.email as user_email, u.full_name
+            FROM public.followup_suggestions f
+            LEFT JOIN public.users u ON u.id = f.user_id
+            ORDER BY f.generated_at DESC
+            LIMIT :limit OFFSET :offset
+        """)
+        result = await db.execute(query, {"limit": limit, "offset": offset})
+        rows = result.mappings().all()
+        total = await safe_count(db, "SELECT COUNT(*) FROM public.followup_suggestions")
 
-# -------------------------------------------------------------------
-# Current Subscription
-# -------------------------------------------------------------------
+        return {
+            "followups": [dict(r) for r in rows],
+            "total": total,
+            "page": page,
+            "pages": -(-total // limit)
+        }
+    except Exception as e:
+        logger.error(f"Get followups failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/subscription")
-async def get_subscription(
-    current_user: dict = Depends(get_current_user),
+# ─── SYSTEM HEALTH ────────────────────────────────────────────────────────────
+
+@router.get("/health")
+async def system_health(
+    current_user: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     try:
-        result = await db.execute(
-            text("""
-            SELECT plan, status, provider
-            FROM subscriptions
-            WHERE user_id = :uid
-            AND status IN ('active','trialing')
-            LIMIT 1
-            """),
-            {"uid": current_user["user_id"]}
-        )
-        sub = result.fetchone()
-        if not sub:
-            return {"plan": "free", "status": "active"}
-        return dict(sub._mapping)
+        await db.execute(text("SELECT 1"))
+        db_status = "ok"
     except Exception as e:
-        logger.warning(f"Subscription fetch error: {e}")
-        return {"plan": "free", "status": "active"}
+        db_status = f"error: {str(e)}"
 
-
-# -------------------------------------------------------------------
-# Cancel Subscription
-# -------------------------------------------------------------------
-
-@router.post("/cancel")
-async def cancel_subscription(
-    current_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    user_id = current_user["user_id"]
-    result = await db.execute(
-        text("SELECT id, provider, subscription_id FROM subscriptions WHERE user_id = :uid AND status = 'active' LIMIT 1"),
-        {"uid": user_id}
-    )
-    sub = result.fetchone()
-    if not sub:
-        raise HTTPException(status_code=400, detail="No active subscription")
-    sub = dict(sub._mapping)
-
-    if sub["provider"] == "razorpay" and rzp_client:
+    counts = {}
+    for table in ["users", "subscriptions", "email_accounts", "followup_suggestions"]:
         try:
-            rzp_client.subscription.cancel(sub["subscription_id"])
-        except Exception as e:
-            logger.error(f"Razorpay cancel error: {e}")
+            result = await db.execute(text(f"SELECT COUNT(*) FROM public.{table}"))
+            counts[table] = result.scalar() or 0
+        except Exception:
+            counts[table] = "error"
 
-    now = datetime.now(timezone.utc)
-    await db.execute(
-        text("UPDATE subscriptions SET status = 'cancelled', cancelled_at = :now WHERE id = :id"),
-        {"id": sub["id"], "now": now}
-    )
-    await db.execute(
-        text("UPDATE users SET plan = 'free' WHERE id = :uid"),
-        {"uid": user_id}
-    )
-    await db.commit()
-    return {"message": "Subscription cancelled"}
-
-
-# -------------------------------------------------------------------
-# Razorpay Webhook
-# -------------------------------------------------------------------
-
-@router.post("/webhook/razorpay")
-async def razorpay_webhook(request: Request, db: AsyncSession = Depends(get_db)):
-    body = await request.body()
-    signature = request.headers.get("X-Razorpay-Signature", "")
-    webhook_secret = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "")
-
-    if webhook_secret:
-        expected = hmac.new(webhook_secret.encode(), body, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected, signature):
-            raise HTTPException(status_code=400, detail="Invalid signature")
-
-    data = json.loads(body)
-    event = data.get("event", "")
-
-    if event == "subscription.activated":
-        sub = data["payload"]["subscription"]["entity"]
-        user_id = sub.get("notes", {}).get("user_id")
-        plan = sub.get("notes", {}).get("plan")
-        await db.execute(
-            text("""
-            INSERT INTO subscriptions (id,user_id,plan,provider,subscription_id,status,created_at)
-            VALUES (:id,:uid,:plan,'razorpay',:sid,'active',:created)
-            ON CONFLICT (user_id) DO UPDATE SET plan=:plan, status='active'
-            """),
-            {"id": str(uuid.uuid4()), "uid": user_id, "plan": plan, "sid": sub["id"], "created": datetime.now(timezone.utc)}
-        )
-        await db.execute(text("UPDATE users SET plan=:plan WHERE id=:uid"), {"plan": plan, "uid": user_id})
-        await db.commit()
-
-    return {"status": "ok"}
+    return {
+        "database": db_status,
+        "api": "ok",
+        "table_counts": counts,
+        "allowed_origins": [
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "https://replyzenai.com",
+            "https://www.replyzenai.com",
+            "https://replyzen-ai-01-wjzx.vercel.app",
+            "https://replyzen-ai-01-3boy.vercel.app",
+        ]
+    }
