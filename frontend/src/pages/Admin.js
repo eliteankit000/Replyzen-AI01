@@ -122,13 +122,25 @@ function OverviewTab() {
 
 // ─── USERS TAB ────────────────────────────────────────────────────────────────
 function UsersTab() {
-  // ✅ FIX: Added refreshUser from useAuth.
-  // The sidebar reads user.plan from the auth context which is set at login
-  // and never automatically updated. When admin changes a plan, DB is updated
-  // correctly but the cached session stays stale — sidebar never reflects it.
-  // Calling refreshUser() after every plan change re-fetches the session from
-  // the backend and updates the sidebar instantly without a full page reload.
-  const { refreshUser } = useAuth();
+  // ✅ FIX: Pull patchUser + current user from auth context.
+  //
+  // THE ROOT CAUSE:
+  // refreshUser() calls authAPI.getMe() and then setUser(). But if getMe()
+  // fails for ANY reason (network blip, CORS, token issue), the catch{} block
+  // swallows the error and setUser() is never called — so the sidebar never
+  // updates. This is why the sidebar stubbornly shows "Free Plan" even after
+  // the DB was correctly updated.
+  //
+  // THE FIX — two-step approach:
+  //
+  // Step 1 (patchUser): Directly merge { plan } into the React context state.
+  // This is a pure synchronous state update — it CANNOT fail. It updates the
+  // sidebar immediately the instant the PATCH request returns 200.
+  //
+  // Step 2 (refreshUser): Also re-fetch from the backend as a background sync
+  // so all other user fields (full_name, email, etc.) stay fresh. If this fails
+  // it doesn't matter because Step 1 already updated the plan.
+  const { user: currentUser, patchUser, refreshUser } = useAuth();
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -155,16 +167,27 @@ function UsersTab() {
   };
 
   const handlePlanChange = async (userId, plan) => {
+    // 1. Save to DB
     await api.patch(`/admin/users/${userId}/plan`, { plan });
 
-    // ✅ FIX: Re-fetch the current session from the backend.
-    // This is safe to call for any user update — if the updated user is the
-    // logged-in admin, the sidebar will show the new plan immediately.
-    // If it's a different user, refreshUser() is a no-op for the sidebar display.
-    if (typeof refreshUser === "function") {
-      await refreshUser();
+    // 2. Find the user row we just updated from the current table data
+    const updatedRow = data?.users?.find(u => String(u.id) === String(userId));
+
+    // 3. ✅ KEY FIX: If the admin just updated their OWN account, immediately
+    //    patch the auth context so the sidebar re-renders right now.
+    //    We compare by email (stable identifier) because id formats can differ
+    //    between the admin_users view and the JWT user_id.
+    if (updatedRow && updatedRow.email === currentUser?.email) {
+      patchUser({ plan });
     }
 
+    // 4. Also fire refreshUser in the background to sync all fields from DB.
+    //    Even if this fails silently, Step 3 already fixed the sidebar.
+    if (typeof refreshUser === "function") {
+      refreshUser().catch(() => {});
+    }
+
+    // 5. Reload the admin table
     load(page, search);
   };
 
@@ -499,7 +522,6 @@ function HealthTab() {
     { label: "Database", value: data.database },
     { label: "API",      value: data.api      },
   ] : [];
-
   const TABLE_COUNTS = data?.table_counts ? Object.entries(data.table_counts) : [];
   const ORIGINS = data?.allowed_origins || [];
 
