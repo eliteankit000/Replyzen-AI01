@@ -13,6 +13,10 @@ ADMIN_EMAILS = [
     "anthoraiofficial@gmail.com",
 ]
 
+# ✅ FIX 1: Only allow plans that exist in PLAN_LIMITS.
+# "enterprise" was silently falling back to "free" limits.
+VALID_PLANS = {"free", "pro", "business"}
+
 def require_admin(current_user: dict = Depends(get_current_user)):
     email = (current_user.get("email") or "").lower().strip()
     if email not in ADMIN_EMAILS:
@@ -106,13 +110,42 @@ async def update_user_plan(
     plan = body.get("plan")
     if not plan:
         raise HTTPException(status_code=400, detail="plan is required")
+
+    # ✅ FIX 1: Reject unknown plans immediately so they never reach the DB.
+    # Previously "enterprise" would be saved, then silently downgraded to "free"
+    # by get_plan_limits() since it wasn't in PLAN_LIMITS.
+    if plan not in VALID_PLANS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid plan '{plan}'. Must be one of: {', '.join(sorted(VALID_PLANS))}"
+        )
+
     try:
+        # Update the canonical source of truth
         await db.execute(
             text("UPDATE public.users SET plan = :plan WHERE id = :id"),
             {"plan": plan, "id": user_id}
         )
+
+        # ✅ FIX 2: Also update the subscriptions table so it stays in sync.
+        # Previously only public.users was updated. The subscriptions table kept
+        # the old plan, meaning billing_routes.py had to patch it in-memory on
+        # every request but never wrote it back to DB (Bug 3 fix is in billing_routes.py).
+        await db.execute(
+            text("""
+                UPDATE public.subscriptions
+                SET plan = :plan
+                WHERE user_id = :id
+                AND status IN ('active', 'trialing')
+            """),
+            {"plan": plan, "id": user_id}
+        )
+
         await db.commit()
+
+        logger.info(f"Admin {current_user.get('email')} updated user {user_id} plan to {plan}")
         return {"success": True, "user_id": user_id, "plan": plan}
+
     except Exception as e:
         logger.error(f"Update plan failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
