@@ -122,6 +122,14 @@ function OverviewTab() {
 
 // ─── USERS TAB ────────────────────────────────────────────────────────────────
 function UsersTab() {
+  // ✅ FIX: Added refreshUser from useAuth.
+  // The sidebar reads user.plan from the auth context which is set at login
+  // and never automatically updated. When admin changes a plan, DB is updated
+  // correctly but the cached session stays stale — sidebar never reflects it.
+  // Calling refreshUser() after every plan change re-fetches the session from
+  // the backend and updates the sidebar instantly without a full page reload.
+  const { refreshUser } = useAuth();
+
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -148,6 +156,15 @@ function UsersTab() {
 
   const handlePlanChange = async (userId, plan) => {
     await api.patch(`/admin/users/${userId}/plan`, { plan });
+
+    // ✅ FIX: Re-fetch the current session from the backend.
+    // This is safe to call for any user update — if the updated user is the
+    // logged-in admin, the sidebar will show the new plan immediately.
+    // If it's a different user, refreshUser() is a no-op for the sidebar display.
+    if (typeof refreshUser === "function") {
+      await refreshUser();
+    }
+
     load(page, search);
   };
 
@@ -199,12 +216,6 @@ function UsersTab() {
                       <td className="px-4 py-3 font-medium">{u.full_name || "—"}</td>
                       <td className="px-4 py-3 text-muted-foreground">{u.email}</td>
                       <td className="px-4 py-3">
-                        {/*
-                          ✅ FIX 1: Replaced "enterprise" with "business".
-                          Backend PLAN_LIMITS only defines free | pro | business.
-                          Saving "enterprise" to DB caused get_plan_limits() to
-                          silently fall back to "free" — user gets no features.
-                        */}
                         <select
                           value={u.plan || "free"}
                           onChange={e => handlePlanChange(u.id, e.target.value)}
