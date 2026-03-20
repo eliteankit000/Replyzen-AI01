@@ -273,7 +273,15 @@ async def get_subscription(
     try:
         user_id = current_user["user_id"]
 
-        # First check subscriptions table
+        # Always read users.plan as the authoritative source of truth.
+        # Admin updates go to users.plan first (via PATCH /admin/users/{id}/plan).
+        result2 = await db.execute(
+            text("SELECT plan FROM public.users WHERE id = :uid"),
+            {"uid": user_id}
+        )
+        user_row = result2.fetchone()
+        user_plan = user_row[0] if user_row else "free"
+
         result = await db.execute(
             text("""
             SELECT plan, status, provider
@@ -287,19 +295,33 @@ async def get_subscription(
         )
         sub = result.fetchone()
 
-        # Always also check users.plan as source of truth
-        result2 = await db.execute(
-            text("SELECT plan FROM public.users WHERE id = :uid"),
-            {"uid": user_id}
-        )
-        user_row = result2.fetchone()
-        user_plan = user_row[0] if user_row else "free"
-
         if sub:
             sub_dict = dict(sub._mapping)
-            # If users.plan differs from subscription plan, sync it
+
             if sub_dict["plan"] != user_plan:
+                # ✅ FIX 3: Write the corrected plan back to the subscriptions table.
+                # Previously this only patched the in-memory dict, so every future
+                # request re-detected the same mismatch and the DB stayed stale.
+                try:
+                    await db.execute(
+                        text("""
+                            UPDATE public.subscriptions
+                            SET plan = :plan
+                            WHERE user_id = :uid
+                            AND status IN ('active', 'trialing')
+                        """),
+                        {"plan": user_plan, "uid": user_id}
+                    )
+                    await db.commit()
+                    logger.info(
+                        f"Synced subscription plan for user {user_id}: "
+                        f"{sub_dict['plan']} → {user_plan}"
+                    )
+                except Exception as sync_err:
+                    logger.warning(f"Subscription plan sync failed: {sync_err}")
+
                 sub_dict["plan"] = user_plan
+
             return sub_dict
 
         # No subscription row — return from users table directly
