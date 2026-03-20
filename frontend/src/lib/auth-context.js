@@ -20,7 +20,7 @@ export function AuthProvider({ children }) {
       } catch {
         localStorage.removeItem("replyzen_user");
       }
-      // ← Auto refresh user from backend to get latest plan
+      // Auto refresh user from backend to get latest plan
       authAPI.getMe()
         .then(res => {
           setUser(res.data);
@@ -61,9 +61,6 @@ export function AuthProvider({ children }) {
     return { user: userData, isNewUser: res.data.is_new_user };
   }, []);
 
-  // ✅ KEY FIX: Use plain fetch instead of axios
-  // axios has withCredentials:true which triggers a CORS preflight on this
-  // public endpoint — plain fetch avoids this entirely
   const getGoogleAuthUrl = useCallback(async (redirectUri) => {
     const url = `${BACKEND_URL}/api/auth/google/url?redirect_uri=${encodeURIComponent(redirectUri)}`;
     const res = await fetch(url);
@@ -79,20 +76,41 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
+  // Full re-fetch from backend — use when you want to sync all user fields
   const refreshUser = useCallback(async () => {
     try {
       const res = await authAPI.getMe();
       setUser(res.data);
       localStorage.setItem("replyzen_user", JSON.stringify(res.data));
-    } catch {
-      // silently fail
+    } catch (err) {
+      // Log so it's visible in devtools instead of disappearing silently
+      console.warn("[refreshUser] failed:", err?.response?.status, err?.message);
     }
+  }, []);
+
+  // ✅ NEW: patchUser — directly merges a partial update into the current user
+  // state WITHOUT needing a backend round-trip. Use this when you already know
+  // the new value (e.g. admin just successfully saved plan = "pro" to DB) and
+  // want the sidebar / billing page to reflect it immediately.
+  //
+  // Unlike refreshUser() which can silently fail if the network blips, this is
+  // a pure synchronous React state update — it ALWAYS works.
+  const patchUser = useCallback((updates) => {
+    setUser(prev => {
+      if (!prev) return prev;
+      const merged = { ...prev, ...updates };
+      // Keep localStorage in sync so the next page load also shows the right plan
+      localStorage.setItem("replyzen_user", JSON.stringify(merged));
+      return merged;
+    });
   }, []);
 
   return (
     <AuthContext.Provider value={{
       user, token, loading,
-      login, register, logout, refreshUser,
+      login, register, logout,
+      refreshUser,
+      patchUser,        // ← now available to any component via useAuth()
       loginWithGoogle, getGoogleAuthUrl,
       isAuthenticated: !!token
     }}>
