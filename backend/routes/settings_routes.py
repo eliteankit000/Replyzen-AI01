@@ -42,7 +42,6 @@ async def get_settings(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-
     result = await db.execute(
         text("""
         SELECT *
@@ -83,7 +82,6 @@ async def update_profile(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-
     update_fields = {}
 
     if req.full_name is not None:
@@ -126,11 +124,19 @@ async def update_settings(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-
     update = req.model_dump(exclude_none=True)
 
+    # ✅ FIX 1: Pass `db` as the second argument to get_user_plan.
+    #
+    # BEFORE: plan = await get_user_plan(current_user["user_id"])
+    #   get_user_plan signature is get_user_plan(user_id, db) — two required args.
+    #   Calling it with only user_id raises TypeError: missing positional argument 'db'
+    #   FastAPI catches this as an unhandled exception → 500 → "Failed to save settings".
+    #   This crash happened on EVERY auto_send toggle attempt, for every plan.
+    #
+    # AFTER: pass db so the function can query the users table for the live plan.
     if "auto_send" in update and update["auto_send"]:
-        plan = await get_user_plan(current_user["user_id"])
+        plan = await get_user_plan(current_user["user_id"], db)  # ← db added
 
         if not check_auto_send_allowed(plan):
             raise HTTPException(
@@ -147,6 +153,25 @@ async def update_settings(
 
     params = update.copy()
     params["uid"] = current_user["user_id"]
+
+    # ✅ FIX 2: Use INSERT ... ON CONFLICT (upsert) instead of plain UPDATE.
+    #
+    # BEFORE: plain UPDATE affected 0 rows silently for new users who never had
+    #   a settings row created. The request returned 200 but nothing was saved —
+    #   the next page load would show the default values again.
+    #
+    # AFTER: ensure a settings row always exists first, then update it.
+    #   We use a two-step approach compatible with all Postgres versions:
+    #   1. INSERT the row with defaults if it doesn't exist yet (ON CONFLICT DO NOTHING)
+    #   2. UPDATE the specific fields the user changed
+    await db.execute(
+        text("""
+        INSERT INTO user_settings (user_id, created_at, updated_at)
+        VALUES (:uid, :now, :now)
+        ON CONFLICT (user_id) DO NOTHING
+        """),
+        {"uid": current_user["user_id"], "now": datetime.now(timezone.utc)}
+    )
 
     await db.execute(
         text(f"""
@@ -172,7 +197,6 @@ async def update_silence_rules(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-
     update = req.model_dump(exclude_none=True)
 
     if not update:
@@ -184,6 +208,19 @@ async def update_silence_rules(
 
     params = update.copy()
     params["uid"] = current_user["user_id"]
+
+    # ✅ FIX 2 (same upsert fix applied here too):
+    #   Silence rules hit the same user_settings table — same problem applies.
+    #   Without the INSERT guard, toggling ignore_newsletters on a new account
+    #   silently saves nothing.
+    await db.execute(
+        text("""
+        INSERT INTO user_settings (user_id, created_at, updated_at)
+        VALUES (:uid, :now, :now)
+        ON CONFLICT (user_id) DO NOTHING
+        """),
+        {"uid": current_user["user_id"], "now": datetime.now(timezone.utc)}
+    )
 
     await db.execute(
         text(f"""
@@ -209,7 +246,6 @@ async def disconnect_email(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-
     result = await db.execute(
         text("""
         DELETE FROM email_accounts
