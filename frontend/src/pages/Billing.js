@@ -12,10 +12,6 @@ import {
 import { Check, CreditCard, Zap, Crown, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 
-// FIX (ERROR 3): Vite exposes env vars via import.meta.env, NOT process.env.
-// process.env.VITE_* is always undefined in Vite builds, so paddleToken was
-// never found, leaving paddleInitialized=false and triggering "Paddle is not
-// configured" on every checkout attempt.
 const PADDLE_TOKEN  = import.meta.env.VITE_PADDLE_PUBLIC_KEY  || process.env.REACT_APP_PADDLE_PUBLIC_KEY;
 const PADDLE_VENDOR = import.meta.env.VITE_PADDLE_VENDOR_ID   || process.env.REACT_APP_PADDLE_VENDOR_ID;
 
@@ -41,31 +37,26 @@ export default function Billing() {
     initializePaddle();
   }, []);
 
-  // Initialize Paddle Billing v2 on component mount
   const initializePaddle = () => {
     if (typeof window === "undefined") return;
 
-    // Wait for Paddle script to load
     const checkPaddle = setInterval(() => {
       if (window.Paddle) {
         clearInterval(checkPaddle);
 
         try {
-          // FIX: Use module-level constants resolved via import.meta.env
           if (PADDLE_TOKEN) {
             if (window.Paddle.Environment) {
               window.Paddle.Environment.set("production");
             }
             window.Paddle.Initialize({ token: PADDLE_TOKEN });
             setPaddleInitialized(true);
-            console.log("Paddle Billing v2 initialized with token");
           } else if (PADDLE_VENDOR) {
             if (window.Paddle.Environment) {
               window.Paddle.Environment.set("production");
             }
             window.Paddle.Setup({ seller: parseInt(PADDLE_VENDOR) });
             setPaddleInitialized(true);
-            console.log("Paddle Classic initialized with vendor ID:", PADDLE_VENDOR);
           } else {
             console.warn("No Paddle credentials found in environment");
           }
@@ -75,7 +66,6 @@ export default function Billing() {
       }
     }, 100);
 
-    // Cleanup after 10 seconds if Paddle doesn't load
     setTimeout(() => clearInterval(checkPaddle), 10000);
   };
 
@@ -99,6 +89,12 @@ export default function Billing() {
       setPlans(plansRes.data || []);
       setSubscription(subRes.data);
       setPlanLimits(limitsRes.data);
+
+      // ✅ FIX 4 (part 2): Also refresh the auth context user object so that
+      // user.plan is up to date. This ensures that even if currentPlan is
+      // evaluated before subscription loads, it eventually gets the right value.
+      await refreshUser();
+
     } catch (err) {
       console.error("Failed to load billing:", err);
       toast.error("Failed to load billing information");
@@ -159,7 +155,6 @@ export default function Billing() {
           return;
         }
 
-        // FIX: Use module-level constants; also accept vendor_id from checkout response
         if (!paddleInitialized) {
           const vendorId = res.data.vendor_id || PADDLE_VENDOR;
 
@@ -188,7 +183,6 @@ export default function Billing() {
         toast.info("Opening Paddle checkout...");
 
         try {
-          // Paddle Billing v2 checkout
           window.Paddle.Checkout.open({
             items: [{ priceId: res.data.price_id, quantity: 1 }],
             customData: {
@@ -241,19 +235,31 @@ export default function Billing() {
     }
   };
 
-  // Check for payment success URL param
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("payment") === "success") {
       toast.success("Payment successful! Your subscription is now active. 🎉");
-      // Clean up URL
       window.history.replaceState({}, document.title, window.location.pathname);
       refreshUser();
       loadData();
     }
   }, []);
 
-  const currentPlan    = user?.plan || subscription?.plan || "free";
+  // ✅ FIX 4 (root cause): subscription?.plan must take priority over user?.plan.
+  //
+  // BEFORE: const currentPlan = user?.plan || subscription?.plan || "free"
+  //   - user.plan is set at login time and cached in auth context.
+  //   - When admin updates the plan in DB, the auth context is NOT automatically
+  //     refreshed, so user.plan stays stale (e.g. "free").
+  //   - Because "free" is a truthy non-empty string, it always short-circuits the
+  //     || chain, so subscription.plan (which is fresh from DB) is never reached.
+  //   - Result: user sees "Free Plan" even though DB has "pro".
+  //
+  // AFTER: subscription?.plan is checked first — it comes from
+  //   GET /api/billing/subscription which always reads users.plan live from DB.
+  //   user?.plan is only used as a fallback if subscription hasn't loaded yet.
+  const currentPlan = subscription?.plan || user?.plan || "free";
+
   const planIcons      = { free: CreditCard, pro: Zap, business: Crown };
   const currencySymbol = locationInfo.currency === "INR" ? "₹" : "$";
   const providerLabel  = locationInfo.payment_provider === "razorpay" ? "Razorpay" : "Paddle";
