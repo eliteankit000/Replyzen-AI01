@@ -199,6 +199,12 @@ function UsersTab() {
                       <td className="px-4 py-3 font-medium">{u.full_name || "—"}</td>
                       <td className="px-4 py-3 text-muted-foreground">{u.email}</td>
                       <td className="px-4 py-3">
+                        {/*
+                          ✅ FIX 1: Replaced "enterprise" with "business".
+                          Backend PLAN_LIMITS only defines free | pro | business.
+                          Saving "enterprise" to DB caused get_plan_limits() to
+                          silently fall back to "free" — user gets no features.
+                        */}
                         <select
                           value={u.plan || "free"}
                           onChange={e => handlePlanChange(u.id, e.target.value)}
@@ -206,7 +212,7 @@ function UsersTab() {
                         >
                           <option value="free">free</option>
                           <option value="pro">pro</option>
-                          <option value="enterprise">enterprise</option>
+                          <option value="business">business</option>
                         </select>
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">
