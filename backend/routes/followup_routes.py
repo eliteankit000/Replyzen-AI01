@@ -144,6 +144,133 @@ async def generate_smart_replies(
 
 
 # ─────────────────────────────────────────────────────────────
+# ✅ NEW ENDPOINT: POST /api/followups/save-draft
+#
+# Directly upserts a followup_suggestions row with the user's
+# chosen smart reply suggestion text. This is intentionally
+# separate from /generate because:
+#
+# 1. /generate runs should_show_reply() which can return 400
+#    if the thread doesn't pass the filter — even with
+#    force_regenerate=True the check still runs in some cases.
+#
+# 2. By the time the user reaches this endpoint they have
+#    already seen the suggestions and explicitly chosen one.
+#    There is no need to re-validate thread eligibility.
+#
+# 3. This endpoint does NOT call OpenAI — it just persists
+#    the text the user already approved from smart-replies.
+#
+# Flow: smart-replies (generates) → user picks → save-draft
+#       (persists) → send (/{id}/send, unchanged)
+# ─────────────────────────────────────────────────────────────
+class SaveDraftRequest(BaseModel):
+    thread_id: str
+    draft: str
+    tone: str = "professional"
+
+
+@router.post("/save-draft")
+async def save_smart_reply_draft(
+    req: SaveDraftRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = current_user["user_id"]
+
+    if not req.draft or not req.draft.strip():
+        raise HTTPException(status_code=400, detail="Draft text is required")
+
+    # Verify the thread belongs to this user
+    result = await db.execute(
+        text("SELECT id FROM email_threads WHERE id = :id AND user_id = :uid"),
+        {"id": req.thread_id, "uid": user_id},
+    )
+    if not result.fetchone():
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+    now = datetime.now(timezone.utc)
+
+    # Check if a pending draft already exists for this thread
+    existing_result = await db.execute(
+        text("""
+        SELECT id FROM followup_suggestions
+        WHERE thread_id = :tid AND user_id = :uid AND status = 'pending'
+        LIMIT 1
+        """),
+        {"tid": req.thread_id, "uid": user_id},
+    )
+    existing = existing_result.fetchone()
+
+    if existing:
+        # Update existing pending draft with chosen suggestion text
+        followup_id = str(existing[0])
+        await db.execute(
+            text("""
+            UPDATE followup_suggestions
+            SET generated_text = :draft, tone = :tone, updated_at = :updated
+            WHERE id = :id AND user_id = :uid
+            """),
+            {
+                "draft": req.draft.strip(),
+                "tone": req.tone,
+                "updated": now,
+                "id": followup_id,
+                "uid": user_id,
+            },
+        )
+    else:
+        # Create a new pending draft row directly — no AI call needed
+        followup_id = str(uuid.uuid4())
+        await db.execute(
+            text("""
+            INSERT INTO followup_suggestions
+            (id, thread_id, user_id, generated_text, tone, priority, status, generated_at)
+            VALUES
+            (:id, :thread_id, :user_id, :draft, :tone, 'normal', 'pending', :generated_at)
+            """),
+            {
+                "id": followup_id,
+                "thread_id": req.thread_id,
+                "user_id": user_id,
+                "draft": req.draft.strip(),
+                "tone": req.tone,
+                "generated_at": now,
+            },
+        )
+        # Mark thread so it shows as having a draft
+        await db.execute(
+            text("""
+            UPDATE email_threads
+            SET reply_generated = true, updated_at = :updated
+            WHERE id = :tid AND user_id = :uid
+            """),
+            {"tid": req.thread_id, "uid": user_id, "updated": now},
+        )
+
+        # Track usage (counts as a generation)
+        today = now.date()
+        await db.execute(
+            text("""
+            INSERT INTO usage_tracking (user_id, date, followups_generated, followups_sent, emails_scanned)
+            VALUES (:uid, :date, 1, 0, 0)
+            ON CONFLICT (user_id, date)
+            DO UPDATE SET followups_generated = usage_tracking.followups_generated + 1
+            """),
+            {"uid": user_id, "date": today},
+        )
+
+    await db.commit()
+
+    return {
+        "id": followup_id,
+        "thread_id": req.thread_id,
+        "tone": req.tone,
+        "status": "pending",
+    }
+
+
+# ─────────────────────────────────────────────────────────────
 # ALL ROUTES BELOW ARE BYTE-FOR-BYTE IDENTICAL TO THE ORIGINAL
 # ─────────────────────────────────────────────────────────────
 
