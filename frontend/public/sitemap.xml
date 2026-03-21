@@ -3,26 +3,64 @@
 
   <url>
     <loc>https://replyzenai.com/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
   </url>
 
   <url>
     <loc>https://replyzenai.com/login</loc>
-  </url>
-
-  <url>
-    <loc>https://replyzenai.com/dashboard</loc>
-  </url>
-
-  <url>
-    <loc>https://replyzenai.com/pricing</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.7</priority>
   </url>
 
   <url>
     <loc>https://replyzenai.com/privacy-policy</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.4</priority>
   </url>
 
   <url>
-    <loc>https://replyzenai.com/terms</loc>
+    <loc>https://replyzenai.com/terms-of-service</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.4</priority>
+  </url>
+
+  <url>
+    <loc>https://replyzenai.com/support</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+
+  <url>
+    <loc>https://replyzenai.com/contact</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+
+  <!-- SEO Feature Pages -->
+  <url>
+    <loc>https://replyzenai.com/features/ai-follow-up-generator</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <url>
+    <loc>https://replyzenai.com/features/email-automation-ai</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.9</priority>
+  </url>
+
+  <!-- SEO Problem Pages -->
+  <url>
+    <loc>https://replyzenai.com/problems/client-not-replying</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+
+  <url>
+    <loc>https://replyzenai.com/problems/missed-follow-up-emails</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
   </url>
 
 </urlset>
