@@ -6,6 +6,7 @@ from database import get_db
 from auth import get_current_user
 from services.openai_service import generate_followup_draft
 from services.thread_filter_service import should_show_reply
+from services.gmail_service import send_email
 from plan_permissions import check_followup_limit, check_tone_allowed
 import uuid
 from datetime import datetime, timezone
@@ -124,7 +125,6 @@ async def generate_followup(
             )
             existing = result.fetchone()
             if existing:
-                # Return existing followup instead of creating duplicate
                 existing_dict = dict(existing._mapping)
                 return {
                     "id": existing_dict["id"],
@@ -212,7 +212,6 @@ async def generate_followup(
         }
     
     finally:
-        # Release lock
         if lock_key in _processing_locks:
             del _processing_locks[lock_key]
 
@@ -246,7 +245,6 @@ async def list_followups(
     result = await db.execute(text(query), params)
     followups = [dict(r._mapping) for r in result]
 
-    # Map generated_text to ai_draft for frontend compatibility
     for f in followups:
         f["ai_draft"] = f.get("generated_text", "")
         f["recipient_name"] = f.get("recipient", "")
@@ -295,39 +293,74 @@ async def send_followup(
     db: AsyncSession = Depends(get_db),
 ):
     now = datetime.now(timezone.utc)
+    user_id = current_user["user_id"]
 
-    # Get followup details first
+    # ✅ Get followup + thread + email account tokens in one query
     result = await db.execute(
         text("""
-        SELECT thread_id FROM followup_suggestions
-        WHERE id=:id AND user_id=:uid AND status='pending'
+        SELECT 
+            fs.id,
+            fs.generated_text,
+            fs.thread_id,
+            et.subject,
+            et.last_message_from AS recipient_email,
+            et.thread_id AS gmail_thread_id,
+            ea.access_token,
+            ea.refresh_token,
+            ea.token_expiry
+        FROM followup_suggestions fs
+        JOIN email_threads et ON et.id = fs.thread_id
+        JOIN email_accounts ea ON ea.user_id = fs.user_id AND ea.is_active = true
+        WHERE fs.id = :id AND fs.user_id = :uid AND fs.status = 'pending'
+        LIMIT 1
         """),
-        {"id": followup_id, "uid": current_user["user_id"]}
+        {"id": followup_id, "uid": user_id}
     )
     followup = result.fetchone()
     if not followup:
-        raise HTTPException(status_code=404, detail="Follow-up not found")
-    
-    thread_id = followup[0]
+        raise HTTPException(status_code=404, detail="Follow-up not found or no connected Gmail account")
 
-    # Update followup status
-    result = await db.execute(
+    followup_dict = dict(followup._mapping)
+
+    # ✅ Actually send the email via Gmail API
+    try:
+        db_tokens = {
+            "access_token": followup_dict["access_token"],
+            "refresh_token": followup_dict["refresh_token"],
+            "token_expiry": followup_dict["token_expiry"],
+        }
+
+        send_email(
+            db_tokens=db_tokens,
+            to=followup_dict["recipient_email"],
+            subject=f"Re: {followup_dict['subject']}",
+            body=followup_dict["generated_text"],
+            thread_id=followup_dict["gmail_thread_id"],
+        )
+        logger.info(f"✅ Email sent via Gmail for followup {followup_id} to {followup_dict['recipient_email']}")
+
+    except Exception as e:
+        logger.error(f"❌ Gmail send failed for followup {followup_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to send email via Gmail: {str(e)}")
+
+    # Mark followup as sent in DB
+    await db.execute(
         text("""
         UPDATE followup_suggestions
         SET status='sent', sent_at=:sent
-        WHERE id=:id AND user_id=:uid AND status='pending'
+        WHERE id=:id AND user_id=:uid
         """),
-        {"id": followup_id, "uid": current_user["user_id"], "sent": now},
+        {"id": followup_id, "uid": user_id, "sent": now},
     )
-    
-    # Mark thread as user replied
+
+    # Mark thread as replied by user
     await db.execute(
         text("""
         UPDATE email_threads
         SET replied_by_user = true, last_sender_is_user = true, updated_at = :updated
         WHERE id = :tid AND user_id = :uid
         """),
-        {"tid": thread_id, "uid": current_user["user_id"], "updated": now}
+        {"tid": followup_dict["thread_id"], "uid": user_id, "updated": now}
     )
 
     # Update usage tracking
@@ -339,12 +372,12 @@ async def send_followup(
         ON CONFLICT (user_id, date)
         DO UPDATE SET followups_sent = usage_tracking.followups_sent + 1
         """),
-        {"uid": current_user["user_id"], "date": today},
+        {"uid": user_id, "date": today},
     )
 
     await db.commit()
 
-    return {"message": "Follow-up sent"}
+    return {"message": "Follow-up sent successfully via Gmail"}
 
 
 @router.post("/{followup_id}/dismiss")
@@ -353,7 +386,6 @@ async def dismiss_followup(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # Get thread_id before dismissing
     result = await db.execute(
         text("""
         SELECT thread_id FROM followup_suggestions
@@ -368,8 +400,7 @@ async def dismiss_followup(
     thread_id = followup[0]
     now = datetime.now(timezone.utc)
 
-    # Update followup status
-    result = await db.execute(
+    await db.execute(
         text("""
         UPDATE followup_suggestions
         SET status='dismissed'
@@ -378,7 +409,6 @@ async def dismiss_followup(
         {"id": followup_id, "uid": current_user["user_id"]},
     )
 
-    # Reset reply_generated on thread so user can regenerate if needed
     await db.execute(
         text("""
         UPDATE email_threads
@@ -403,7 +433,6 @@ async def regenerate_followup(
     """Regenerate an existing followup with a new draft."""
     user_id = current_user["user_id"]
 
-    # Get the existing followup
     result = await db.execute(
         text("""
         SELECT fs.*, et.subject, et.snippet
@@ -422,7 +451,6 @@ async def regenerate_followup(
     if followup_dict["status"] != "pending":
         raise HTTPException(status_code=400, detail="Can only regenerate pending follow-ups")
 
-    # Check limit and tone
     limit_check = await check_followup_limit(user_id, db)
     if not limit_check["allowed"]:
         raise HTTPException(
@@ -437,7 +465,6 @@ async def regenerate_followup(
             detail=f"Tone '{tone}' not available on your plan."
         )
 
-    # Generate new draft
     try:
         draft = await generate_followup_draft(
             subject=followup_dict.get("subject", ""),
@@ -451,7 +478,6 @@ async def regenerate_followup(
 
     now = datetime.now(timezone.utc)
 
-    # Update the followup
     await db.execute(
         text("""
         UPDATE followup_suggestions
@@ -468,7 +494,6 @@ async def regenerate_followup(
         }
     )
 
-    # Update usage
     today = now.date()
     await db.execute(
         text("""
