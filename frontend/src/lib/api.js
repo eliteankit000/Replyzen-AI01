@@ -1,4 +1,3 @@
-
 import axios from "axios";
 
 /*
@@ -29,10 +28,8 @@ console.log("Replyzen API Base:", API_BASE);
 
 const api = axios.create({
   baseURL: API_BASE,
-  headers: {
-    "Content-Type": "application/json"
-  },
-  withCredentials: true
+  headers: { "Content-Type": "application/json" },
+  withCredentials: true,
 });
 
 /*
@@ -44,16 +41,10 @@ const api = axios.create({
 api.interceptors.request.use(
   function (config) {
     const token = localStorage.getItem("replyzen_token");
-
-    if (token) {
-      config.headers.Authorization = "Bearer " + token;
-    }
-
+    if (token) config.headers.Authorization = "Bearer " + token;
     return config;
   },
-  function (error) {
-    return Promise.reject(error);
-  }
+  function (error) { return Promise.reject(error); }
 );
 
 /*
@@ -63,22 +54,15 @@ api.interceptors.request.use(
 */
 
 api.interceptors.response.use(
-  function (response) {
-    return response;
-  },
+  function (response) { return response; },
   function (error) {
     if (error.response && error.response.status === 401) {
       localStorage.removeItem("replyzen_token");
       localStorage.removeItem("replyzen_user");
-
-      if (
-        window.location.pathname !== "/" &&
-        window.location.pathname !== "/login"
-      ) {
+      if (window.location.pathname !== "/" && window.location.pathname !== "/login") {
         window.location.href = "/login";
       }
     }
-
     return Promise.reject(error);
   }
 );
@@ -90,30 +74,11 @@ api.interceptors.response.use(
 */
 
 export const authAPI = {
-  register: function (data) {
-    return api.post("/auth/register", data);
-  },
-
-  login: function (data) {
-    return api.post("/auth/login", data);
-  },
-
-  getMe: function () {
-    return api.get("/auth/me");
-  },
-
-  getGoogleAuthUrl: function (redirectUri) {
-    return api.get("/auth/google/url", {
-      params: { redirect_uri: redirectUri }
-    });
-  },
-
-  googleCallback: function (code, redirectUri) {
-    return api.post("/auth/google/callback", {
-      code: code,
-      redirect_uri: redirectUri
-    });
-  }
+  register:        (data)               => api.post("/auth/register", data),
+  login:           (data)               => api.post("/auth/login", data),
+  getMe:           ()                   => api.get("/auth/me"),
+  getGoogleAuthUrl:(redirectUri)        => api.get("/auth/google/url", { params: { redirect_uri: redirectUri } }),
+  googleCallback:  (code, redirectUri)  => api.post("/auth/google/callback", { code, redirect_uri: redirectUri }),
 };
 
 /*
@@ -123,49 +88,16 @@ export const authAPI = {
 */
 
 export const emailAPI = {
-  connectGmail: function (email) {
-    return api.post("/emails/connect-gmail", { email: email });
-  },
-
-  getGmailAuthUrl: function () {
-    return api.get("/emails/gmail/auth-url");
-  },
-
-  gmailCallback: function (code, state) {
-    return api.post(
-      "/emails/gmail/callback",
-      { code: code, state: state },
-      { params: { code: code, state: state } }
-    );
-  },
-
-  getAccounts: function () {
-    return api.get("/emails/accounts");
-  },
-
-  syncEmails: function () {
-    return api.post("/emails/sync");
-  },
-
-  getThreads: function (params) {
-    return api.get("/emails/threads", { params: params });
-  },
-
-  getSilentThreads: function (params) {
-    return api.get("/emails/threads/silent", { params: params });
-  },
-
-  dismissThread: function (threadId) {
-    return api.post("/emails/threads/" + threadId + "/dismiss");
-  },
-
-  undismissThread: function (threadId) {
-    return api.post("/emails/threads/" + threadId + "/undismiss");
-  },
-
-  getThreadReplyStatus: function (threadId) {
-    return api.get("/emails/threads/" + threadId + "/reply-status");
-  }
+  connectGmail:       (email)    => api.post("/emails/connect-gmail", { email }),
+  getGmailAuthUrl:    ()         => api.get("/emails/gmail/auth-url"),
+  gmailCallback:      (code, state) => api.post("/emails/gmail/callback", { code, state }, { params: { code, state } }),
+  getAccounts:        ()         => api.get("/emails/accounts"),
+  syncEmails:         ()         => api.post("/emails/sync"),
+  getThreads:         (params)   => api.get("/emails/threads", { params }),
+  getSilentThreads:   (params)   => api.get("/emails/threads/silent", { params }),
+  dismissThread:      (threadId) => api.post(`/emails/threads/${threadId}/dismiss`),
+  undismissThread:    (threadId) => api.post(`/emails/threads/${threadId}/undismiss`),
+  getThreadReplyStatus: (threadId) => api.get(`/emails/threads/${threadId}/reply-status`),
 };
 
 /*
@@ -175,35 +107,17 @@ export const emailAPI = {
 */
 
 export const followupAPI = {
-  generate: function (threadId, tone, forceRegenerate) {
-    return api.post("/followups/generate", {
+  generate:   (threadId, tone, forceRegenerate) =>
+    api.post("/followups/generate", {
       thread_id: threadId,
       tone: tone || "professional",
-      force_regenerate: forceRegenerate || false
-    });
-  },
-
-  list: function (params) {
-    return api.get("/followups", { params: params });
-  },
-
-  update: function (id, draft) {
-    return api.put("/followups/" + id, { draft: draft });
-  },
-
-  send: function (id) {
-    return api.post("/followups/" + id + "/send");
-  },
-
-  dismiss: function (id) {
-    return api.post("/followups/" + id + "/dismiss");
-  },
-
-  regenerate: function (id, tone) {
-    return api.post("/followups/" + id + "/regenerate", null, {
-      params: { tone: tone || "professional" }
-    });
-  }
+      force_regenerate: forceRegenerate || false,
+    }),
+  list:       (params) => api.get("/followups", { params }),
+  update:     (id, draft) => api.put(`/followups/${id}`, { draft }),
+  send:       (id) => api.post(`/followups/${id}/send`),
+  dismiss:    (id) => api.post(`/followups/${id}/dismiss`),
+  regenerate: (id, tone) => api.post(`/followups/${id}/regenerate`, null, { params: { tone: tone || "professional" } }),
 };
 
 /*
@@ -213,31 +127,12 @@ export const followupAPI = {
 */
 
 export const billingAPI = {
-  getPlans: function (currency) {
-    return api.get("/billing/plans", {
-      params: currency ? { currency: currency } : {}
-    });
-  },
-
-  getPlanLimits: function () {
-    return api.get("/billing/plan-limits");
-  },
-
-  createCheckout: function (data) {
-    return api.post("/billing/checkout", data);
-  },
-
-  getSubscription: function () {
-    return api.get("/billing/subscription");
-  },
-
-  cancelSubscription: function () {
-    return api.post("/billing/cancel");
-  },
-
-  detectLocation: function () {
-    return api.get("/billing/detect-location");
-  }
+  getPlans:           (currency) => api.get("/billing/plans", { params: currency ? { currency } : {} }),
+  getPlanLimits:      ()         => api.get("/billing/plan-limits"),
+  createCheckout:     (data)     => api.post("/billing/checkout", data),
+  getSubscription:    ()         => api.get("/billing/subscription"),
+  cancelSubscription: ()         => api.post("/billing/cancel"),
+  detectLocation:     ()         => api.get("/billing/detect-location"),
 };
 
 /*
@@ -247,19 +142,9 @@ export const billingAPI = {
 */
 
 export const analyticsAPI = {
-  getOverview: function () {
-    return api.get("/analytics/overview");
-  },
-
-  getFollowupsOverTime: function (days) {
-    return api.get("/analytics/followups-over-time", {
-      params: { days: days }
-    });
-  },
-
-  getTopContacts: function () {
-    return api.get("/analytics/top-contacts");
-  }
+  getOverview:          ()     => api.get("/analytics/overview"),
+  getFollowupsOverTime: (days) => api.get("/analytics/followups-over-time", { params: { days } }),
+  getTopContacts:       ()     => api.get("/analytics/top-contacts"),
 };
 
 /*
@@ -269,25 +154,20 @@ export const analyticsAPI = {
 */
 
 export const settingsAPI = {
-  get: function () {
-    return api.get("/settings");
-  },
+  // Existing
+  get:               ()     => api.get("/settings"),
+  update:            (data) => api.put("/settings", data),
+  updateProfile:     (data) => api.put("/settings/profile", data),
+  updateSilenceRules:(data) => api.put("/settings/silence-rules", data),
+  disconnectEmail:   (id)   => api.delete(`/settings/email-account/${id}`),
 
-  update: function (data) {
-    return api.put("/settings", data);
-  },
+  // NEW: Follow-up scope
+  updateFollowUpScope: (data) => api.put("/settings/followup-scope", data),
 
-  updateProfile: function (data) {
-    return api.put("/settings/profile", data);
-  },
-
-  updateSilenceRules: function (data) {
-    return api.put("/settings/silence-rules", data);
-  },
-
-  disconnectEmail: function (id) {
-    return api.delete("/settings/email-account/" + id);
-  }
+  // NEW: Block / unblock sender
+  blockSender:        (senderEmail) => api.post("/settings/block-sender",   { sender_email: senderEmail }),
+  unblockSender:      (senderEmail) => api.post("/settings/unblock-sender", { sender_email: senderEmail }),
+  getBlockedSenders:  ()            => api.get("/settings/blocked-senders"),
 };
 
 export default api;
