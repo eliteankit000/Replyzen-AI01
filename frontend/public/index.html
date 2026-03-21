@@ -5,15 +5,84 @@
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="google-site-verification" content="8Vhqht26D4YOGlBAO-pD7rWQFqGM5Xm706xSVmPaPG0" />
         <meta name="theme-color" content="#EA580C" />
-        <meta name="description" content="Replyzen AI - AI-powered Gmail follow-up automation. Never miss a follow-up again." />
+
+        <!-- Primary SEO Meta -->
+        <meta name="description" content="ReplyZen AI detects silent email conversations and generates intelligent follow-up emails automatically. Never miss a follow-up again." />
+        <meta name="keywords" content="ReplyZen AI, AI follow-up tool, email automation AI, AI reply generator, Gmail follow-up automation, email follow-up software, client not replying, missed follow-up emails, AI email assistant" />
+        <meta name="author" content="ReplyZen AI" />
+        <meta name="robots" content="index, follow" />
+        <link rel="canonical" href="https://replyzenai.com/" />
+
+        <!-- Open Graph -->
+        <meta property="og:type" content="website" />
+        <meta property="og:site_name" content="ReplyZen AI" />
+        <meta property="og:title" content="ReplyZen AI – AI Follow-Up & Email Automation Tool" />
+        <meta property="og:description" content="ReplyZen AI detects silent conversations and generates intelligent follow-up emails so you close more deals, faster." />
+        <meta property="og:url" content="https://replyzenai.com/" />
+        <meta property="og:image" content="https://replyzenai.com/og-image.png" />
+
+        <!-- Twitter Card -->
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content="ReplyZen AI – AI Follow-Up & Email Automation Tool" />
+        <meta name="twitter:description" content="ReplyZen AI detects silent conversations and generates intelligent follow-up emails so you close more deals, faster." />
+        <meta name="twitter:image" content="https://replyzenai.com/og-image.png" />
+
+        <!-- Favicon -->
         <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
         <link rel="apple-touch-icon" href="/favicon.svg" />
+
+        <!-- Fonts -->
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
-        <title>Replyzen AI</title>
+
+        <title>ReplyZen AI – AI Follow-Up & Email Automation Tool</title>
+
+        <!-- JSON-LD Structured Data: SoftwareApplication -->
+        <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "SoftwareApplication",
+          "name": "ReplyZen AI",
+          "url": "https://replyzenai.com",
+          "description": "ReplyZen AI detects silent email conversations and generates intelligent follow-up emails automatically. Never miss a follow-up again.",
+          "applicationCategory": "BusinessApplication",
+          "operatingSystem": "Web",
+          "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "USD"
+          },
+          "creator": {
+            "@type": "Organization",
+            "name": "ReplyZen AI",
+            "url": "https://replyzenai.com"
+          },
+          "featureList": [
+            "AI-powered follow-up email generation",
+            "Gmail silence detection",
+            "Automated follow-up scheduling",
+            "Email thread classification",
+            "Priority scoring for opportunities"
+          ]
+        }
+        </script>
+
+        <!-- JSON-LD: WebSite with SearchAction -->
+        <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "WebSite",
+          "name": "ReplyZen AI",
+          "url": "https://replyzenai.com",
+          "description": "AI-powered email follow-up automation for professionals"
+        }
+        </script>
+
+        <!-- Payment SDKs -->
         <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
         <script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
+
         <script>window.addEventListener("error",function(e){if(e.error instanceof DOMException&&e.error.name==="DataCloneError"&&e.message&&e.message.includes("PerformanceServerTiming")){e.stopImmediatePropagation();e.preventDefault()}},true);</script>
         <script src="https://assets.emergent.sh/scripts/emergent-main.js"></script>
     </head>
@@ -21,7 +90,6 @@
         <noscript>You need to enable JavaScript to run this app.</noscript>
         <div id="root"></div>
         <script>
-            // Remove Emergent badge immediately and on DOM changes
             function removeBadge() {
                 var badge = document.getElementById('emergent-badge');
                 if (badge) badge.remove();
@@ -95,7 +163,7 @@
             })(document, window.posthog || []);
             posthog.init("phc_xAvL2Iq4tFmANRE7kzbKwaSqp1HJjN7x48s3vr0CMjs", {
                 api_host: "https://us.i.posthog.com",
-                person_profiles: "identified_only", // or 'always' to create profiles for anonymous users as well,
+                person_profiles: "identified_only",
                 session_recording: {
                     recordCrossOriginIframes: true,
                     capturePerformance: false,
