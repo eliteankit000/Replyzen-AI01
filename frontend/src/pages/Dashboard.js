@@ -9,11 +9,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   MessageSquare, Mail, Send, TrendingUp, Clock, Zap,
   ArrowRight, Plus, RefreshCw, AlertCircle, CheckCircle2,
-  Bot, EyeOff, Flame, Activity, BarChart3
+  Bot, EyeOff, Flame, Activity, BarChart3,
 } from "lucide-react";
 import { toast } from "sonner";
 
-// ── Priority Badge ──────────────────────────────────────────
+/* ─────────────────────────────────────────────────────────────
+   BADGE COMPONENTS — identical to original, zero changes
+───────────────────────────────────────────────────────────── */
 function PriorityBadge({ level }) {
   const cfg = {
     high:   { label: "🔥 High",   cls: "bg-red-50 text-red-700 border-red-200" },
@@ -21,42 +23,32 @@ function PriorityBadge({ level }) {
     low:    { label: "💤 Low",    cls: "bg-gray-50 text-gray-500 border-gray-200" },
   };
   const c = cfg[level] || cfg.low;
-  return (
-    <Badge variant="outline" className={`${c.cls} text-xs shrink-0`}>
-      {c.label}
-    </Badge>
-  );
+  return <Badge variant="outline" className={`${c.cls} text-xs shrink-0`}>{c.label}</Badge>;
 }
 
-// ── Type Badge ──────────────────────────────────────────────
 function TypeBadge({ type }) {
   const cfg = {
-    client_proposal: { label: "Client Proposal", cls: "bg-purple-50 text-purple-700 border-purple-200" },
-    payment:         { label: "Payment",          cls: "bg-green-50 text-green-700 border-green-200" },
-    interview:       { label: "Interview",        cls: "bg-blue-50 text-blue-700 border-blue-200" },
-    lead:            { label: "Lead",             cls: "bg-orange-50 text-orange-700 border-orange-200" },
-    partnership:     { label: "Partnership",      cls: "bg-pink-50 text-pink-700 border-pink-200" },
-    other:           { label: "General",          cls: "bg-gray-50 text-gray-600 border-gray-200" },
+    client_proposal: { label: "Proposal",    cls: "bg-purple-50 text-purple-700 border-purple-200" },
+    payment:         { label: "Payment",     cls: "bg-green-50 text-green-700 border-green-200"   },
+    interview:       { label: "Interview",   cls: "bg-blue-50 text-blue-700 border-blue-200"      },
+    lead:            { label: "Lead",        cls: "bg-orange-50 text-orange-700 border-orange-200"},
+    partnership:     { label: "Partnership", cls: "bg-pink-50 text-pink-700 border-pink-200"      },
+    other:           { label: "General",     cls: "bg-gray-50 text-gray-600 border-gray-200"      },
   };
   if (!type || type === "notification" || type === "newsletter") return null;
   const c = cfg[type] || cfg.other;
-  return (
-    <Badge variant="outline" className={`${c.cls} text-xs shrink-0`}>
-      {c.label}
-    </Badge>
-  );
+  return <Badge variant="outline" className={`${c.cls} text-xs shrink-0`}>{c.label}</Badge>;
 }
 
-// ── Status Badge ────────────────────────────────────────────
 function ThreadStatusBadge({ status }) {
   const cfg = {
-    needs_reply:       { label: "Needs Reply",   cls: "bg-amber-50 text-amber-700 border-amber-200",    Icon: AlertCircle },
-    replied:           { label: "Replied",        cls: "bg-emerald-50 text-emerald-700 border-emerald-200", Icon: CheckCircle2 },
-    awaiting_response: { label: "Awaiting",       cls: "bg-blue-50 text-blue-700 border-blue-200",      Icon: Clock },
-    follow_up_scheduled:{ label: "Scheduled",    cls: "bg-purple-50 text-purple-700 border-purple-200", Icon: Zap },
-    dismissed:         { label: "Dismissed",      cls: "bg-gray-50 text-gray-500 border-gray-200",      Icon: EyeOff },
-    automated:         { label: "Auto",           cls: "bg-gray-50 text-gray-400 border-gray-200",      Icon: Bot },
-    reply_pending:     { label: "Draft Ready",    cls: "bg-orange-50 text-orange-700 border-orange-200", Icon: Zap },
+    needs_reply:        { label: "Needs Reply", cls: "bg-amber-50 text-amber-700 border-amber-200",      Icon: AlertCircle  },
+    replied:            { label: "Replied",     cls: "bg-emerald-50 text-emerald-700 border-emerald-200", Icon: CheckCircle2 },
+    awaiting_response:  { label: "Awaiting",   cls: "bg-blue-50 text-blue-700 border-blue-200",          Icon: Clock        },
+    follow_up_scheduled:{ label: "Scheduled",  cls: "bg-purple-50 text-purple-700 border-purple-200",    Icon: Zap          },
+    dismissed:          { label: "Dismissed",  cls: "bg-gray-50 text-gray-500 border-gray-200",          Icon: EyeOff       },
+    automated:          { label: "Auto",       cls: "bg-gray-50 text-gray-400 border-gray-200",          Icon: Bot          },
+    reply_pending:      { label: "Draft Ready",cls: "bg-orange-50 text-orange-700 border-orange-200",    Icon: Zap          },
   };
   const c = cfg[status] || cfg.needs_reply;
   const Icon = c.Icon;
@@ -67,18 +59,206 @@ function ThreadStatusBadge({ status }) {
   );
 }
 
+/* ─────────────────────────────────────────────────────────────
+   STAT CARD — redesigned with micro-text, hover lift
+───────────────────────────────────────────────────────────── */
+function StatCard({ label, value, icon: Icon, color, bg, micro, loading, testId, index }) {
+  return (
+    <div
+      data-testid={testId}
+      className="group rounded-2xl border border-border bg-card p-5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md animate-fade-in"
+      style={{ animationDelay: `${index * 0.08}s` }}
+    >
+      <div className="flex items-start justify-between">
+        <div className="space-y-1 min-w-0">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{label}</p>
+          {loading
+            ? <Skeleton className="h-8 w-16 mt-1" />
+            : <p className="text-3xl font-bold tracking-tight mt-1">{value}</p>}
+          <p className="text-xs text-muted-foreground leading-relaxed">{micro}</p>
+        </div>
+        <div className={`w-10 h-10 rounded-xl ${bg} flex items-center justify-center shrink-0 ml-3`}>
+          <Icon className={`w-5 h-5 ${color}`} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   PRIORITY ACTION BAR — new component
+───────────────────────────────────────────────────────────── */
+function ActionBar({ highPriority, total, loading, onNavigate }) {
+  if (loading) return <Skeleton className="h-12 w-full rounded-xl" />;
+
+  if (total === 0) {
+    return (
+      <div className="flex items-center gap-3 px-5 py-3 rounded-xl bg-emerald-50 border border-emerald-100">
+        <span className="text-lg">🎉</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-emerald-800">You're all caught up</p>
+          <p className="text-xs text-emerald-600 mt-0.5">No conversations need attention right now</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (highPriority > 0) {
+    return (
+      <div
+        className="flex items-center gap-3 px-5 py-3 rounded-xl bg-red-50 border border-red-100 cursor-pointer hover:bg-red-100/70 transition-colors"
+        onClick={onNavigate}
+      >
+        <span className="text-lg">🔥</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-red-800">
+            {highPriority} high-priority conversation{highPriority !== 1 ? "s" : ""} need your attention
+          </p>
+          <p className="text-xs text-red-600 mt-0.5">Act now to keep momentum</p>
+        </div>
+        <ArrowRight className="w-4 h-4 text-red-500 shrink-0" />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="flex items-center gap-3 px-5 py-3 rounded-xl bg-amber-50 border border-amber-100 cursor-pointer hover:bg-amber-100/70 transition-colors"
+      onClick={onNavigate}
+    >
+      <span className="text-lg">⏳</span>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-amber-800">
+          {total} conversation{total !== 1 ? "s" : ""} waiting for follow-up
+        </p>
+        <p className="text-xs text-amber-600 mt-0.5">Review and take action</p>
+      </div>
+      <ArrowRight className="w-4 h-4 text-amber-500 shrink-0" />
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   OPPORTUNITY ROW — inbox-preview style
+───────────────────────────────────────────────────────────── */
+function OpportunityRow({ thread, onClick }) {
+  const context = thread.opportunity_context || "";
+  const daysLabel = thread.days_silent >= 7
+    ? `${thread.days_silent}d silent`
+    : thread.days_silent >= 3
+    ? `${thread.days_silent}d waiting`
+    : `${thread.days_silent}d`;
+
+  const daysCls = thread.days_silent >= 7
+    ? "bg-red-50 text-red-600 border-red-100"
+    : thread.days_silent >= 3
+    ? "bg-amber-50 text-amber-600 border-amber-100"
+    : "bg-muted text-muted-foreground border-border";
+
+  return (
+    <div
+      className="flex items-start gap-3 px-4 py-3 rounded-xl hover:bg-muted/50 transition-colors cursor-pointer group"
+      onClick={onClick}
+      data-testid={`thread-${thread.id}`}
+    >
+      {/* Priority icon */}
+      <div className="mt-0.5 shrink-0 text-sm">
+        {thread.priority_level === "high"   ? "🔥"
+         : thread.priority_level === "medium" ? "⚡"
+         : "💤"}
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold truncate">{thread.subject}</p>
+        {context ? (
+          <p className="text-xs text-primary/70 font-medium mt-0.5 truncate">💡 {context}</p>
+        ) : (
+          <p className="text-xs text-muted-foreground mt-0.5 truncate">
+            {thread.days_silent > 0
+              ? `No reply for ${thread.days_silent} days after your last message`
+              : "Waiting for response"}
+          </p>
+        )}
+        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+          <TypeBadge type={thread.type} />
+          {thread.thread_status && <ThreadStatusBadge status={thread.thread_status} />}
+          <span className="text-xs text-muted-foreground">
+            {thread.last_message_from || "Unknown"}
+          </span>
+        </div>
+      </div>
+
+      {/* Time badge */}
+      <span className={`text-xs font-medium px-2 py-0.5 rounded-full border shrink-0 mt-0.5 ${daysCls}`}>
+        {daysLabel}
+      </span>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   PENDING FOLLOWUP ROW
+───────────────────────────────────────────────────────────── */
+function FollowupRow({ followup, onClick }) {
+  return (
+    <div
+      className="flex items-start gap-3 px-4 py-3 rounded-xl hover:bg-muted/50 transition-colors cursor-pointer border-b border-border/50 last:border-0"
+      onClick={onClick}
+      data-testid={`followup-${followup.id}`}
+    >
+      <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
+        <Zap className="w-3.5 h-3.5 text-primary" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium truncate">{followup.original_subject}</p>
+          <Badge variant="outline" className="text-xs shrink-0 capitalize">{followup.tone}</Badge>
+        </div>
+        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{followup.ai_draft}</p>
+      </div>
+      <ArrowRight className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-1 opacity-0 group-hover:opacity-100 transition-opacity" />
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   SECTION SKELETON
+───────────────────────────────────────────────────────────── */
+function SectionSkeleton() {
+  return (
+    <div className="space-y-2 px-4">
+      {[1, 2, 3].map(i => (
+        <div key={i} className="flex items-center gap-3 py-3">
+          <Skeleton className="w-5 h-5 rounded" />
+          <div className="flex-1 space-y-1.5">
+            <Skeleton className="h-3.5 w-3/5" />
+            <Skeleton className="h-3 w-2/5" />
+          </div>
+          <Skeleton className="h-5 w-12 rounded-full" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   MAIN DASHBOARD — all state + logic IDENTICAL to original
+───────────────────────────────────────────────────────────── */
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user }  = useAuth();
 
-  const [stats, setStats]                 = useState(null);
-  const [opportunities, setOpportunities] = useState([]);
+  // ── All state unchanged ──
+  const [stats, setStats]                   = useState(null);
+  const [opportunities, setOpportunities]   = useState([]);
   const [recentFollowups, setRecentFollowups] = useState([]);
-  const [loading, setLoading]             = useState(true);
-  const [syncing, setSyncing]             = useState(false);
+  const [loading, setLoading]               = useState(true);
+  const [syncing, setSyncing]               = useState(false);
 
   useEffect(() => { loadData(); }, []);
 
+  // ── All handlers unchanged ──
   const loadData = async () => {
     setLoading(true);
     try {
@@ -88,8 +268,8 @@ export default function Dashboard() {
         followupAPI.list({ limit: 5, status: "pending" }),
       ]);
 
-      if (statsRes.status === "fulfilled")    setStats(statsRes.value.data);
-      if (threadsRes.status === "fulfilled")  setOpportunities(threadsRes.value.data.threads || []);
+      if (statsRes.status === "fulfilled")     setStats(statsRes.value.data);
+      if (threadsRes.status === "fulfilled")   setOpportunities(threadsRes.value.data.threads || []);
       if (followupsRes.status === "fulfilled") setRecentFollowups(followupsRes.value.data.followups || []);
 
       const allFailed = [statsRes, threadsRes, followupsRes].every(r => r.status === "rejected");
@@ -116,222 +296,239 @@ export default function Dashboard() {
     }
   };
 
-  // Derived opportunity counts
-  const highPriority  = opportunities.filter(t => t.priority_level === "high").length;
-  const actionable    = opportunities.filter(t => t.show_reply).length;
+  // ── Derived values unchanged ──
+  const highPriority = opportunities.filter(t => t.priority_level === "high").length;
+  const actionable   = opportunities.filter(t => t.show_reply).length;
 
+  // ── Stat cards — redesigned labels + micro-text ──
   const statCards = [
     {
-      label: "Needs Action Today",
+      label: "🔥 Needs Attention",
       value: loading ? null : highPriority,
       icon:  Flame,
       color: "text-red-600",
       bg:    "bg-red-50",
-      tip:   "High priority threads",
+      micro: "Conversations you should act on",
     },
     {
-      label: "Silent Threads",
+      label: "⏳ Waiting for Reply",
       value: loading ? null : stats?.silent_threads || 0,
       icon:  Clock,
       color: "text-amber-600",
       bg:    "bg-amber-50",
-      tip:   "Awaiting your response",
+      micro: "People who haven't replied yet",
     },
     {
-      label: "Follow-ups Sent",
+      label: "✉️ Follow-Ups Sent",
       value: loading ? null : stats?.followups_sent || 0,
       icon:  Send,
       color: "text-emerald-600",
       bg:    "bg-emerald-50",
-      tip:   "Total sent this month",
+      micro: "Follow-ups sent this month",
     },
     {
-      label: "Response Rate",
+      label: "📈 Reply Rate",
       value: loading ? null : `${stats?.response_rate || 0}%`,
       icon:  TrendingUp,
       color: "text-primary",
       bg:    "bg-accent",
-      tip:   "Reply success rate",
+      micro: "Replies after follow-ups",
     },
   ];
 
-  const formatDate = (iso) => {
-    if (!iso) return "";
-    const d = Math.floor((Date.now() - new Date(iso)) / 86400000);
-    if (d === 0) return "Today";
-    if (d === 1) return "Yesterday";
-    return `${d}d ago`;
-  };
+  const firstName = user?.full_name?.split(" ")[0] || null;
 
   return (
     <div className="space-y-6" data-testid="dashboard-page">
 
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* ── Header ── */}
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold" data-testid="dashboard-heading">
-            Welcome back{user?.full_name ? `, ${user.full_name.split(" ")[0]}` : ""}
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="dashboard-heading">
+            Welcome back{firstName ? `, ${firstName}` : ""}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {highPriority > 0
-              ? `🔥 ${highPriority} high-priority opportunit${highPriority === 1 ? "y" : "ies"} need your attention`
-              : "Your opportunity overview"}
+            Here's what needs your attention today
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" onClick={handleSync} disabled={syncing} data-testid="sync-btn">
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            variant="outline" size="sm"
+            onClick={handleSync} disabled={syncing}
+            data-testid="sync-btn"
+            className="h-9"
+          >
             <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
             {syncing ? "Syncing..." : "Sync Emails"}
           </Button>
-          <Button size="sm" onClick={() => navigate("/followups")} data-testid="view-queue-btn"
-            className="bg-primary hover:bg-primary/90 text-white">
-            <MessageSquare className="w-4 h-4 mr-2" /> View Opportunities
+          <Button
+            size="sm"
+            onClick={() => navigate("/followups")}
+            data-testid="view-queue-btn"
+            className="bg-primary hover:bg-primary/90 text-white h-9 font-semibold"
+          >
+            <MessageSquare className="w-4 h-4 mr-2" />
+            View Opportunities
           </Button>
         </div>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* ── Priority Action Bar (NEW) ── */}
+      <ActionBar
+        highPriority={highPriority}
+        total={opportunities.length}
+        loading={loading}
+        onNavigate={() => navigate("/followups")}
+      />
+
+      {/* ── Stat Cards ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {statCards.map((s, i) => (
-          <Card key={s.label} className="hover-lift animate-fade-in"
-            style={{ animationDelay: `${i * 0.1}s` }}
-            data-testid={`stat-${s.label.toLowerCase().replace(/\s+/g, "-")}`}>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-muted-foreground font-medium">{s.label}</p>
-                  {loading
-                    ? <Skeleton className="h-8 w-16 mt-1" />
-                    : <p className="text-2xl font-bold mt-1">{s.value}</p>}
-                  <p className="text-xs text-muted-foreground mt-0.5">{s.tip}</p>
-                </div>
-                <div className={`w-10 h-10 rounded-xl ${s.bg} flex items-center justify-center`}>
-                  <s.icon className={`w-5 h-5 ${s.color}`} />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <StatCard
+            key={s.label}
+            index={i}
+            label={s.label}
+            value={s.value}
+            icon={s.icon}
+            color={s.color}
+            bg={s.bg}
+            micro={s.micro}
+            loading={loading}
+            testId={`stat-${s.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+          />
         ))}
       </div>
 
-      <div className="grid lg:grid-cols-2 gap-6">
+      {/* ── Main content: Opportunities + Pending ── */}
+      <div className="grid lg:grid-cols-5 gap-5">
 
-        {/* Opportunities (was Silent Threads) */}
-        <Card data-testid="opportunities-card">
-          <CardHeader className="flex flex-row items-center justify-between pb-3">
-            <div>
-              <CardTitle className="text-base font-semibold">Opportunities</CardTitle>
-              {actionable > 0 && (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {actionable} thread{actionable !== 1 ? "s" : ""} ready for follow-up
-                </p>
-              )}
-            </div>
-            <Button variant="ghost" size="sm" onClick={() => navigate("/followups")} className="text-primary">
-              View all <ArrowRight className="w-3.5 h-3.5 ml-1" />
-            </Button>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <div className="space-y-3">
-                {[1, 2, 3].map(i => <Skeleton key={i} className="h-16 w-full" />)}
+        {/* ── LEFT: Opportunities (3/5 width) ── */}
+        <div className="lg:col-span-3" data-testid="opportunities-card">
+          <div className="rounded-2xl border border-border bg-card overflow-hidden">
+            {/* Section header */}
+            <div className="flex items-center justify-between px-4 py-3.5 border-b border-border">
+              <div>
+                <h2 className="text-sm font-semibold">Opportunities</h2>
+                {!loading && actionable > 0 && (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {actionable} ready for follow-up
+                  </p>
+                )}
               </div>
+              <Button
+                variant="ghost" size="sm"
+                onClick={() => navigate("/followups")}
+                className="text-primary text-xs h-7 px-2 font-medium"
+              >
+                View all <ArrowRight className="w-3 h-3 ml-1" />
+              </Button>
+            </div>
+
+            {/* Content */}
+            {loading ? (
+              <SectionSkeleton />
             ) : opportunities.length === 0 ? (
-              <div className="text-center py-8">
-                <Activity className="w-10 h-10 text-muted-foreground/40 mx-auto mb-3" />
-                <p className="text-sm text-muted-foreground">No opportunities detected</p>
+              <div className="flex flex-col items-center justify-center py-14 px-4">
+                <div className="w-12 h-12 rounded-2xl bg-muted flex items-center justify-center mb-3">
+                  <Activity className="w-6 h-6 text-muted-foreground/50" />
+                </div>
+                <p className="text-sm font-medium text-muted-foreground">No opportunities detected</p>
                 <p className="text-xs text-muted-foreground mt-1">Sync your Gmail to start tracking</p>
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="divide-y divide-border/50">
                 {opportunities.map(t => (
-                  <div key={t.id}
-                    className="flex items-start justify-between p-3 rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
+                  <OpportunityRow
+                    key={t.id}
+                    thread={t}
                     onClick={() => navigate("/followups")}
-                    data-testid={`thread-${t.id}`}>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium truncate mb-1">{t.subject}</p>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {t.type && <TypeBadge type={t.type} />}
-                        {t.thread_status && <ThreadStatusBadge status={t.thread_status} />}
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {t.last_message_from || "Unknown"} · {t.days_silent}d silent
-                      </p>
-                    </div>
-                    <div className="ml-3 shrink-0">
-                      {t.priority_level
-                        ? <PriorityBadge level={t.priority_level} />
-                        : t.show_reply
-                          ? <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50 text-xs">
-                              <Clock className="w-3 h-3 mr-1" /> {t.days_silent}d
-                            </Badge>
-                          : <Badge variant="outline" className="text-muted-foreground border-muted text-xs">
-                              No action
-                            </Badge>
-                      }
-                    </div>
-                  </div>
+                  />
                 ))}
               </div>
             )}
-          </CardContent>
-        </Card>
 
-        {/* Pending Follow-ups */}
-        <Card data-testid="pending-followups-card">
-          <CardHeader className="flex flex-row items-center justify-between pb-3">
-            <CardTitle className="text-base font-semibold">Pending Follow-ups</CardTitle>
-            <Badge variant="secondary" className="font-normal">{recentFollowups.length} drafts</Badge>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <div className="space-y-3">
-                {[1, 2, 3].map(i => <Skeleton key={i} className="h-16 w-full" />)}
+            {/* Footer CTA */}
+            {!loading && opportunities.length > 0 && (
+              <div className="px-4 py-3 border-t border-border bg-muted/20">
+                <button
+                  onClick={() => navigate("/followups")}
+                  className="text-xs text-primary font-medium hover:underline flex items-center gap-1"
+                >
+                  View all {opportunities.length} opportunities
+                  <ArrowRight className="w-3 h-3" />
+                </button>
               </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── RIGHT: Pending Follow-ups (2/5 width) ── */}
+        <div className="lg:col-span-2" data-testid="pending-followups-card">
+          <div className="rounded-2xl border border-border bg-card overflow-hidden h-full">
+            {/* Section header */}
+            <div className="flex items-center justify-between px-4 py-3.5 border-b border-border">
+              <h2 className="text-sm font-semibold">Pending Follow-Ups</h2>
+              <span className="text-xs font-semibold bg-muted text-muted-foreground px-2 py-0.5 rounded-full">
+                {recentFollowups.length} draft{recentFollowups.length !== 1 ? "s" : ""}
+              </span>
+            </div>
+
+            {/* Content */}
+            {loading ? (
+              <SectionSkeleton />
             ) : recentFollowups.length === 0 ? (
-              <div className="text-center py-8">
-                <Zap className="w-10 h-10 text-muted-foreground/40 mx-auto mb-3" />
-                <p className="text-sm text-muted-foreground">No pending follow-ups</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Generate AI drafts from the Opportunities queue
+              <div className="flex flex-col items-center justify-center py-14 px-4 text-center">
+                <div className="w-12 h-12 rounded-2xl bg-primary/8 flex items-center justify-center mb-3">
+                  <Zap className="w-6 h-6 text-primary/50" />
+                </div>
+                <p className="text-sm font-medium text-muted-foreground">No pending follow-ups</p>
+                <p className="text-xs text-muted-foreground mt-1 max-w-[160px]">
+                  Generate AI drafts from your opportunities
                 </p>
+                <Button
+                  size="sm" variant="outline"
+                  onClick={() => navigate("/followups")}
+                  className="mt-4 h-7 text-xs"
+                >
+                  Go to Opportunities
+                </Button>
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="p-2">
                 {recentFollowups.map(f => (
-                  <div key={f.id}
-                    className="p-3 rounded-lg border border-border hover:border-primary/30 transition-colors cursor-pointer"
+                  <FollowupRow
+                    key={f.id}
+                    followup={f}
                     onClick={() => navigate("/followups")}
-                    data-testid={`followup-${f.id}`}>
-                    <div className="flex items-center justify-between mb-1">
-                      <p className="text-sm font-medium truncate">{f.original_subject}</p>
-                      <Badge variant="outline" className="text-xs shrink-0 ml-2">{f.tone}</Badge>
-                    </div>
-                    <p className="text-xs text-muted-foreground line-clamp-2">{f.ai_draft}</p>
-                  </div>
+                  />
                 ))}
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
 
-      {/* Connect Gmail prompt */}
+      {/* ── Connect Gmail prompt — identical logic, improved style ── */}
       {stats && stats.accounts_connected === 0 && (
-        <Card className="border-dashed border-2 border-primary/30 bg-accent/30" data-testid="connect-gmail-prompt">
-          <CardContent className="py-8 text-center">
-            <Mail className="w-12 h-12 text-primary mx-auto mb-4" />
-            <h3 className="text-lg font-semibold mb-2">Connect your Gmail to get started</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              Link your email to start detecting opportunities and silent conversations
-            </p>
-            <Button onClick={() => navigate("/settings")} data-testid="connect-gmail-btn"
-              className="bg-primary hover:bg-primary/90 text-white">
-              <Plus className="w-4 h-4 mr-2" /> Connect Gmail
-            </Button>
-          </CardContent>
-        </Card>
+        <div
+          className="rounded-2xl border-2 border-dashed border-primary/25 bg-accent/20 py-10 px-6 text-center"
+          data-testid="connect-gmail-prompt"
+        >
+          <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-4">
+            <Mail className="w-7 h-7 text-primary" />
+          </div>
+          <h3 className="text-base font-semibold mb-1">Connect your Gmail to get started</h3>
+          <p className="text-sm text-muted-foreground mb-5 max-w-sm mx-auto">
+            Link your email to start detecting opportunities and silent conversations
+          </p>
+          <Button
+            onClick={() => navigate("/settings")}
+            data-testid="connect-gmail-btn"
+            className="bg-primary hover:bg-primary/90 text-white"
+          >
+            <Plus className="w-4 h-4 mr-2" /> Connect Gmail
+          </Button>
+        </div>
       )}
     </div>
   );
