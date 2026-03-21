@@ -5,19 +5,26 @@ import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { Toaster } from "@/components/ui/sonner";
 import AppLayout from "@/components/AppLayout";
 
-const LandingPage = lazy(() => import("@/pages/LandingPage"));
-const LoginPage = lazy(() => import("@/pages/LoginPage"));
-const AuthCallback = lazy(() => import("@/pages/AuthCallback"));
-const Dashboard = lazy(() => import("@/pages/Dashboard"));
-const FollowupQueue = lazy(() => import("@/pages/FollowupQueue"));
-const Analytics = lazy(() => import("@/pages/Analytics"));
-const Billing = lazy(() => import("@/pages/Billing"));
-const Settings = lazy(() => import("@/pages/Settings"));
-const PrivacyPolicy = lazy(() => import("@/pages/PrivacyPolicy"));
+// Existing pages (unchanged)
+const LandingPage    = lazy(() => import("@/pages/LandingPage"));
+const LoginPage      = lazy(() => import("@/pages/LoginPage"));
+const AuthCallback   = lazy(() => import("@/pages/AuthCallback"));
+const Dashboard      = lazy(() => import("@/pages/Dashboard"));
+const FollowupQueue  = lazy(() => import("@/pages/FollowupQueue"));
+const Analytics      = lazy(() => import("@/pages/Analytics"));
+const Billing        = lazy(() => import("@/pages/Billing"));
+const Settings       = lazy(() => import("@/pages/Settings"));
+const PrivacyPolicy  = lazy(() => import("@/pages/PrivacyPolicy"));
 const TermsOfService = lazy(() => import("@/pages/TermsOfService"));
-const Admin = lazy(() => import("@/pages/Admin"));
-const Support = lazy(() => import("@/pages/Support"));   // ← ADDED
-const Contact = lazy(() => import("@/pages/Contact"));   // ← ADDED
+const Admin          = lazy(() => import("@/pages/Admin"));
+const Support        = lazy(() => import("@/pages/Support"));
+const Contact        = lazy(() => import("@/pages/Contact"));
+
+// ✅ NEW: SEO pages (lazy loaded, zero impact on existing bundle)
+const AIFollowUpGenerator  = lazy(() => import("@/pages/seo/AIFollowUpGenerator"));
+const EmailAutomationAI    = lazy(() => import("@/pages/seo/EmailAutomationAI"));
+const ClientNotReplying    = lazy(() => import("@/pages/seo/ClientNotReplying"));
+const MissedFollowUpEmails = lazy(() => import("@/pages/seo/MissedFollowUpEmails"));
 
 function LoadingFallback() {
   return (
@@ -50,24 +57,33 @@ function App() {
       <BrowserRouter>
         <Suspense fallback={<LoadingFallback />}>
           <Routes>
-            {/* Public routes */}
+            {/* Public routes — unchanged */}
             <Route path="/" element={<PublicRoute><LandingPage /></PublicRoute>} />
             <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
             <Route path="/privacy-policy" element={<PrivacyPolicy />} />
             <Route path="/terms-of-service" element={<TermsOfService />} />
-            <Route path="/support" element={<Support />} />   {/* ← ADDED */}
-            <Route path="/contact" element={<Contact />} />   {/* ← ADDED */}
+            <Route path="/support" element={<Support />} />
+            <Route path="/contact" element={<Contact />} />
+
             {/* Google OAuth callback */}
             <Route path="/auth/callback" element={<AuthCallback />} />
-            {/* Protected routes - wrapped in AppLayout */}
+
+            {/* ✅ NEW: SEO pages — fully public, no auth required */}
+            <Route path="/features/ai-follow-up-generator" element={<AIFollowUpGenerator />} />
+            <Route path="/features/email-automation-ai"    element={<EmailAutomationAI />} />
+            <Route path="/problems/client-not-replying"    element={<ClientNotReplying />} />
+            <Route path="/problems/missed-follow-up-emails" element={<MissedFollowUpEmails />} />
+
+            {/* Protected routes — unchanged */}
             <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/followups" element={<FollowupQueue />} />
-              <Route path="/analytics" element={<Analytics />} />
-              <Route path="/billing" element={<Billing />} />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="/admin" element={<Admin />} />
+              <Route path="/dashboard"  element={<Dashboard />} />
+              <Route path="/followups"  element={<FollowupQueue />} />
+              <Route path="/analytics"  element={<Analytics />} />
+              <Route path="/billing"    element={<Billing />} />
+              <Route path="/settings"   element={<Settings />} />
+              <Route path="/admin"      element={<Admin />} />
             </Route>
+
             {/* Fallback */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
