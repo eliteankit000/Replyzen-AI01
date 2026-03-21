@@ -1,0 +1,13 @@
+User-agent: *
+Allow: /
+
+# Block authenticated/private pages from indexing
+Disallow: /dashboard
+Disallow: /followups
+Disallow: /analytics
+Disallow: /billing
+Disallow: /settings
+Disallow: /admin
+Disallow: /auth/
+
+Sitemap: https://replyzenai.com/sitemap.xml
