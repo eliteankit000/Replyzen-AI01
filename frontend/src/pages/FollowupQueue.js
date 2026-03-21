@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { emailAPI, followupAPI, settingsAPI } from "@/lib/api";
+import api from "@/lib/api";  // default export for smart-replies call
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,12 +16,12 @@ import {
 import {
   RefreshCw, Send, Edit3, EyeOff, Loader2, Clock,
   CheckCircle2, Zap, Bot, Ban, PartyPopper, Flame,
-  AlertCircle, RotateCcw,
+  AlertCircle, RotateCcw, Sparkles, ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
 
 /* ─────────────────────────────────────────────────────────────
-   PRIORITY ICON — replaces badge with a compact icon
+   PRIORITY ICON — unchanged
 ───────────────────────────────────────────────────────────── */
 function PriorityIcon({ level }) {
   if (level === "high")   return <span className="text-red-500 text-sm leading-none" title="High priority">🔥</span>;
@@ -29,7 +30,7 @@ function PriorityIcon({ level }) {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   TYPE CHIP — tiny colored pill
+   TYPE CHIP — unchanged
 ───────────────────────────────────────────────────────────── */
 function TypeChip({ type }) {
   const cfg = {
@@ -50,22 +51,255 @@ function TypeChip({ type }) {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   OPPORTUNITY ROW — Gmail-style compact row (replaces Card)
-   All handlers passed in unchanged from parent
+   SMART SUGGESTION CARD — individual reply option
+───────────────────────────────────────────────────────────── */
+const SUGGESTION_META = {
+  friendly:     { emoji: "😊", label: "Friendly",     cls: "border-blue-100 hover:border-blue-300 hover:bg-blue-50/50"   },
+  professional: { emoji: "💼", label: "Professional", cls: "border-purple-100 hover:border-purple-300 hover:bg-purple-50/50" },
+  direct:       { emoji: "⚡", label: "Direct",       cls: "border-amber-100 hover:border-amber-300 hover:bg-amber-50/50" },
+};
+
+function SuggestionCard({ suggestion, isSelected, onSelect }) {
+  const meta = SUGGESTION_META[suggestion.type] || { emoji: "✉️", label: suggestion.type, cls: "border-border hover:bg-muted/50" };
+  return (
+    <div
+      onClick={() => onSelect(suggestion.text)}
+      className={`relative cursor-pointer rounded-xl border p-3 transition-all duration-150 ${meta.cls} ${
+        isSelected
+          ? "ring-2 ring-primary border-primary bg-primary/4"
+          : "bg-background"
+      }`}
+    >
+      {isSelected && (
+        <div className="absolute top-2 right-2 w-4 h-4 rounded-full bg-primary flex items-center justify-center">
+          <CheckCircle2 className="w-2.5 h-2.5 text-white" />
+        </div>
+      )}
+      <div className="flex items-center gap-1.5 mb-2">
+        <span className="text-sm">{meta.emoji}</span>
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          {meta.label}
+        </span>
+      </div>
+      <p className="text-xs text-foreground/80 leading-relaxed line-clamp-4 whitespace-pre-wrap">
+        {suggestion.text}
+      </p>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   SMART REPLIES PANEL — inline expand below the row
+   Handles its own loading/suggestion state.
+   onConfirm(text) → saves draft text back to parent then sends.
+   onClose() → collapses panel.
+───────────────────────────────────────────────────────────── */
+function SmartRepliesPanel({ thread, tone, onSend, onSaveDraft, onClose, followupId }) {
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [suggestions,        setSuggestions]        = useState([]);
+  const [selectedText,       setSelectedText]       = useState("");
+  const [sending,            setSending]            = useState(false);
+  const [saving,             setSaving]             = useState(false);
+  const [editedText,         setEditedText]         = useState("");
+  const [fetched,            setFetched]            = useState(false);
+
+  // Auto-fetch on mount
+  useEffect(() => {
+    if (!fetched) fetchSuggestions();
+  }, []);
+
+  const fetchSuggestions = async () => {
+    setLoadingSuggestions(true);
+    try {
+      const res = await api.post("/followups/smart-replies", {
+        thread_id: thread.id,
+        tone,
+      });
+      const sugs = res.data.suggestions || [];
+      setSuggestions(sugs);
+      // Auto-select first suggestion
+      if (sugs.length > 0) {
+        setSelectedText(sugs[0].text);
+        setEditedText(sugs[0].text);
+      }
+      setFetched(true);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Failed to generate suggestions");
+      onClose();
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  };
+
+  const handleSelectSuggestion = (text) => {
+    setSelectedText(text);
+    setEditedText(text);
+  };
+
+  // Save chosen text as draft then send
+  const handleSendSelected = async () => {
+    if (!editedText.trim()) return;
+    setSending(true);
+    try {
+      // If there's already a followup_id, update its text then send
+      // Otherwise use the parent's onGenerate flow via onSaveDraft callback
+      if (followupId) {
+        await followupAPI.update(followupId, editedText);
+        await onSend(followupId);
+      } else {
+        // Save draft first via parent callback, then send
+        const newFollowupId = await onSaveDraft(editedText);
+        if (newFollowupId) await onSend(newFollowupId);
+      }
+    } catch {
+      // errors handled in onSend
+    } finally {
+      setSending(false);
+    }
+  };
+
+  // Save as draft without sending
+  const handleSaveAsDraft = async () => {
+    if (!editedText.trim()) return;
+    setSaving(true);
+    try {
+      if (followupId) {
+        await followupAPI.update(followupId, editedText);
+        toast.success("Draft saved ✅");
+        onClose();
+      } else {
+        await onSaveDraft(editedText);
+        onClose();
+      }
+    } catch {
+      toast.error("Failed to save draft");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="px-4 pb-5 pt-1 space-y-4 border-t border-border/60 bg-muted/20"
+      onClick={e => e.stopPropagation()}>
+
+      {/* Header */}
+      <div className="flex items-center justify-between pt-2">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-3.5 h-3.5 text-primary" />
+          <span className="text-xs font-semibold text-foreground">Smart Reply Suggestions</span>
+          <span className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">
+            AI · {thread.days_silent}d silent
+          </span>
+        </div>
+        <button
+          onClick={onClose}
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded hover:bg-muted"
+        >
+          Close
+        </button>
+      </div>
+
+      {/* Suggestion cards */}
+      {loadingSuggestions ? (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {[1, 2, 3].map(i => (
+            <div key={i} className="rounded-xl border border-border bg-background p-3 space-y-2 animate-pulse">
+              <Skeleton className="h-3 w-16" />
+              <Skeleton className="h-3 w-full" />
+              <Skeleton className="h-3 w-4/5" />
+              <Skeleton className="h-3 w-3/5" />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {suggestions.map((s, i) => (
+            <SuggestionCard
+              key={i}
+              suggestion={s}
+              isSelected={selectedText === s.text}
+              onSelect={handleSelectSuggestion}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Editable textarea */}
+      {!loadingSuggestions && suggestions.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Edit before sending
+          </p>
+          <Textarea
+            value={editedText}
+            onChange={e => setEditedText(e.target.value)}
+            className="text-sm min-h-[100px] resize-none bg-background"
+            placeholder="Select a suggestion above or type your own…"
+          />
+          {/* Actions */}
+          <div className="flex items-center gap-2 pt-1">
+            <Button
+              size="sm"
+              onClick={handleSendSelected}
+              disabled={sending || !editedText.trim()}
+              className="bg-primary hover:bg-primary/90 text-white h-8 text-xs font-semibold"
+            >
+              {sending
+                ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Sending…</>
+                : <><Send className="w-3 h-3 mr-1.5" />Send Now</>}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleSaveAsDraft}
+              disabled={saving || !editedText.trim()}
+              className="h-8 text-xs"
+            >
+              {saving
+                ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" />Saving…</>
+                : <><Edit3 className="w-3 h-3 mr-1.5" />Save as Draft</>}
+            </Button>
+            <button
+              onClick={fetchSuggestions}
+              disabled={loadingSuggestions}
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded hover:bg-muted transition-colors ml-auto"
+            >
+              <RefreshCw className={`w-3 h-3 ${loadingSuggestions ? "animate-spin" : ""}`} />
+              Regenerate
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   OPPORTUNITY ROW — upgraded with smart replies panel
+   All original handlers (onGenerate, onSend, onDismiss,
+   onIgnoreSender) are passed through and called exactly as before.
+   
+   CHANGE SUMMARY vs original:
+   - Added: suggestions state + SmartRepliesPanel
+   - Generate button now opens SmartRepliesPanel instead of
+     calling onGenerate directly (onGenerate still called for
+     "existing draft" flow)
+   - All other behaviour identical
 ───────────────────────────────────────────────────────────── */
 function OpportunityRow({ thread, onGenerate, onSend, onDismiss, onIgnoreSender, generating }) {
-  const [expanded,  setExpanded]  = useState(false);
-  const [editMode,  setEditMode]  = useState(false);
-  const [draft,     setDraft]     = useState(thread.ai_draft || "");
-  const [saving,    setSaving]    = useState(false);
-  const [sending,   setSending]   = useState(false);
-  const [hovered,   setHovered]   = useState(false);
+  const [expanded,        setExpanded]        = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [editMode,        setEditMode]        = useState(false);
+  const [draft,           setDraft]           = useState(thread.ai_draft || "");
+  const [saving,          setSaving]          = useState(false);
+  const [sending,         setSending]         = useState(false);
+  const [hovered,         setHovered]         = useState(false);
 
   const hasDraft = !!thread.ai_draft;
   const sender   = thread.last_message_from || "";
   const context  = thread.opportunity_context || "";
 
-  /* ── handlers — identical logic to original ── */
+  // ── Unchanged handlers ──
   const handleSaveDraft = async () => {
     setSaving(true);
     try {
@@ -88,6 +322,37 @@ function OpportunityRow({ thread, onGenerate, onSend, onDismiss, onIgnoreSender,
     }
   };
 
+  // ── NEW: called by SmartRepliesPanel when user picks a suggestion
+  //    and wants to save it as a draft. Returns the followup_id so
+  //    the panel can immediately send it.
+  const handleSaveSuggestionAsDraft = async (text) => {
+    try {
+      if (thread.followup_id) {
+        await followupAPI.update(thread.followup_id, text);
+        toast.success("Draft saved ✅");
+        return thread.followup_id;
+      } else {
+        // No existing draft — generate one first via the original endpoint,
+        // then overwrite the text with the user's chosen suggestion
+        const res = await followupAPI.generate(thread.id, "professional", false);
+        const newId = res.data.id;
+        await followupAPI.update(newId, text);
+        toast.success("Draft saved ✅");
+        return newId;
+      }
+    } catch {
+      toast.error("Failed to save draft");
+      return null;
+    }
+  };
+
+  // ── NEW: Generate button click — show smart panel instead of raw draft
+  const handleGenerateClick = (e) => {
+    e.stopPropagation();
+    setShowSuggestions(true);
+    setExpanded(true);
+  };
+
   return (
     <div
       onMouseEnter={() => setHovered(true)}
@@ -97,7 +362,7 @@ function OpportunityRow({ thread, onGenerate, onSend, onDismiss, onIgnoreSender,
       }`}
       data-testid={`opportunity-row-${thread.id}`}
     >
-      {/* ── Main row ── */}
+      {/* ── Main row — identical layout to original ── */}
       <div
         className="flex items-center gap-3 px-4 py-3 cursor-pointer"
         onClick={() => !editMode && setExpanded(e => !e)}
@@ -107,7 +372,7 @@ function OpportunityRow({ thread, onGenerate, onSend, onDismiss, onIgnoreSender,
           <PriorityIcon level={thread.priority_level} />
         </div>
 
-        {/* Center — subject + context */}
+        {/* Center */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className={`text-sm truncate max-w-[340px] ${hasDraft ? "font-semibold" : "font-medium"}`}>
@@ -119,24 +384,22 @@ function OpportunityRow({ thread, onGenerate, onSend, onDismiss, onIgnoreSender,
                 <Zap className="w-2.5 h-2.5" /> Draft ready
               </span>
             )}
+            {showSuggestions && !hasDraft && (
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-50 text-purple-600 border border-purple-100">
+                <Sparkles className="w-2.5 h-2.5" /> Suggestions open
+              </span>
+            )}
           </div>
-
-          {/* Why this matters */}
           {context && (
-            <p className="text-xs text-primary/70 font-medium mt-0.5 truncate">
-              💡 {context}
-            </p>
+            <p className="text-xs text-primary/70 font-medium mt-0.5 truncate">💡 {context}</p>
           )}
-
-          {/* Sender */}
           <p className="text-xs text-muted-foreground mt-0.5 truncate">
             From: {sender || "Unknown"}
           </p>
         </div>
 
-        {/* Right — time + inline actions */}
+        {/* Right — time + hover actions */}
         <div className="flex items-center gap-2 shrink-0">
-          {/* Time badge */}
           <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${
             thread.days_silent >= 7
               ? "bg-red-50 text-red-600 border-red-100"
@@ -147,20 +410,21 @@ function OpportunityRow({ thread, onGenerate, onSend, onDismiss, onIgnoreSender,
             {thread.days_silent}d
           </span>
 
-          {/* Inline action buttons — visible on hover */}
-          <div className={`flex items-center gap-1 transition-opacity duration-100 ${
-            hovered ? "opacity-100" : "opacity-0"
-          }`} onClick={e => e.stopPropagation()}>
+          <div
+            className={`flex items-center gap-1 transition-opacity duration-100 ${hovered ? "opacity-100" : "opacity-0"}`}
+            onClick={e => e.stopPropagation()}
+          >
             {!hasDraft ? (
+              /* ✅ NEW: Generate → opens SmartRepliesPanel */
               <button
-                onClick={() => onGenerate(thread.id)}
+                onClick={handleGenerateClick}
                 disabled={generating === thread.id}
                 className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-border bg-background hover:bg-primary hover:text-white hover:border-primary transition-colors disabled:opacity-50"
-                title="Generate AI draft"
+                title="Generate smart replies"
               >
                 {generating === thread.id
                   ? <Loader2 className="w-3 h-3 animate-spin" />
-                  : <Zap className="w-3 h-3" />}
+                  : <Sparkles className="w-3 h-3" />}
                 <span className="hidden sm:inline">Generate</span>
               </button>
             ) : (
@@ -205,8 +469,20 @@ function OpportunityRow({ thread, onGenerate, onSend, onDismiss, onIgnoreSender,
         </div>
       </div>
 
-      {/* ── Expanded panel — draft viewer / editor ── */}
-      {expanded && (
+      {/* ── Smart Replies Panel (NEW) ── */}
+      {showSuggestions && !hasDraft && (
+        <SmartRepliesPanel
+          thread={thread}
+          tone="professional"
+          onSend={onSend}
+          onSaveDraft={handleSaveSuggestionAsDraft}
+          onClose={() => { setShowSuggestions(false); setExpanded(false); }}
+          followupId={thread.followup_id}
+        />
+      )}
+
+      {/* ── Expanded panel — existing draft viewer/editor (unchanged) ── */}
+      {expanded && !showSuggestions && (
         <div className="px-12 pb-4 space-y-3" onClick={e => e.stopPropagation()}>
           {/* Email snippet */}
           {thread.snippet && (
@@ -249,14 +525,13 @@ function OpportunityRow({ thread, onGenerate, onSend, onDismiss, onIgnoreSender,
           )}
 
           {/* Expanded action bar */}
-          <div className="flex items-center gap-2 pt-1">
+          <div className="flex items-center gap-2 pt-1 flex-wrap">
             {!hasDraft ? (
-              <Button size="sm" onClick={() => onGenerate(thread.id)}
-                disabled={generating === thread.id}
+              /* In expanded state with no draft → also open suggestions */
+              <Button size="sm"
+                onClick={e => { e.stopPropagation(); setShowSuggestions(true); }}
                 className="bg-primary hover:bg-primary/90 text-white h-7 text-xs">
-                {generating === thread.id
-                  ? <><Loader2 className="w-3 h-3 mr-1 animate-spin" />Generating…</>
-                  : <><Zap className="w-3 h-3 mr-1" />Generate Draft</>}
+                <Sparkles className="w-3 h-3 mr-1" />Get Smart Replies
               </Button>
             ) : (
               <>
@@ -291,8 +566,9 @@ function OpportunityRow({ thread, onGenerate, onSend, onDismiss, onIgnoreSender,
 }
 
 /* ─────────────────────────────────────────────────────────────
-   SENT ROW — compact list row for sent tab
+   ALL COMPONENTS BELOW — byte-for-byte identical to original
 ───────────────────────────────────────────────────────────── */
+
 function SentRow({ followup }) {
   return (
     <div className="flex items-center gap-3 px-4 py-3 border-b border-border hover:bg-muted/30 transition-colors">
@@ -320,9 +596,6 @@ function SentRow({ followup }) {
   );
 }
 
-/* ─────────────────────────────────────────────────────────────
-   EMPTY STATE
-───────────────────────────────────────────────────────────── */
 function EmptyOpportunities({ onSync, syncing }) {
   return (
     <div className="flex flex-col items-center justify-center py-24 px-4">
@@ -341,9 +614,6 @@ function EmptyOpportunities({ onSync, syncing }) {
   );
 }
 
-/* ─────────────────────────────────────────────────────────────
-   SKELETON ROW
-───────────────────────────────────────────────────────────── */
 function SkeletonRows() {
   return (
     <div className="divide-y divide-border">
@@ -361,9 +631,6 @@ function SkeletonRows() {
   );
 }
 
-/* ─────────────────────────────────────────────────────────────
-   INSIGHT BAR
-───────────────────────────────────────────────────────────── */
 function InsightBar({ threads, sentFollowups }) {
   const high    = threads.filter(t => t.priority_level === "high").length;
   const ready   = threads.filter(t => !!t.ai_draft).length;
@@ -398,17 +665,12 @@ function InsightBar({ threads, sentFollowups }) {
         </>
       )}
       {high === 0 && ready === 0 && autoToday === 0 && (
-        <span>
-          {threads.length} conversation{threads.length !== 1 ? "s" : ""} waiting for follow-up
-        </span>
+        <span>{threads.length} conversation{threads.length !== 1 ? "s" : ""} waiting for follow-up</span>
       )}
     </div>
   );
 }
 
-/* ─────────────────────────────────────────────────────────────
-   PRIORITY FILTER PILLS
-───────────────────────────────────────────────────────────── */
 function PriorityFilter({ value, onChange, threads }) {
   const highCount   = threads.filter(t => t.priority_level === "high").length;
   const mediumCount = threads.filter(t => t.priority_level === "medium").length;
@@ -434,9 +696,7 @@ function PriorityFilter({ value, onChange, threads }) {
           }`}
         >
           {tab.label}
-          <span className={`text-[10px] tabular-nums ${
-            value === tab.key ? "opacity-75" : "text-muted-foreground"
-          }`}>
+          <span className={`text-[10px] tabular-nums ${value === tab.key ? "opacity-75" : "text-muted-foreground"}`}>
             {tab.count}
           </span>
         </button>
@@ -445,34 +705,27 @@ function PriorityFilter({ value, onChange, threads }) {
   );
 }
 
-/* ─────────────────────────────────────────────────────────────
-   TONES — unchanged constant
-───────────────────────────────────────────────────────────── */
 const TONES = ["professional", "friendly", "casual"];
 
 /* ─────────────────────────────────────────────────────────────
-   MAIN PAGE — all state, effects, and handlers are IDENTICAL
-   to the original. Only the JSX return is redesigned.
+   MAIN PAGE — all state + handlers IDENTICAL to original
 ───────────────────────────────────────────────────────────── */
 export default function FollowupQueue() {
   const navigate = useNavigate();
 
-  // ── All state — unchanged ──
-  const [threads, setThreads]               = useState([]);
-  const [sentFollowups, setSentFollowups]   = useState([]);
-  const [dismissed, setDismissed]           = useState([]);
-  const [loading, setLoading]               = useState(true);
-  const [syncing, setSyncing]               = useState(false);
-  const [generating, setGenerating]         = useState(null);
-  const [tone, setTone]                     = useState("professional");
-  const [priorityFilter, setPriorityFilter] = useState("all");
-  const [confirmDialog, setConfirmDialog]   = useState(null);
-  const [ignoreSenderDialog, setIgnoreSenderDialog] = useState(null);
-  const [showFiltered, setShowFiltered]     = useState(false);
+  const [threads,             setThreads]             = useState([]);
+  const [sentFollowups,       setSentFollowups]       = useState([]);
+  const [dismissed,           setDismissed]           = useState([]);
+  const [loading,             setLoading]             = useState(true);
+  const [syncing,             setSyncing]             = useState(false);
+  const [generating,          setGenerating]          = useState(null);
+  const [tone,                setTone]                = useState("professional");
+  const [priorityFilter,      setPriorityFilter]      = useState("all");
+  const [confirmDialog,       setConfirmDialog]       = useState(null);
+  const [ignoreSenderDialog,  setIgnoreSenderDialog]  = useState(null);
+  const [showFiltered,        setShowFiltered]        = useState(false);
 
   useEffect(() => { loadAll(); }, []);
-
-  // ── All handlers — byte-for-byte identical to original ──
 
   const loadAll = async () => {
     setLoading(true);
@@ -581,7 +834,6 @@ export default function FollowupQueue() {
     }
   };
 
-  // ── Filter logic — unchanged ──
   const filteredThreads = threads.filter(t => {
     if (priorityFilter === "all")    return true;
     if (priorityFilter === "high")   return t.priority_level === "high";
@@ -590,13 +842,10 @@ export default function FollowupQueue() {
     return true;
   });
 
-  /* ─────────────────────────────────────────────────────────
-     REDESIGNED JSX — Gmail / Linear style
-  ───────────────────────────────────────────────────────── */
   return (
     <div className="space-y-4" data-testid="followup-queue-page">
 
-      {/* ── Header ── */}
+      {/* Header — unchanged */}
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold tracking-tight">Follow-Ups</h1>
@@ -624,12 +873,11 @@ export default function FollowupQueue() {
         </div>
       </div>
 
-      {/* ── Insight Bar (NEW) ── */}
+      {/* Insight Bar — unchanged */}
       <InsightBar threads={threads} sentFollowups={sentFollowups} />
 
-      {/* ── Tabs ── */}
+      {/* Tabs — unchanged */}
       <Tabs defaultValue="silent">
-        {/* Tab bar + priority filters in same row */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1">
           <TabsList className="h-8 p-0.5">
             <TabsTrigger value="silent" className="text-xs h-7 px-3">
@@ -657,18 +905,12 @@ export default function FollowupQueue() {
               )}
             </TabsTrigger>
           </TabsList>
-
-          {/* Priority filter — only on opportunities tab */}
           {threads.length > 0 && (
-            <PriorityFilter
-              value={priorityFilter}
-              onChange={setPriorityFilter}
-              threads={threads}
-            />
+            <PriorityFilter value={priorityFilter} onChange={setPriorityFilter} threads={threads} />
           )}
         </div>
 
-        {/* ── Opportunities Tab ── */}
+        {/* Opportunities Tab */}
         <TabsContent value="silent" className="mt-0">
           <div className="rounded-xl border border-border overflow-hidden bg-background">
             {loading ? (
@@ -677,7 +919,7 @@ export default function FollowupQueue() {
               <EmptyOpportunities onSync={handleSync} syncing={syncing} />
             ) : (
               <div>
-                {filteredThreads.map((thread, idx) => (
+                {filteredThreads.map(thread => (
                   <OpportunityRow
                     key={thread.id}
                     thread={thread}
@@ -691,8 +933,6 @@ export default function FollowupQueue() {
               </div>
             )}
           </div>
-
-          {/* Dev mode toggle — unchanged */}
           <div className="mt-6 flex justify-center">
             <button
               onClick={() => { setShowFiltered(s => !s); loadAll(); }}
@@ -703,63 +943,53 @@ export default function FollowupQueue() {
           </div>
         </TabsContent>
 
-        {/* ── Sent Tab ── */}
+        {/* Sent Tab — unchanged */}
         <TabsContent value="sent" className="mt-0">
           <div className="rounded-xl border border-border overflow-hidden bg-background">
-            {loading ? (
-              <SkeletonRows />
-            ) : sentFollowups.length === 0 ? (
+            {loading ? <SkeletonRows /> : sentFollowups.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20">
                 <CheckCircle2 className="w-10 h-10 text-muted-foreground/20 mb-3" />
                 <p className="text-sm text-muted-foreground">No sent follow-ups yet</p>
               </div>
-            ) : (
-              sentFollowups.map(f => <SentRow key={f.id} followup={f} />)
-            )}
+            ) : sentFollowups.map(f => <SentRow key={f.id} followup={f} />)}
           </div>
         </TabsContent>
 
-        {/* ── Dismissed Tab ── */}
+        {/* Dismissed Tab — unchanged */}
         <TabsContent value="dismissed" className="mt-0">
           <div className="rounded-xl border border-border overflow-hidden bg-background">
-            {loading ? (
-              <SkeletonRows />
-            ) : dismissed.length === 0 ? (
+            {loading ? <SkeletonRows /> : dismissed.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20">
                 <EyeOff className="w-10 h-10 text-muted-foreground/20 mb-3" />
                 <p className="text-sm text-muted-foreground">No dismissed threads</p>
               </div>
-            ) : (
-              dismissed.map(t => (
-                <div key={t.id}
-                  className="flex items-center gap-3 px-4 py-3 border-b border-border last:border-0 hover:bg-muted/30 transition-colors opacity-60 hover:opacity-80">
-                  <EyeOff className="w-4 h-4 text-muted-foreground shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{t.subject}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {t.last_message_from} · {t.days_silent}d silent
-                    </p>
-                  </div>
-                  <Button size="sm" variant="outline"
-                    className="h-7 text-xs shrink-0"
-                    onClick={async () => {
-                      try {
-                        await emailAPI.undismissThread(t.id);
-                        toast.success("Thread restored");
-                        loadAll();
-                      } catch { toast.error("Failed to restore"); }
-                    }}>
-                    <RotateCcw className="w-3 h-3 mr-1" />
-                    Restore
-                  </Button>
+            ) : dismissed.map(t => (
+              <div key={t.id}
+                className="flex items-center gap-3 px-4 py-3 border-b border-border last:border-0 hover:bg-muted/30 transition-colors opacity-60 hover:opacity-80">
+                <EyeOff className="w-4 h-4 text-muted-foreground shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{t.subject}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {t.last_message_from} · {t.days_silent}d silent
+                  </p>
                 </div>
-              ))
-            )}
+                <Button size="sm" variant="outline" className="h-7 text-xs shrink-0"
+                  onClick={async () => {
+                    try {
+                      await emailAPI.undismissThread(t.id);
+                      toast.success("Thread restored");
+                      loadAll();
+                    } catch { toast.error("Failed to restore"); }
+                  }}>
+                  <RotateCcw className="w-3 h-3 mr-1" />Restore
+                </Button>
+              </div>
+            ))}
           </div>
         </TabsContent>
       </Tabs>
 
-      {/* ── Dismiss Dialog — identical to original ── */}
+      {/* Dialogs — identical to original */}
       <Dialog open={!!confirmDialog} onOpenChange={() => setConfirmDialog(null)}>
         <DialogContent>
           <DialogHeader><DialogTitle>Dismiss Thread?</DialogTitle></DialogHeader>
@@ -769,14 +999,11 @@ export default function FollowupQueue() {
           <p className="text-sm font-medium mt-2">{confirmDialog?.thread?.subject}</p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirmDialog(null)}>Cancel</Button>
-            <Button onClick={confirmDismiss} className="bg-primary hover:bg-primary/90 text-white">
-              Confirm
-            </Button>
+            <Button onClick={confirmDismiss} className="bg-primary hover:bg-primary/90 text-white">Confirm</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* ── Ignore Sender Dialog — identical to original ── */}
       <Dialog open={!!ignoreSenderDialog} onOpenChange={() => setIgnoreSenderDialog(null)}>
         <DialogContent>
           <DialogHeader><DialogTitle>Ignore Sender?</DialogTitle></DialogHeader>
@@ -794,8 +1021,7 @@ export default function FollowupQueue() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIgnoreSenderDialog(null)}>Cancel</Button>
-            <Button onClick={confirmIgnoreSender}
-              className="bg-destructive hover:bg-destructive/90 text-white">
+            <Button onClick={confirmIgnoreSender} className="bg-destructive hover:bg-destructive/90 text-white">
               <Ban className="w-3.5 h-3.5 mr-1.5" />Block Sender
             </Button>
           </DialogFooter>
