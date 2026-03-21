@@ -1,6 +1,7 @@
 import os
 from openai import AsyncOpenAI
 import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -8,39 +9,96 @@ api_key = os.environ.get("OPENAI_API_KEY", "")
 client = AsyncOpenAI(api_key=api_key) if api_key else None
 
 
-async def generate_followup_draft(subject: str, snippet: str, days_silent: int, tone: str = "professional") -> str:
+async def generate_followup_draft(
+    subject: str,
+    snippet: str,
+    days_silent: int,
+    tone: str = "professional",
+    conversation_type: Optional[str] = None,
+    last_messages: Optional[list] = None,
+) -> str:
     if not client:
         raise Exception("OpenAI API key not configured")
 
-    system_prompt = """You are an expert email follow-up writer for professionals. Generate a brief, natural follow-up email body.
+    # Build context from conversation type
+    type_context = ""
+    if conversation_type and conversation_type not in ("other", "notification", "newsletter"):
+        type_map = {
+            "client_proposal": "This is a client proposal or quote thread.",
+            "payment":         "This is a payment or invoice thread.",
+            "interview":       "This is a job interview or HR thread.",
+            "lead":            "This is a sales lead or inquiry thread.",
+            "partnership":     "This is a partnership or collaboration thread.",
+        }
+        type_context = type_map.get(conversation_type, "")
+
+    # Build last messages context
+    messages_context = ""
+    if last_messages:
+        recent = last_messages[-3:]  # last 3 messages max
+        messages_context = "\n".join(
+            [f"- {m.get('from','')}: {m.get('snippet','')}" for m in recent]
+        )
+        messages_context = f"\nRecent messages:\n{messages_context}"
+
+    system_prompt = """You are an expert email follow-up writer. Generate a brief, natural, human-like follow-up email body.
 
 Rules:
-- Keep it under 100 words
-- Be polite and context-aware
+- 3 to 5 lines maximum
+- Non-generic — reference actual context
+- Polite but direct
 - Match the requested tone exactly
-- Don't be pushy or aggressive
-- Reference the original conversation naturally
-- Don't include subject line, greeting prefix like 'Subject:', or sign-off name
+- Goal: get a reply
+- Do NOT include subject line or sign-off name
 - Start with a greeting like 'Hi' or 'Hello'
-- End with a professional closing like 'Best regards' or 'Looking forward to hearing from you'"""
+- End with a professional closing"""
 
-    user_prompt = f"""Generate a follow-up email with these details:
+    user_prompt = f"""Generate a follow-up email:
 
-Subject of original thread: {subject}
+Subject: {subject}
 Last message snippet: {snippet}
 Days since last reply: {days_silent}
-Desired tone: {tone}
+Tone: {tone}
+{type_context}
+{messages_context}
 
-Write only the email body."""
+Write only the email body. Be specific, human, and concise."""
 
     response = await client.chat.completions.create(
         model="gpt-4o",
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "user",   "content": user_prompt},
         ],
         max_tokens=200,
-        temperature=0.7
+        temperature=0.7,
     )
 
     return response.choices[0].message.content.strip()
+
+
+async def classify_thread_with_ai(subject: str, snippet: str) -> str:
+    """Standalone AI classification used as fallback in classification_service."""
+    if not client:
+        return "other"
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Classify the email thread with ONE label only:\n"
+                        "client_proposal, lead, payment, interview, partnership, "
+                        "newsletter, notification, other"
+                    ),
+                },
+                {"role": "user", "content": f"Subject: {subject}\nSnippet: {snippet}"},
+            ],
+            max_tokens=10,
+            temperature=0,
+        )
+        return response.choices[0].message.content.strip().lower()
+    except Exception as e:
+        logger.warning(f"AI classification failed: {e}")
+        return "other"
