@@ -328,20 +328,27 @@ function OpportunityRow({ thread, onGenerate, onSend, onDismiss, onIgnoreSender,
   const handleSaveSuggestionAsDraft = async (text) => {
     try {
       if (thread.followup_id) {
+        // Existing draft row — just update the text
         await followupAPI.update(thread.followup_id, text);
         toast.success("Draft saved ✅");
         return thread.followup_id;
       } else {
-        // No existing draft — generate one first via the original endpoint,
-        // then overwrite the text with the user's chosen suggestion
-        const res = await followupAPI.generate(thread.id, "professional", false);
+        // No draft row yet. We use force_regenerate: true here to bypass the
+        // should_show_reply gate on the backend. That gate is designed to
+        // prevent accidental generation — but the user has already reviewed
+        // and chosen a suggestion, so the intent is explicit. Without this flag
+        // the backend returns 400 "Cannot generate reply: ..." which surfaces
+        // as "Failed to save draft" in the catch block.
+        const res = await followupAPI.generate(thread.id, "professional", true);
         const newId = res.data.id;
+        // Overwrite the AI-generated text with the user's chosen suggestion
         await followupAPI.update(newId, text);
         toast.success("Draft saved ✅");
         return newId;
       }
-    } catch {
-      toast.error("Failed to save draft");
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      toast.error(detail || "Failed to save draft");
       return null;
     }
   };
