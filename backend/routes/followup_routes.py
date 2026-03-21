@@ -28,6 +28,12 @@ class GenerateRequest(BaseModel):
     force_regenerate: bool = False  # Allow manual regeneration
 
 
+# ✅ NEW: Smart replies request model
+class SmartRepliesRequest(BaseModel):
+    thread_id: str
+    tone: str = "professional"
+
+
 class UpdateDraftRequest(BaseModel):
     draft: str
 
@@ -53,6 +59,93 @@ async def get_user_settings(user_id: str, db: AsyncSession) -> dict:
         return dict(row._mapping)
     return {"ignore_newsletters": True, "ignore_notifications": True}
 
+
+# ─────────────────────────────────────────────────────────────
+# ✅ NEW ENDPOINT: POST /api/followups/smart-replies
+#
+# Generates 3 context-aware follow-up suggestions (friendly,
+# professional, direct) for a given thread.
+#
+# IMPORTANT:
+# - Does NOT touch or replace the existing /generate endpoint
+# - Does NOT write to followup_suggestions table (read-only)
+# - Uses the same plan/limit checks as /generate
+# - Reuses existing generate_followup_draft for each variant
+# ─────────────────────────────────────────────────────────────
+@router.post("/smart-replies")
+async def generate_smart_replies(
+    req: SmartRepliesRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = current_user["user_id"]
+
+    # Check plan limits (same as /generate)
+    limit_check = await check_followup_limit(user_id, db)
+    if not limit_check["allowed"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"You have reached your monthly follow-up limit ({limit_check['limit']})."
+        )
+
+    # Fetch thread
+    result = await db.execute(
+        text("SELECT * FROM email_threads WHERE id = :id AND user_id = :uid"),
+        {"id": req.thread_id, "uid": user_id},
+    )
+    thread = result.fetchone()
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    thread = dict(thread._mapping)
+
+    subject    = thread.get("subject", "")
+    snippet    = thread.get("snippet", "")
+    days_silent = thread.get("days_silent", 1)
+
+    # Generate 3 variants concurrently — one per tone
+    # Each variant reuses the existing generate_followup_draft service.
+    # We override tone for each variant regardless of req.tone so the user
+    # always sees all three styles to choose from.
+    VARIANTS = [
+        ("friendly",      "friendly"),
+        ("professional",  "professional"),
+        ("direct",        "casual"),   # "casual" maps to direct/concise style
+    ]
+
+    async def _generate_one(label: str, tone: str) -> dict:
+        try:
+            text_result = await generate_followup_draft(
+                subject=subject,
+                snippet=snippet,
+                days_silent=days_silent,
+                tone=tone,
+            )
+            return {"type": label, "tone": tone, "text": text_result}
+        except Exception as e:
+            logger.warning(f"Smart reply variant '{label}' failed: {e}")
+            # Graceful fallback per variant
+            return {
+                "type": label,
+                "tone": tone,
+                "text": (
+                    f"Hi,\n\nFollowing up regarding \"{subject}\"."
+                    f"\n\nIt's been {days_silent} day{'s' if days_silent != 1 else ''} "
+                    f"since my last message — happy to reconnect when you have a moment."
+                    f"\n\nBest regards"
+                ),
+            }
+
+    # Run all 3 in parallel to keep latency low
+    suggestions = await asyncio.gather(
+        *[_generate_one(label, tone) for label, tone in VARIANTS]
+    )
+
+    return {"suggestions": list(suggestions), "thread_id": req.thread_id}
+
+
+# ─────────────────────────────────────────────────────────────
+# ALL ROUTES BELOW ARE BYTE-FOR-BYTE IDENTICAL TO THE ORIGINAL
+# ─────────────────────────────────────────────────────────────
 
 @router.post("/generate")
 async def generate_followup(
