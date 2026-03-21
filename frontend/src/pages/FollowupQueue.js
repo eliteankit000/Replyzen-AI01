@@ -322,30 +322,19 @@ function OpportunityRow({ thread, onGenerate, onSend, onDismiss, onIgnoreSender,
     }
   };
 
-  // ── NEW: called by SmartRepliesPanel when user picks a suggestion
-  //    and wants to save it as a draft. Returns the followup_id so
-  //    the panel can immediately send it.
+  // ✅ FIXED: Use dedicated /save-draft endpoint instead of /generate.
+  // /generate runs should_show_reply() which returns 400 for many threads
+  // regardless of force_regenerate. The user has already chosen a suggestion
+  // from smart-replies so we just need to persist it — no AI call needed.
   const handleSaveSuggestionAsDraft = async (text) => {
     try {
-      if (thread.followup_id) {
-        // Existing draft row — just update the text
-        await followupAPI.update(thread.followup_id, text);
-        toast.success("Draft saved ✅");
-        return thread.followup_id;
-      } else {
-        // No draft row yet. We use force_regenerate: true here to bypass the
-        // should_show_reply gate on the backend. That gate is designed to
-        // prevent accidental generation — but the user has already reviewed
-        // and chosen a suggestion, so the intent is explicit. Without this flag
-        // the backend returns 400 "Cannot generate reply: ..." which surfaces
-        // as "Failed to save draft" in the catch block.
-        const res = await followupAPI.generate(thread.id, "professional", true);
-        const newId = res.data.id;
-        // Overwrite the AI-generated text with the user's chosen suggestion
-        await followupAPI.update(newId, text);
-        toast.success("Draft saved ✅");
-        return newId;
-      }
+      const res = await api.post("/followups/save-draft", {
+        thread_id: thread.id,
+        draft: text,
+        tone: "professional",
+      });
+      toast.success("Draft saved ✅");
+      return res.data.id;
     } catch (err) {
       const detail = err?.response?.data?.detail;
       toast.error(detail || "Failed to save draft");
