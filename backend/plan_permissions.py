@@ -12,7 +12,7 @@ PLAN_LIMITS = {
         "support_tier": "basic",
     },
     "pro": {
-        "followups_per_month": 2500,
+        "followups_per_month": 5000,
         "max_email_accounts": 3,
         "auto_send": True,
         "analytics": True,
