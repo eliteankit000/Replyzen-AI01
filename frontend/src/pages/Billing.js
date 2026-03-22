@@ -12,13 +12,14 @@ import {
 import { Check, CreditCard, Zap, Crown, Loader2, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 
-const PADDLE_TOKEN  = import.meta.env.VITE_PADDLE_PUBLIC_KEY  || process.env.REACT_APP_PADDLE_PUBLIC_KEY;
-const PADDLE_VENDOR = import.meta.env.VITE_PADDLE_VENDOR_ID   || process.env.REACT_APP_PADDLE_VENDOR_ID;
+// ✅ FIX: This is a CRA app — import.meta.env is Vite-only and always undefined here.
+// Only process.env.REACT_APP_* works in CRA.
+const PADDLE_TOKEN  = process.env.REACT_APP_PADDLE_PUBLIC_KEY  || "";
+const PADDLE_VENDOR = process.env.REACT_APP_PADDLE_VENDOR_ID   || "";
 
 export default function Billing() {
   const { user, refreshUser } = useAuth();
 
-  /* ── Data state ── */
   const [plans, setPlans]               = useState([]);
   const [subscription, setSubscription] = useState(null);
   const [planLimits, setPlanLimits]     = useState(null);
@@ -30,43 +31,44 @@ export default function Billing() {
   const [locationInfo, setLocationInfo] = useState({
     currency: "USD", payment_provider: "paddle", country: "US"
   });
-  const [paddleInitialized, setPaddleInitialized] = useState(false);
+  const [paddleReady, setPaddleReady] = useState(false);
 
   useEffect(() => {
     loadData();
-    initializePaddle();
+    waitForPaddleAndInit();
   }, []);
 
-  const initializePaddle = () => {
+  // ✅ FIX: Robust Paddle initialization that uses vendor_id from backend
+  // as the primary source of truth — no env var required on frontend.
+  const waitForPaddleAndInit = (vendorIdOverride) => {
     if (typeof window === "undefined") return;
 
-    const checkPaddle = setInterval(() => {
-      if (window.Paddle) {
-        clearInterval(checkPaddle);
+    const token  = PADDLE_TOKEN;
+    const vendor = vendorIdOverride || PADDLE_VENDOR;
 
+    // If nothing to init, wait until checkout to try again with backend data
+    if (!token && !vendor) return;
+
+    const check = setInterval(() => {
+      if (window.Paddle) {
+        clearInterval(check);
         try {
-          if (PADDLE_TOKEN) {
-            if (window.Paddle.Environment) {
-              window.Paddle.Environment.set("production");
-            }
-            window.Paddle.Initialize({ token: PADDLE_TOKEN });
-            setPaddleInitialized(true);
-          } else if (PADDLE_VENDOR) {
-            if (window.Paddle.Environment) {
-              window.Paddle.Environment.set("production");
-            }
-            window.Paddle.Setup({ seller: parseInt(PADDLE_VENDOR) });
-            setPaddleInitialized(true);
-          } else {
-            console.warn("No Paddle credentials found in environment");
+          if (window.Paddle.Environment) {
+            window.Paddle.Environment.set("production");
           }
+          if (token) {
+            window.Paddle.Initialize({ token });
+          } else if (vendor) {
+            window.Paddle.Setup({ seller: parseInt(vendor, 10) });
+          }
+          setPaddleReady(true);
         } catch (err) {
-          console.error("Paddle initialization error:", err);
+          console.warn("Paddle init error:", err);
         }
       }
-    }, 100);
+    }, 150);
 
-    setTimeout(() => clearInterval(checkPaddle), 10000);
+    setTimeout(() => clearInterval(check), 10000);
   };
 
   const loadData = async () => {
@@ -89,12 +91,7 @@ export default function Billing() {
       setPlans(plansRes.data || []);
       setSubscription(subRes.data);
       setPlanLimits(limitsRes.data);
-
-      // ✅ FIX 4 (part 2): Also refresh the auth context user object so that
-      // user.plan is up to date. This ensures that even if currentPlan is
-      // evaluated before subscription loads, it eventually gets the right value.
       await refreshUser();
-
     } catch (err) {
       console.error("Failed to load billing:", err);
       toast.error("Failed to load billing information");
@@ -109,72 +106,73 @@ export default function Billing() {
 
     try {
       const res = await billingAPI.createCheckout({
-        plan_id: planId,
+        plan_id:       planId,
         billing_cycle: cycle,
         provider,
       });
 
-      /* ── Razorpay (India) ── */
+      // ── Razorpay (India) ──────────────────────────────────────────
       if (res.data.provider === "razorpay") {
         if (typeof window.Razorpay === "undefined") {
           toast.error("Razorpay SDK not loaded. Please refresh and try again.");
           return;
         }
-
         toast.info("Opening Razorpay checkout...");
-
         const options = {
-          key: res.data.key_id,
+          key:             res.data.key_id,
           subscription_id: res.data.subscription_id,
-          name: "Replyzen AI",
-          description: `${planId.charAt(0).toUpperCase() + planId.slice(1)} Plan - ${cycle}`,
+          name:            "ReplyZen AI",
+          description:     `${planId.charAt(0).toUpperCase() + planId.slice(1)} Plan – ${cycle}`,
           handler: () => {
             toast.success("Payment successful! Your plan has been activated. 🎉");
             refreshUser();
             loadData();
           },
-          modal: {
-            ondismiss: () => {
-              toast.warning("Payment was cancelled");
-            }
-          },
+          modal: { ondismiss: () => toast.warning("Payment was cancelled") },
           theme: { color: "#ea580c" },
         };
-
         const rzp = new window.Razorpay(options);
-        rzp.on("payment.failed", (response) => {
-          console.error("Razorpay payment failed:", response);
-          toast.error("Payment failed. Please try again.");
-        });
+        rzp.on("payment.failed", () => toast.error("Payment failed. Please try again."));
         rzp.open();
+        return;
+      }
 
-      /* ── Paddle Billing (International) ── */
-      } else if (res.data.provider === "paddle") {
+      // ── Paddle (International) ────────────────────────────────────
+      if (res.data.provider === "paddle") {
         if (typeof window.Paddle === "undefined") {
           toast.error("Paddle SDK not loaded. Please refresh and try again.");
           return;
         }
 
-        if (!paddleInitialized) {
-          const vendorId = res.data.vendor_id || PADDLE_VENDOR;
+        // ✅ FIX: Use vendor_id from backend response as primary source.
+        // This is what the backend reads from PADDLE_VENDOR_ID env var on Railway.
+        const vendorFromBackend = res.data.vendor_id;
+        const priceId           = res.data.price_id;
 
-          if (!PADDLE_TOKEN && !vendorId) {
-            toast.error("Paddle is not configured. Please contact support.");
-            return;
-          }
+        if (!priceId) {
+          toast.error("Paddle price not configured. Please contact support.");
+          return;
+        }
 
+        // Init Paddle now if not yet done (using backend vendor_id)
+        if (!paddleReady) {
           try {
             if (window.Paddle.Environment) {
               window.Paddle.Environment.set("production");
             }
-
             if (PADDLE_TOKEN) {
               window.Paddle.Initialize({ token: PADDLE_TOKEN });
+            } else if (vendorFromBackend) {
+              window.Paddle.Setup({ seller: parseInt(vendorFromBackend, 10) });
+            } else if (PADDLE_VENDOR) {
+              window.Paddle.Setup({ seller: parseInt(PADDLE_VENDOR, 10) });
             } else {
-              window.Paddle.Setup({ seller: parseInt(vendorId) });
+              toast.error("Paddle is not configured. Please contact support.");
+              return;
             }
+            setPaddleReady(true);
           } catch (initErr) {
-            console.error("Paddle initialization failed:", initErr);
+            console.error("Paddle init failed:", initErr);
             toast.error("Failed to initialize payment. Please refresh and try again.");
             return;
           }
@@ -184,17 +182,17 @@ export default function Billing() {
 
         try {
           window.Paddle.Checkout.open({
-            items: [{ priceId: res.data.price_id, quantity: 1 }],
+            items: [{ priceId, quantity: 1 }],
             customData: {
-              user_id: res.data.user_id,
-              plan: planId,
-              billing_cycle: cycle
+              user_id:      res.data.user_id,
+              plan:         planId,
+              billing_cycle: cycle,
             },
             settings: {
-              theme: "light",
+              theme:       "light",
               displayMode: "overlay",
-              locale: "en",
-              successUrl: window.location.href + "?payment=success",
+              locale:      "en",
+              successUrl:  window.location.href + "?payment=success",
               allowLogout: false,
             },
             customer: {
@@ -206,10 +204,12 @@ export default function Billing() {
           toast.error("Unable to open checkout. Please try again.");
         }
       }
+
     } catch (err) {
       console.error("Checkout error:", err);
-      if (err.response?.data?.detail) {
-        toast.error(err.response.data.detail);
+      const detail = err.response?.data?.detail;
+      if (detail) {
+        toast.error(detail);
       } else if (err.message === "Network Error") {
         toast.error("Unable to create checkout session. Please check your connection.");
       } else {
@@ -245,21 +245,7 @@ export default function Billing() {
     }
   }, []);
 
-  // ✅ FIX 4 (root cause): subscription?.plan must take priority over user?.plan.
-  //
-  // BEFORE: const currentPlan = user?.plan || subscription?.plan || "free"
-  //   - user.plan is set at login time and cached in auth context.
-  //   - When admin updates the plan in DB, the auth context is NOT automatically
-  //     refreshed, so user.plan stays stale (e.g. "free").
-  //   - Because "free" is a truthy non-empty string, it always short-circuits the
-  //     || chain, so subscription.plan (which is fresh from DB) is never reached.
-  //   - Result: user sees "Free Plan" even though DB has "pro".
-  //
-  // AFTER: subscription?.plan is checked first — it comes from
-  //   GET /api/billing/subscription which always reads users.plan live from DB.
-  //   user?.plan is only used as a fallback if subscription hasn't loaded yet.
-  const currentPlan = subscription?.plan || user?.plan || "free";
-
+  const currentPlan    = subscription?.plan || user?.plan || "free";
   const planIcons      = { free: CreditCard, pro: Zap, business: Crown };
   const currencySymbol = locationInfo.currency === "INR" ? "₹" : "$";
   const providerLabel  = locationInfo.payment_provider === "razorpay" ? "Razorpay" : "Paddle";
@@ -292,13 +278,18 @@ export default function Billing() {
                 </p>
                 {planLimits && planLimits.followups_per_month !== -1 && (
                   <div className="mt-2">
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span>{planLimits.followups_used ?? 0} / {planLimits.followups_per_month} follow-ups used this month</span>
-                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {planLimits.followups_used ?? 0} / {planLimits.followups_per_month} follow-ups used this month
+                    </p>
                     <div className="w-48 h-1.5 bg-muted rounded-full overflow-hidden mt-1">
                       <div
                         className="h-full rounded-full bg-primary transition-all"
-                        style={{ width: `${Math.min((planLimits.followups_used / planLimits.followups_per_month) * 100, 100)}%` }}
+                        style={{
+                          width: `${Math.min(
+                            ((planLimits.followups_used ?? 0) / planLimits.followups_per_month) * 100,
+                            100
+                          )}%`
+                        }}
                       />
                     </div>
                   </div>
@@ -330,7 +321,10 @@ export default function Billing() {
           <TabsList data-testid="billing-cycle-tabs">
             <TabsTrigger value="monthly">Monthly</TabsTrigger>
             <TabsTrigger value="yearly">
-              Yearly <Badge variant="outline" className="ml-1.5 text-xs text-primary border-primary/30">Save 17%</Badge>
+              Yearly{" "}
+              <Badge variant="outline" className="ml-1.5 text-xs text-primary border-primary/30">
+                Save 17%
+              </Badge>
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -361,7 +355,9 @@ export default function Billing() {
                 data-testid={`billing-plan-${plan.id}`}
               >
                 {isPopular && (
-                  <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-white">Most Popular</Badge>
+                  <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-white">
+                    Most Popular
+                  </Badge>
                 )}
                 <CardContent className="pt-8 pb-6">
                   <h3 className="text-lg font-semibold">{plan.name}</h3>
@@ -372,7 +368,9 @@ export default function Billing() {
                       {price === 0 ? " forever" : "/month"}
                     </span>
                     {cycle === "yearly" && price > 0 && (
-                      <p className="text-xs text-muted-foreground mt-1">Billed {currencySymbol}{plan.price_yearly}/year</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Billed {currencySymbol}{plan.price_yearly}/year
+                      </p>
                     )}
                   </div>
 
@@ -383,23 +381,23 @@ export default function Billing() {
                   ) : plan.id === "free" ? (
                     <Button disabled className="w-full mb-6" variant="outline">Free Forever</Button>
                   ) : (
-                    <div className="space-y-2 mb-6">
-                      <Button
-                        className="w-full bg-primary hover:bg-primary/90 text-white"
-                        onClick={() => handleCheckout(plan.id)}
-                        disabled={!!checkingOut}
-                        data-testid={`checkout-${plan.id}`}
-                      >
-                        {isChecking ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CreditCard className="w-4 h-4 mr-2" />}
-                        {isChecking ? "Processing..." : `Upgrade to ${plan.name}`}
-                      </Button>
-                    </div>
+                    <Button
+                      className="w-full mb-6 bg-primary hover:bg-primary/90 text-white"
+                      onClick={() => handleCheckout(plan.id)}
+                      disabled={!!checkingOut}
+                      data-testid={`checkout-${plan.id}`}
+                    >
+                      {isChecking
+                        ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Processing...</>
+                        : <><CreditCard className="w-4 h-4 mr-2" />Upgrade to {plan.name}</>}
+                    </Button>
                   )}
 
                   <ul className="space-y-2.5">
                     {plan.features?.map((feat) => (
                       <li key={feat} className="flex items-start gap-2 text-sm">
-                        <Check className="w-4 h-4 text-primary shrink-0 mt-0.5" /> {feat}
+                        <Check className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                        {feat}
                       </li>
                     ))}
                   </ul>
@@ -418,13 +416,14 @@ export default function Billing() {
               <AlertTriangle className="w-5 h-5 text-destructive" /> Cancel Subscription
             </DialogTitle>
             <DialogDescription>
-              Are you sure you want to cancel your {currentPlan} plan? You'll lose access to premium features at the end of your current billing period.
+              Are you sure you want to cancel your {currentPlan} plan? You'll lose access to
+              premium features at the end of your current billing period.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCancelDialog(false)}>Keep My Plan</Button>
             <Button variant="destructive" onClick={handleCancel} disabled={cancelling} data-testid="confirm-cancel-btn">
-              {cancelling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+              {cancelling && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
               Yes, Cancel
             </Button>
           </DialogFooter>
