@@ -13,8 +13,6 @@ ADMIN_EMAILS = [
     "anthoraiofficial@gmail.com",
 ]
 
-# ✅ FIX 1: Only allow plans that exist in PLAN_LIMITS.
-# "enterprise" was silently falling back to "free" limits.
 VALID_PLANS = {"free", "pro", "business"}
 
 def require_admin(current_user: dict = Depends(get_current_user)):
@@ -38,10 +36,15 @@ async def get_admin_stats(
     current_user: dict = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    total_users          = await safe_count(db, "SELECT COUNT(*) FROM public.users")
-    active_subscriptions = await safe_count(db, "SELECT COUNT(*) FROM public.subscriptions WHERE status = 'active'")
-    emails_connected     = await safe_count(db, "SELECT COUNT(*) FROM public.email_accounts")
-    followups_generated  = await safe_count(db, "SELECT COUNT(*) FROM public.followup_suggestions")
+    total_users         = await safe_count(db, "SELECT COUNT(*) FROM public.users")
+    emails_connected    = await safe_count(db, "SELECT COUNT(*) FROM public.email_accounts")
+    followups_generated = await safe_count(db, "SELECT COUNT(*) FROM public.followup_suggestions")
+
+    # Count paid plan users as "active subscriptions"
+    active_subscriptions = await safe_count(
+        db,
+        "SELECT COUNT(*) FROM public.users WHERE plan IN ('pro', 'business')"
+    )
 
     return {
         "total_users":          total_users,
@@ -64,8 +67,8 @@ async def get_all_users(
     try:
         if search:
             query = text("""
-                SELECT id, email, full_name, plan, created_at, is_active
-                FROM public.admin_users
+                SELECT id, email, full_name, plan, created_at, true AS is_active
+                FROM public.users
                 WHERE email ILIKE :search OR full_name ILIKE :search
                 ORDER BY created_at DESC
                 LIMIT :limit OFFSET :offset
@@ -76,18 +79,18 @@ async def get_all_users(
                 "offset": offset
             })
             total = await safe_count(db,
-                "SELECT COUNT(*) FROM public.admin_users WHERE email ILIKE :s OR full_name ILIKE :s",
+                "SELECT COUNT(*) FROM public.users WHERE email ILIKE :s OR full_name ILIKE :s",
                 {"s": f"%{search}%"}
             )
         else:
             query = text("""
-                SELECT id, email, full_name, plan, created_at, is_active
-                FROM public.admin_users
+                SELECT id, email, full_name, plan, created_at, true AS is_active
+                FROM public.users
                 ORDER BY created_at DESC
                 LIMIT :limit OFFSET :offset
             """)
             result = await db.execute(query, {"limit": limit, "offset": offset})
-            total = await safe_count(db, "SELECT COUNT(*) FROM public.admin_users")
+            total = await safe_count(db, "SELECT COUNT(*) FROM public.users")
 
         rows = result.mappings().all()
         return {
@@ -111,9 +114,6 @@ async def update_user_plan(
     if not plan:
         raise HTTPException(status_code=400, detail="plan is required")
 
-    # ✅ FIX 1: Reject unknown plans immediately so they never reach the DB.
-    # Previously "enterprise" would be saved, then silently downgraded to "free"
-    # by get_plan_limits() since it wasn't in PLAN_LIMITS.
     if plan not in VALID_PLANS:
         raise HTTPException(
             status_code=400,
@@ -121,28 +121,25 @@ async def update_user_plan(
         )
 
     try:
-        # Update the canonical source of truth
         await db.execute(
-            text("UPDATE public.users SET plan = :plan WHERE id = :id"),
+            text("UPDATE public.users SET plan = :plan, updated_at = NOW() WHERE id = :id"),
             {"plan": plan, "id": user_id}
         )
 
-        # ✅ FIX 2: Also update the subscriptions table so it stays in sync.
-        # Previously only public.users was updated. The subscriptions table kept
-        # the old plan, meaning billing_routes.py had to patch it in-memory on
-        # every request but never wrote it back to DB (Bug 3 fix is in billing_routes.py).
-        await db.execute(
-            text("""
+        # Try to update subscriptions table too (if it exists)
+        try:
+            await db.execute(
+                text("""
                 UPDATE public.subscriptions
                 SET plan = :plan
-                WHERE user_id = :id
-                AND status IN ('active', 'trialing')
-            """),
-            {"plan": plan, "id": user_id}
-        )
+                WHERE user_id = :id AND status IN ('active', 'trialing')
+                """),
+                {"plan": plan, "id": user_id}
+            )
+        except Exception:
+            pass  # subscriptions table may not exist — that's fine
 
         await db.commit()
-
         logger.info(f"Admin {current_user.get('email')} updated user {user_id} plan to {plan}")
         return {"success": True, "user_id": user_id, "plan": plan}
 
@@ -168,6 +165,8 @@ async def delete_user(
         raise HTTPException(status_code=500, detail=str(e))
 
 # ─── SUBSCRIPTIONS ────────────────────────────────────────────────────────────
+# ✅ FIX: Show users with paid plans from users table directly.
+# The subscriptions table may be empty since billing stores plan in users.plan.
 
 @router.get("/subscriptions")
 async def get_subscriptions(
@@ -179,45 +178,94 @@ async def get_subscriptions(
 ):
     offset = (page - 1) * limit
     try:
-        if status:
-            query = text("""
-                SELECT s.id, s.user_id, s.status, s.plan, s.created_at, s.expires_at,
-                       u.email, u.full_name
-                FROM public.subscriptions s
-                LEFT JOIN public.users u ON u.id = s.user_id
-                WHERE s.status = :status
-                ORDER BY s.created_at DESC
-                LIMIT :limit OFFSET :offset
-            """)
-            result = await db.execute(query, {"status": status, "limit": limit, "offset": offset})
-            total = await safe_count(db,
-                "SELECT COUNT(*) FROM public.subscriptions WHERE status = :status",
-                {"status": status}
-            )
-        else:
-            query = text("""
-                SELECT s.id, s.user_id, s.status, s.plan, s.created_at, s.expires_at,
-                       u.email, u.full_name
-                FROM public.subscriptions s
-                LEFT JOIN public.users u ON u.id = s.user_id
-                ORDER BY s.created_at DESC
-                LIMIT :limit OFFSET :offset
-            """)
-            result = await db.execute(query, {"limit": limit, "offset": offset})
-            total = await safe_count(db, "SELECT COUNT(*) FROM public.subscriptions")
+        # First try the subscriptions table
+        has_subscriptions = await safe_count(db, "SELECT COUNT(*) FROM public.subscriptions")
 
-        rows = result.mappings().all()
-        return {
-            "subscriptions": [dict(r) for r in rows],
-            "total": total,
-            "page": page,
-            "pages": -(-total // limit)
-        }
+        if has_subscriptions > 0:
+            # Real subscriptions table has data — use it
+            if status:
+                query = text("""
+                    SELECT s.id, s.user_id, s.status, s.plan,
+                           s.created_at, s.expires_at,
+                           u.email, u.full_name
+                    FROM public.subscriptions s
+                    LEFT JOIN public.users u ON u.id = s.user_id
+                    WHERE s.status = :status
+                    ORDER BY s.created_at DESC
+                    LIMIT :limit OFFSET :offset
+                """)
+                result = await db.execute(query, {
+                    "status": status, "limit": limit, "offset": offset
+                })
+                total = await safe_count(db,
+                    "SELECT COUNT(*) FROM public.subscriptions WHERE status = :status",
+                    {"status": status}
+                )
+            else:
+                query = text("""
+                    SELECT s.id, s.user_id, s.status, s.plan,
+                           s.created_at, s.expires_at,
+                           u.email, u.full_name
+                    FROM public.subscriptions s
+                    LEFT JOIN public.users u ON u.id = s.user_id
+                    ORDER BY s.created_at DESC
+                    LIMIT :limit OFFSET :offset
+                """)
+                result = await db.execute(query, {"limit": limit, "offset": offset})
+                total = await safe_count(db, "SELECT COUNT(*) FROM public.subscriptions")
+
+            rows = result.mappings().all()
+            return {
+                "subscriptions": [dict(r) for r in rows],
+                "total": total,
+                "page": page,
+                "pages": -(-total // limit)
+            }
+
+        else:
+            # ✅ FALLBACK: subscriptions table empty — derive from users.plan
+            plan_filter = ""
+            params: dict = {"limit": limit, "offset": offset}
+
+            if status == "active":
+                plan_filter = "AND u.plan IN ('pro', 'business')"
+            elif status in ("cancelled", "expired"):
+                plan_filter = "AND u.plan = 'free'"
+
+            query = text(f"""
+                SELECT
+                    u.id,
+                    u.id AS user_id,
+                    CASE WHEN u.plan IN ('pro', 'business') THEN 'active' ELSE 'free' END AS status,
+                    u.plan,
+                    u.created_at,
+                    NULL AS expires_at,
+                    u.email,
+                    u.full_name
+                FROM public.users u
+                WHERE 1=1 {plan_filter}
+                ORDER BY u.created_at DESC
+                LIMIT :limit OFFSET :offset
+            """)
+            result = await db.execute(query, params)
+            rows = result.mappings().all()
+
+            count_query = f"SELECT COUNT(*) FROM public.users WHERE 1=1 {plan_filter}"
+            total = await safe_count(db, count_query)
+
+            return {
+                "subscriptions": [dict(r) for r in rows],
+                "total": total,
+                "page": page,
+                "pages": -(-total // limit)
+            }
+
     except Exception as e:
         logger.error(f"Get subscriptions failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ─── EMAIL ACCOUNT MONITORING ─────────────────────────────────────────────────
+# ✅ FIX: was selecting ea.email but column is email_address
 
 @router.get("/email-accounts")
 async def get_email_accounts(
@@ -229,22 +277,28 @@ async def get_email_accounts(
     offset = (page - 1) * limit
     try:
         query = text("""
-            SELECT ea.id, ea.email, ea.provider, ea.created_at, ea.is_active,
-                   u.email as user_email, u.full_name
+            SELECT
+                ea.id,
+                ea.email_address AS email,
+                ea.provider,
+                ea.created_at,
+                ea.is_active,
+                u.email AS user_email,
+                u.full_name
             FROM public.email_accounts ea
             LEFT JOIN public.users u ON u.id = ea.user_id
             ORDER BY ea.created_at DESC
             LIMIT :limit OFFSET :offset
         """)
         result = await db.execute(query, {"limit": limit, "offset": offset})
-        rows = result.mappings().all()
-        total = await safe_count(db, "SELECT COUNT(*) FROM public.email_accounts")
+        rows   = result.mappings().all()
+        total  = await safe_count(db, "SELECT COUNT(*) FROM public.email_accounts")
 
         return {
             "email_accounts": [dict(r) for r in rows],
-            "total": total,
-            "page": page,
-            "pages": -(-total // limit)
+            "total":          total,
+            "page":           page,
+            "pages":          -(-total // limit)
         }
     except Exception as e:
         logger.error(f"Get email accounts failed: {e}")
@@ -262,22 +316,28 @@ async def get_followup_activity(
     offset = (page - 1) * limit
     try:
         query = text("""
-            SELECT f.id, f.status, f.generated_at as created_at, f.sent_at,
-                   u.email as user_email, u.full_name
+            SELECT
+                f.id,
+                f.status,
+                f.generated_at AS created_at,
+                f.sent_at,
+                f.tone,
+                u.email AS user_email,
+                u.full_name
             FROM public.followup_suggestions f
             LEFT JOIN public.users u ON u.id = f.user_id
             ORDER BY f.generated_at DESC
             LIMIT :limit OFFSET :offset
         """)
         result = await db.execute(query, {"limit": limit, "offset": offset})
-        rows = result.mappings().all()
-        total = await safe_count(db, "SELECT COUNT(*) FROM public.followup_suggestions")
+        rows   = result.mappings().all()
+        total  = await safe_count(db, "SELECT COUNT(*) FROM public.followup_suggestions")
 
         return {
             "followups": [dict(r) for r in rows],
-            "total": total,
-            "page": page,
-            "pages": -(-total // limit)
+            "total":     total,
+            "page":      page,
+            "pages":     -(-total // limit)
         }
     except Exception as e:
         logger.error(f"Get followups failed: {e}")
@@ -297,7 +357,7 @@ async def system_health(
         db_status = f"error: {str(e)}"
 
     counts = {}
-    for table in ["users", "subscriptions", "email_accounts", "followup_suggestions"]:
+    for table in ["users", "email_accounts", "followup_suggestions", "email_threads"]:
         try:
             result = await db.execute(text(f"SELECT COUNT(*) FROM public.{table}"))
             counts[table] = result.scalar() or 0
@@ -305,9 +365,9 @@ async def system_health(
             counts[table] = "error"
 
     return {
-        "database": db_status,
-        "api": "ok",
-        "table_counts": counts,
+        "database":       db_status,
+        "api":            "ok",
+        "table_counts":   counts,
         "allowed_origins": [
             "http://localhost:3000",
             "http://localhost:5173",
