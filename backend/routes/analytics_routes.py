@@ -136,6 +136,35 @@ async def top_contacts(
         SELECT last_message_from, COUNT(*) as count
         FROM email_threads
         WHERE user_id = :uid
+          AND (is_automated = false OR is_automated IS NULL)
+          AND last_message_from IS NOT NULL
+          AND last_message_from NOT ILIKE '%noreply%'
+          AND last_message_from NOT ILIKE '%no-reply%'
+          AND last_message_from NOT ILIKE '%donotreply%'
+          AND last_message_from NOT ILIKE '%notification%'
+          AND last_message_from NOT ILIKE '%notifications%'
+          AND last_message_from NOT ILIKE '%alerts%'
+          AND last_message_from NOT ILIKE '%updates%'
+          AND last_message_from NOT ILIKE '%newsletter%'
+          AND last_message_from NOT ILIKE '%digest%'
+          AND last_message_from NOT ILIKE '%mailer%'
+          AND last_message_from NOT ILIKE '%bounce%'
+          AND last_message_from NOT ILIKE '%automated%'
+          AND last_message_from NOT ILIKE '%support@%'
+          AND last_message_from NOT ILIKE '%billing@%'
+          AND last_message_from NOT ILIKE '%admin@%'
+          AND last_message_from NOT ILIKE '%system@%'
+          AND last_message_from NOT ILIKE '%notify.%'
+          AND last_message_from NOT ILIKE '%linkedin.com%'
+          AND last_message_from NOT ILIKE '%quora.com%'
+          AND last_message_from NOT ILIKE '%reddit%'
+          AND last_message_from NOT ILIKE '%twitter%'
+          AND last_message_from NOT ILIKE '%facebook%'
+          AND last_message_from NOT ILIKE '%instagram%'
+          AND last_message_from NOT ILIKE '%bank%'
+          AND last_message_from NOT ILIKE '%axis%'
+          AND last_message_from NOT ILIKE '%vercel%'
+          AND last_message_from NOT ILIKE '%railway%'
         GROUP BY last_message_from
         ORDER BY count DESC
         LIMIT 10
