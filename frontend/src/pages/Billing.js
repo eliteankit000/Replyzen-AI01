@@ -15,25 +15,9 @@ import { toast } from "sonner";
 const PADDLE_TOKEN  = process.env.REACT_APP_PADDLE_PUBLIC_KEY  || "";
 const PADDLE_VENDOR = process.env.REACT_APP_PADDLE_VENDOR_ID   || "";
 
-// ─────────────────────────────────────────────────────────────
-// ✅ FIX: Detect currency from browser timezone synchronously.
-//
-// ROOT CAUSE of USD showing for Indian users:
-//   billingAPI.detectLocation() → backend → Railway server (US) →
-//   ip-api.com sees Railway proxy IP → returns US/USD → overwrites INR.
-//
-// Railway.app (and most cloud platforms) run in US data centres.
-// The X-Forwarded-For header often contains proxy IPs, not the real
-// client IP. So server-side IP geolocation is unreliable in this setup.
-//
-// SOLUTION: Use Intl.DateTimeFormat().resolvedOptions().timeZone which
-// runs in the BROWSER against the user's actual device timezone setting.
-// India = "Asia/Kolkata" → INR. This is synchronous and instant.
-//
-// The backend detectLocation call is kept for Razorpay vs Paddle
-// provider selection (we still need that), but its currency value
-// is IGNORED in favour of the timezone result.
-// ─────────────────────────────────────────────────────────────
+// ✅ Currency detected from browser timezone — no backend call needed.
+// India ("Asia/Kolkata") → INR + razorpay.
+// All other timezones → USD + paddle.
 function detectCurrencyFromTimezone() {
   try {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
@@ -109,35 +93,18 @@ export default function Billing() {
       // We still call detectLocation() for the payment_provider field
       // (razorpay vs paddle) — but we IGNORE its currency value and use
       // the timezone-based value instead.
+      // ✅ FINAL FIX: No backend call at all for location/currency.
+      // billingAPI.detectLocation() hits Railway (US server) → IP geo
+      // returns USD → overwrites INR. Timezone is 100% reliable in browser.
+      // Provider is derived directly: INR = razorpay, USD = paddle.
       const tzCurrency = detectCurrencyFromTimezone();
-
-      let provider = tzCurrency === "INR" ? "razorpay" : "paddle";
-      let country  = tzCurrency === "INR" ? "IN" : "US";
-
-      try {
-        const locRes = await billingAPI.detectLocation();
-        if (locRes.data) {
-          // Only take the payment_provider from backend — not the currency.
-          // Backend currency is unreliable on Railway (US server IPs).
-          provider = locRes.data.payment_provider || provider;
-          // If backend explicitly says India via country code, also confirm INR
-          if (locRes.data.country === "IN") {
-            country = "IN";
-          }
-        }
-      } catch {
-        console.warn("Location detection failed, using timezone fallback");
-      }
-
-      // Final locationInfo: timezone currency + backend provider
       const finalLocation = {
         currency:         tzCurrency,
-        payment_provider: provider,
-        country,
+        payment_provider: tzCurrency === "INR" ? "razorpay" : "paddle",
+        country:          tzCurrency === "INR" ? "IN" : "US",
       };
       setLocationInfo(finalLocation);
 
-      // Load plans using the timezone-based currency — correct for the user
       const [plansRes, subRes, limitsRes] = await Promise.all([
         billingAPI.getPlans(tzCurrency),
         billingAPI.getSubscription(),
