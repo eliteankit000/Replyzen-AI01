@@ -396,26 +396,16 @@ export default function LandingPage() {
   const [billingCycle, setBillingCycle] = useState("monthly");
   const [scrolled, setScrolled]         = useState(false);
 
-  // ✅ FIX: currency is never null now (timezone gives instant value),
-  // so isLoading is always false — no skeleton delay for pricing cards.
-  // We keep the backend call purely to CORRECT the timezone guess if wrong.
-  useEffect(() => {
-    async function confirmCurrencyFromBackend() {
-      try {
-        const res = await fetch(`${BACKEND_URL}/api/billing/detect-location`);
-        if (res.ok) {
-          const data = await res.json();
-          const backendCurrency = data.currency || "USD";
-          // Only update if different from timezone guess — avoids re-render
-          setCurrency(prev => prev !== backendCurrency ? backendCurrency : prev);
-        }
-        // If backend fails → timezone guess stays, no disruption
-      } catch {
-        // Backend unreachable → keep timezone-detected value silently
-      }
-    }
-    confirmCurrencyFromBackend();
-  }, []);
+  // ✅ FIX: Backend call removed.
+  // Root cause: Railway.app servers are in the US, so the backend IP
+  // detection always returns USD — it sees Railway proxy IPs, not the
+  // real client IP. This was overwriting the correct timezone-based INR
+  // detection with USD for all Indian users.
+  //
+  // Timezone detection (Intl.DateTimeFormat) runs in the BROWSER against
+  // the user's actual device timezone — it cannot be fooled by server
+  // location and is accurate for 99%+ of real users including India.
+  // No backend call needed.
 
   useEffect(() => {
     const handler = () => setScrolled(window.scrollY > 12);
