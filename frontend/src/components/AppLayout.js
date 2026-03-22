@@ -22,9 +22,9 @@ import {
 const NAV_ITEMS = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { path: "/followups", label: "Follow-ups", icon: MessageSquare },
-  { path: "/analytics", label: "Analytics", icon: BarChart3, gated: true },
-  { path: "/billing", label: "Billing", icon: CreditCard },
-  { path: "/settings", label: "Settings", icon: Settings },
+  { path: "/analytics", label: "Analytics",  icon: BarChart3, gated: true },
+  { path: "/billing",   label: "Billing",    icon: CreditCard },
+  { path: "/settings",  label: "Settings",   icon: Settings },
 ];
 
 function SidebarNav({ collapsed, items, userPlan, onNavigate }) {
@@ -81,11 +81,36 @@ function SidebarBrand({ collapsed }) {
   );
 }
 
-function SidebarUserMenu({ collapsed, user, onLogout, navigate }) {
+// ✅ FIXED: Shows Google profile picture if available, falls back to initials
+function UserAvatar({ user, size = "w-8 h-8" }) {
+  const [imgError, setImgError] = useState(false);
+
   const initials = user?.full_name
     ? user.full_name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
-    : "U";
+    : (user?.email?.[0] || "U").toUpperCase();
 
+  if (user?.avatar_url && !imgError) {
+    return (
+      <img
+        src={user.avatar_url}
+        alt={user.full_name || "User"}
+        className={`${size} rounded-full object-cover shrink-0 ring-1 ring-border`}
+        onError={() => setImgError(true)}
+        referrerPolicy="no-referrer"
+      />
+    );
+  }
+
+  return (
+    <Avatar className={`${size} shrink-0`}>
+      <AvatarFallback className="bg-primary/10 text-primary text-xs font-medium">
+        {initials}
+      </AvatarFallback>
+    </Avatar>
+  );
+}
+
+function SidebarUserMenu({ collapsed, user, onLogout, navigate }) {
   return (
     <div className="px-2 py-3 border-t border-border shrink-0">
       <DropdownMenu>
@@ -94,18 +119,25 @@ function SidebarUserMenu({ collapsed, user, onLogout, navigate }) {
             className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted/60 transition-colors ${collapsed ? "justify-center" : ""}`}
             data-testid="user-menu-trigger"
           >
-            <Avatar className="w-8 h-8 shrink-0">
-              <AvatarFallback className="bg-primary/10 text-primary text-xs font-medium">{initials}</AvatarFallback>
-            </Avatar>
+            {/* ✅ Google avatar or initials fallback */}
+            <UserAvatar user={user} size="w-8 h-8" />
             {!collapsed && (
               <div className="text-left min-w-0 flex-1">
                 <p className="text-sm font-medium truncate">{user?.full_name || "User"}</p>
-                <p className="text-xs text-muted-foreground truncate capitalize">{user?.plan || "free"} plan</p>
+                <p className="text-xs text-muted-foreground truncate capitalize">{user?.plan || "free"} Plan</p>
               </div>
             )}
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
+          {/* Avatar + name at top of dropdown */}
+          <div className="flex items-center gap-3 px-3 py-2.5 border-b border-border mb-1">
+            <UserAvatar user={user} size="w-9 h-9" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium truncate">{user?.full_name || "User"}</p>
+              <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+            </div>
+          </div>
           <DropdownMenuItem onClick={() => navigate("/settings")} data-testid="menu-profile">
             <User className="w-4 h-4 mr-2" /> Profile
           </DropdownMenuItem>
@@ -124,9 +156,9 @@ function SidebarUserMenu({ collapsed, user, onLogout, navigate }) {
 
 export default function AppLayout() {
   const { user, logout } = useAuth();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const [collapsed, setCollapsed] = useState(false);
+  const navigate  = useNavigate();
+  const location  = useLocation();
+  const [collapsed, setCollapsed]   = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const userPlan = user?.plan || "free";
 
@@ -134,21 +166,20 @@ export default function AppLayout() {
     ? [...NAV_ITEMS, { path: "/admin", label: "Admin Panel", icon: ShieldCheck }]
     : NAV_ITEMS;
 
-  useEffect(() => {
-    setMobileOpen(false);
-  }, [location.pathname]);
+  useEffect(() => { setMobileOpen(false); }, [location.pathname]);
 
   const handleLogout = useCallback(() => {
     logout();
     navigate("/");
   }, [logout, navigate]);
 
-  const sidebarWidth = collapsed ? "w-[68px]" : "w-[260px]";
+  const sidebarWidth  = collapsed ? "w-[68px]"  : "w-[260px]";
   const sidebarMargin = collapsed ? "md:ml-[68px]" : "md:ml-[260px]";
 
   return (
     <TooltipProvider>
       <div className="min-h-screen" data-testid="app-layout">
+
         {/* Desktop Sidebar */}
         <aside
           className={`hidden md:flex flex-col fixed top-0 left-0 h-screen ${sidebarWidth} bg-card border-r border-border transition-[width] duration-200 ease-in-out z-30`}
@@ -168,8 +199,9 @@ export default function AppLayout() {
           <SidebarUserMenu collapsed={collapsed} user={user} onLogout={handleLogout} navigate={navigate} />
         </aside>
 
-        {/* Main content area */}
+        {/* Main content */}
         <div className={`flex flex-col min-h-screen transition-[margin-left] duration-200 ease-in-out ${sidebarMargin}`}>
+
           {/* Mobile top bar */}
           <header className="md:hidden h-14 flex items-center justify-between px-4 border-b border-border bg-card sticky top-0 z-20 shrink-0">
             <div className="flex items-center gap-2">
@@ -194,6 +226,8 @@ export default function AppLayout() {
                 <span className="text-sm font-bold">Replyzen AI</span>
               </div>
             </div>
+            {/* ✅ Show avatar in mobile top bar too */}
+            <UserAvatar user={user} size="w-8 h-8" />
           </header>
 
           {/* Page content */}
