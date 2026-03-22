@@ -63,7 +63,7 @@ function getPricingPlans(currency, billingCycle) {
       period: "/month",
       billedNote: isYearly ? `Billed ${sym}${p.pro.yearly}/year` : null,
       desc: "For professionals",
-      features: ["2,500 follow-ups per month","Connect up to 3 email accounts","Advanced AI tones","Manual sending","Auto-send automation","Analytics dashboard","Inbox scanning","Follow-up detection","Priority support"],
+      features: ["5,000 follow-ups per month","Connect up to 3 email accounts","Advanced AI tones","Manual sending","Auto-send automation","Analytics dashboard","Inbox scanning","Follow-up detection","Priority support"],
       cta: "Get Pro", popular: true,
     },
     {
