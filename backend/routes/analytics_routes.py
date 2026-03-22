@@ -8,9 +8,44 @@ from datetime import datetime, timezone, timedelta, date
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
+# ─────────────────────────────────────────────────────────────
+# Automated sender/domain patterns to exclude from contacts
+# ─────────────────────────────────────────────────────────────
+AUTOMATED_FILTERS = [
+    "noreply", "no-reply", "donotreply", "do-not-reply",
+    "notification", "notifications", "alerts", "alert",
+    "updates", "update", "newsletter", "digest",
+    "mailer", "bounce", "automated", "system",
+    "support@", "billing@", "admin@", "info@",
+    "hello@notify", "notify.", "hello@mail",
+    # Social/promo platforms
+    "linkedin.com", "quora.com", "reddit", "twitter",
+    "facebook", "instagram", "youtube", "tiktok",
+    # E-commerce / SaaS marketing
+    "shopify", "etsy", "amazon", "ebay", "flipkart",
+    "myprotein", "udemy", "coursera", "skillshare",
+    "mongodb", "replit", "github", "gitlab",
+    "stripe", "paypal", "razorpay", "paddle",
+    "vercel", "railway", "netlify", "heroku",
+    "sendgrid", "mailchimp", "hubspot", "salesforce",
+    # Banks / finance
+    "bank", "axis", "hdfc", "icici", "sbi", "kotak",
+    "paytm", "phonepe", "gpay",
+    # Common system patterns
+    "@email.", "@mail.", "@em.", "@e.",
+]
+
+
+def build_contact_filters():
+    """Build SQL WHERE clauses to filter automated senders."""
+    clauses = []
+    for pattern in AUTOMATED_FILTERS:
+        clauses.append(f"last_message_from NOT ILIKE '%{pattern}%'")
+    return " AND ".join(clauses)
+
 
 # ─────────────────────────────────────────────────────────────
-# Overview (existing — unchanged)
+# Overview
 # ─────────────────────────────────────────────────────────────
 
 @router.get("/overview")
@@ -45,8 +80,8 @@ async def get_overview(
         {"uid": user_id},
     )).scalar() or 0
 
-    total_followups  = followups_sent + followups_pending + followups_dismissed
-    response_rate    = round((followups_sent / total_followups * 100) if total_followups > 0 else 0, 1)
+    total_followups = followups_sent + followups_pending + followups_dismissed
+    response_rate   = round((followups_sent / total_followups * 100) if total_followups > 0 else 0, 1)
 
     accounts_count = (await db.execute(
         text("SELECT COUNT(*) FROM email_accounts WHERE user_id = :uid"),
@@ -69,7 +104,7 @@ async def get_overview(
 
 
 # ─────────────────────────────────────────────────────────────
-# Followups Over Time — FIXED: date passed as date object
+# Followups Over Time — FIXED: date object not string
 # ─────────────────────────────────────────────────────────────
 
 @router.get("/followups-over-time")
@@ -90,7 +125,6 @@ async def followups_over_time(
     now        = datetime.now(timezone.utc)
     start_date = now - timedelta(days=days)
 
-    # ✅ FIX: pass date object not string — asyncpg requires date type
     result = await db.execute(
         text("""
         SELECT date, followups_generated, followups_sent
@@ -98,7 +132,7 @@ async def followups_over_time(
         WHERE user_id = :uid AND date >= :start
         ORDER BY date ASC
         """),
-        {"uid": user_id, "start": start_date.date()},  # ← .date() not .strftime()
+        {"uid": user_id, "start": start_date.date()},
     )
 
     rows      = result.fetchall()
@@ -121,7 +155,7 @@ async def followups_over_time(
 
 
 # ─────────────────────────────────────────────────────────────
-# Top Contacts (existing — unchanged)
+# Top Contacts — FIXED: filters all automated/promo senders
 # ─────────────────────────────────────────────────────────────
 
 @router.get("/top-contacts")
@@ -131,40 +165,18 @@ async def top_contacts(
 ):
     user_id = current_user["user_id"]
 
+    # Build dynamic filter clauses
+    filter_clauses = build_contact_filters()
+
     result = await db.execute(
-        text("""
+        text(f"""
         SELECT last_message_from, COUNT(*) as count
         FROM email_threads
         WHERE user_id = :uid
           AND (is_automated = false OR is_automated IS NULL)
           AND last_message_from IS NOT NULL
-          AND last_message_from NOT ILIKE '%noreply%'
-          AND last_message_from NOT ILIKE '%no-reply%'
-          AND last_message_from NOT ILIKE '%donotreply%'
-          AND last_message_from NOT ILIKE '%notification%'
-          AND last_message_from NOT ILIKE '%notifications%'
-          AND last_message_from NOT ILIKE '%alerts%'
-          AND last_message_from NOT ILIKE '%updates%'
-          AND last_message_from NOT ILIKE '%newsletter%'
-          AND last_message_from NOT ILIKE '%digest%'
-          AND last_message_from NOT ILIKE '%mailer%'
-          AND last_message_from NOT ILIKE '%bounce%'
-          AND last_message_from NOT ILIKE '%automated%'
-          AND last_message_from NOT ILIKE '%support@%'
-          AND last_message_from NOT ILIKE '%billing@%'
-          AND last_message_from NOT ILIKE '%admin@%'
-          AND last_message_from NOT ILIKE '%system@%'
-          AND last_message_from NOT ILIKE '%notify.%'
-          AND last_message_from NOT ILIKE '%linkedin.com%'
-          AND last_message_from NOT ILIKE '%quora.com%'
-          AND last_message_from NOT ILIKE '%reddit%'
-          AND last_message_from NOT ILIKE '%twitter%'
-          AND last_message_from NOT ILIKE '%facebook%'
-          AND last_message_from NOT ILIKE '%instagram%'
-          AND last_message_from NOT ILIKE '%bank%'
-          AND last_message_from NOT ILIKE '%axis%'
-          AND last_message_from NOT ILIKE '%vercel%'
-          AND last_message_from NOT ILIKE '%railway%'
+          AND last_message_from != ''
+          AND {filter_clauses}
         GROUP BY last_message_from
         ORDER BY count DESC
         LIMIT 10
@@ -179,7 +191,7 @@ async def top_contacts(
 
 
 # ─────────────────────────────────────────────────────────────
-# NEW: Tone Performance
+# Tone Performance
 # ─────────────────────────────────────────────────────────────
 
 @router.get("/tone-performance")
@@ -187,7 +199,6 @@ async def tone_performance(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Reply rate broken down by AI tone used."""
     user_id = current_user["user_id"]
 
     try:
@@ -228,7 +239,7 @@ async def tone_performance(
 
 
 # ─────────────────────────────────────────────────────────────
-# NEW: Timing Performance
+# Timing Performance
 # ─────────────────────────────────────────────────────────────
 
 @router.get("/timing-performance")
@@ -236,7 +247,6 @@ async def timing_performance(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Reply rate by how many days before follow-up was sent."""
     user_id = current_user["user_id"]
 
     try:
@@ -279,7 +289,7 @@ async def timing_performance(
 
 
 # ─────────────────────────────────────────────────────────────
-# NEW: Missed Opportunities
+# Missed Opportunities
 # ─────────────────────────────────────────────────────────────
 
 @router.get("/missed-opportunities")
@@ -287,19 +297,18 @@ async def missed_opportunities(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Threads that went silent with no follow-up sent."""
     user_id = current_user["user_id"]
 
     try:
+        # ✅ Use is_opportunity to match exactly what /threads/silent shows
         count = (await db.execute(
             text("""
-            SELECT COUNT(*)
-            FROM email_threads et
+            SELECT COUNT(*) FROM email_threads et
             WHERE et.user_id = :uid
               AND et.is_dismissed = false
               AND et.replied_by_user = false
-              AND et.last_sender_is_user = true
-              AND et.last_message_at < NOW() - INTERVAL '3 days'
+              AND et.is_opportunity = true
+              AND (et.is_filtered = false OR et.is_filtered IS NULL)
               AND NOT EXISTS (
                   SELECT 1 FROM followup_suggestions fs
                   WHERE fs.thread_id = et.id
@@ -308,14 +317,13 @@ async def missed_opportunities(
             """),
             {"uid": user_id},
         )).scalar() or 0
-
         return {"missed_opportunities": int(count)}
     except Exception:
         return {"missed_opportunities": 0}
 
 
 # ─────────────────────────────────────────────────────────────
-# NEW: Follow-Up Score
+# Follow-Up Score
 # ─────────────────────────────────────────────────────────────
 
 @router.get("/score")
@@ -323,14 +331,9 @@ async def followup_score(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Composite follow-up performance score 0–100.
-    Formula: (reply_rate * 0.5) + (consistency * 0.3) + (timing * 0.2)
-    """
     user_id = current_user["user_id"]
 
     try:
-        # Reply rate component
         sent = (await db.execute(
             text("SELECT COUNT(*) FROM followup_suggestions WHERE user_id=:uid AND status='sent'"),
             {"uid": user_id},
@@ -350,10 +353,9 @@ async def followup_score(
             )
             recovered = rec_result.scalar() or 0
 
-        reply_rate   = (recovered / sent * 100) if sent > 0 else 0
-        reply_score  = min(reply_rate, 100)
+        reply_rate        = (recovered / sent * 100) if sent > 0 else 0
+        reply_score       = min(reply_rate, 100)
 
-        # Consistency: sent in last 7 days vs. 30 days
         recent_sent = (await db.execute(
             text("""
             SELECT COUNT(*) FROM followup_suggestions
@@ -364,7 +366,6 @@ async def followup_score(
         )).scalar() or 0
         consistency_score = min(recent_sent * 10, 100)
 
-        # Timing: ratio of on-time follow-ups (3–5 days ideal)
         total_with_timing = (await db.execute(
             text("""
             SELECT COUNT(*) FROM followup_suggestions fs
@@ -386,15 +387,10 @@ async def followup_score(
             {"uid": user_id},
         )).scalar() or 0
 
-        timing_score = (ideal_timing / total_with_timing * 100) if total_with_timing > 0 else 50
+        timing_score  = (ideal_timing / total_with_timing * 100) if total_with_timing > 0 else 50
+        final_score   = round((reply_score * 0.5) + (consistency_score * 0.3) + (timing_score * 0.2))
+        final_score   = max(0, min(100, final_score))
 
-        # Final weighted score
-        final_score = round(
-            (reply_score * 0.5) + (consistency_score * 0.3) + (timing_score * 0.2)
-        )
-        final_score = max(0, min(100, final_score))
-
-        # Score label
         if final_score >= 70:
             label = "Excellent"
         elif final_score >= 50:
@@ -417,7 +413,7 @@ async def followup_score(
 
 
 # ─────────────────────────────────────────────────────────────
-# ENHANCED: Insights endpoint (full version)
+# Insights — FIXED: missed count now matches Opportunities page
 # ─────────────────────────────────────────────────────────────
 
 @router.get("/insights")
@@ -427,7 +423,7 @@ async def get_insights(
 ):
     user_id = current_user["user_id"]
 
-    # ── Base counts ─────────────────────────────────────────
+    # Base counts
     followups_sent = (await db.execute(
         text("SELECT COUNT(*) FROM followup_suggestions WHERE user_id=:uid AND status='sent'"),
         {"uid": user_id},
@@ -438,7 +434,7 @@ async def get_insights(
         {"uid": user_id},
     )).scalar() or 0
 
-    # ── Recovered conversations + avg reply time ─────────────
+    # Recovered conversations + avg reply time
     recovered_conversations = 0
     avg_reply_time_hours    = 0.0
 
@@ -466,13 +462,12 @@ async def get_insights(
     except Exception:
         pass
 
-    # ── Reply rate ───────────────────────────────────────────
     reply_rate = round(
         (recovered_conversations / followups_sent * 100)
         if followups_sent > 0 else 0.0, 1
     )
 
-    # ── Best tone ────────────────────────────────────────────
+    # Best tone
     best_tone = None
     try:
         tone_result = await db.execute(
@@ -497,7 +492,7 @@ async def get_insights(
     except Exception:
         pass
 
-    # ── Best timing ──────────────────────────────────────────
+    # Best timing
     best_days = None
     try:
         timing_result = await db.execute(
@@ -525,7 +520,7 @@ async def get_insights(
     except Exception:
         pass
 
-    # ── Missed opportunities ─────────────────────────────────
+    # ✅ FIXED: Missed opportunities — matches /threads/silent exactly
     missed = 0
     try:
         missed = (await db.execute(
@@ -534,19 +529,39 @@ async def get_insights(
             WHERE et.user_id = :uid
               AND et.is_dismissed = false
               AND et.replied_by_user = false
-              AND et.last_sender_is_user = true
-              AND et.last_message_at < NOW() - INTERVAL '3 days'
+              AND et.is_opportunity = true
+              AND (et.is_filtered = false OR et.is_filtered IS NULL)
               AND NOT EXISTS (
                   SELECT 1 FROM followup_suggestions fs
-                  WHERE fs.thread_id = et.id AND fs.status IN ('sent','pending')
+                  WHERE fs.thread_id = et.id
+                    AND fs.status IN ('sent', 'pending')
               )
             """),
             {"uid": user_id},
         )).scalar() or 0
     except Exception:
-        pass
+        # Fallback if is_opportunity column not yet migrated
+        try:
+            missed = (await db.execute(
+                text("""
+                SELECT COUNT(*) FROM email_threads et
+                WHERE et.user_id = :uid
+                  AND et.is_dismissed = false
+                  AND et.replied_by_user = false
+                  AND et.last_sender_is_user = true
+                  AND (et.is_automated = false OR et.is_automated IS NULL)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM followup_suggestions fs
+                      WHERE fs.thread_id = et.id
+                        AND fs.status IN ('sent', 'pending')
+                  )
+                """),
+                {"uid": user_id},
+            )).scalar() or 0
+        except Exception:
+            missed = 0
 
-    # ── Dynamic insight messages ─────────────────────────────
+    # Dynamic insight messages
     insights = []
 
     if followups_sent == 0:
@@ -555,11 +570,10 @@ async def get_insights(
             "text": "Send your first follow-up to start seeing performance insights here."
         })
     else:
-        # Reply rate insight
         if reply_rate >= 40:
             insights.append({
                 "type": "positive",
-                "text": f"You recover {reply_rate:.0f}% of silent conversations — well above average. Keep it up!"
+                "text": f"You recover {reply_rate:.0f}% of silent conversations — well above average!"
             })
         elif reply_rate >= 20:
             insights.append({
@@ -569,29 +583,26 @@ async def get_insights(
         elif reply_rate > 0:
             insights.append({
                 "type": "tip",
-                "text": "Try a friendlier or more direct tone — small wording changes can significantly boost reply rates."
+                "text": "Try a friendlier or more direct tone — small changes can significantly boost reply rates."
             })
 
-        # Tone insight
         if best_tone:
             insights.append({
                 "type": "positive",
                 "text": f"Your '{best_tone}' tone gets the most replies. Use it more often."
             })
 
-        # Timing insight
         if best_days is not None and best_days > 0:
             insights.append({
                 "type": "positive",
                 "text": f"You get more replies when following up after {best_days} day{'s' if best_days != 1 else ''}."
             })
 
-        # Reply time insight
         if avg_reply_time_hours > 0:
             if avg_reply_time_hours < 24:
                 insights.append({
                     "type": "positive",
-                    "text": f"Contacts reply within {avg_reply_time_hours:.0f}h on average — your timing is working."
+                    "text": f"Contacts reply within {avg_reply_time_hours:.0f}h on average — great timing!"
                 })
             elif avg_reply_time_hours >= 72:
                 insights.append({
@@ -599,21 +610,18 @@ async def get_insights(
                     "text": "Long reply times suggest following up earlier (2–3 days) may work better."
                 })
 
-        # Missed opportunities
-        if missed > 5:
+        if missed > 0:
             insights.append({
                 "type": "action",
-                "text": f"You have {missed} conversations that need a follow-up. Don't let them go cold."
+                "text": f"You have {missed} conversation{'s' if missed != 1 else ''} that need a follow-up — don't let them go cold."
             })
 
-        # Ready drafts
         if ready_to_send > 0:
             insights.append({
                 "type": "action",
                 "text": f"{ready_to_send} draft{'s' if ready_to_send != 1 else ''} ready to send — review and send them now."
             })
 
-        # Recovery celebration
         if recovered_conversations > 0 and len(insights) < 3:
             insights.append({
                 "type": "positive",
