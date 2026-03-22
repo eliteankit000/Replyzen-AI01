@@ -165,18 +165,81 @@ async def top_contacts(
 ):
     user_id = current_user["user_id"]
 
-    # Build dynamic filter clauses
-    filter_clauses = build_contact_filters()
-
     result = await db.execute(
-        text(f"""
+        text("""
         SELECT last_message_from, COUNT(*) as count
         FROM email_threads
         WHERE user_id = :uid
-          AND (is_automated = false OR is_automated IS NULL)
+          AND is_automated = false
           AND last_message_from IS NOT NULL
           AND last_message_from != ''
-          AND {filter_clauses}
+          -- Hard keyword filters
+          AND last_message_from NOT ILIKE '%noreply%'
+          AND last_message_from NOT ILIKE '%no-reply%'
+          AND last_message_from NOT ILIKE '%donotreply%'
+          AND last_message_from NOT ILIKE '%notification%'
+          AND last_message_from NOT ILIKE '%newsletter%'
+          AND last_message_from NOT ILIKE '%digest%'
+          AND last_message_from NOT ILIKE '%alerts%'
+          AND last_message_from NOT ILIKE '%mailer%'
+          AND last_message_from NOT ILIKE '%bounce%'
+          AND last_message_from NOT ILIKE '%automated%'
+          AND last_message_from NOT ILIKE '%unsubscribe%'
+          -- Marketing email subdomain patterns
+          AND last_message_from NOT ILIKE '%@em.%'
+          AND last_message_from NOT ILIKE '%@em1.%'
+          AND last_message_from NOT ILIKE '%@em2.%'
+          AND last_message_from NOT ILIKE '%@em3.%'
+          AND last_message_from NOT ILIKE '%@nl.%'
+          AND last_message_from NOT ILIKE '%@m.%'
+          AND last_message_from NOT ILIKE '%@mail.%'
+          AND last_message_from NOT ILIKE '%@email.%'
+          AND last_message_from NOT ILIKE '%@emaila.%'
+          AND last_message_from NOT ILIKE '%@news.%'
+          AND last_message_from NOT ILIKE '%@info.%'
+          AND last_message_from NOT ILIKE '%@get.%'
+          AND last_message_from NOT ILIKE '%@go.%'
+          AND last_message_from NOT ILIKE '%@send.%'
+          AND last_message_from NOT ILIKE '%@updates.%'
+          AND last_message_from NOT ILIKE '%@notify.%'
+          AND last_message_from NOT ILIKE '%@e.%'
+          -- Known automated domains/services
+          AND last_message_from NOT ILIKE '%cloudflare%'
+          AND last_message_from NOT ILIKE '%ngrok%'
+          AND last_message_from NOT ILIKE '%namecheap%'
+          AND last_message_from NOT ILIKE '%nutrabay%'
+          AND last_message_from NOT ILIKE '%insideapple%'
+          AND last_message_from NOT ILIKE '%1mg%'
+          AND last_message_from NOT ILIKE '%apple.com%'
+          AND last_message_from NOT ILIKE '%linkedin%'
+          AND last_message_from NOT ILIKE '%quora%'
+          AND last_message_from NOT ILIKE '%reddit%'
+          AND last_message_from NOT ILIKE '%twitter%'
+          AND last_message_from NOT ILIKE '%facebook%'
+          AND last_message_from NOT ILIKE '%instagram%'
+          AND last_message_from NOT ILIKE '%youtube%'
+          AND last_message_from NOT ILIKE '%shopify%'
+          AND last_message_from NOT ILIKE '%mongodb%'
+          AND last_message_from NOT ILIKE '%replit%'
+          AND last_message_from NOT ILIKE '%github%'
+          AND last_message_from NOT ILIKE '%vercel%'
+          AND last_message_from NOT ILIKE '%railway%'
+          AND last_message_from NOT ILIKE '%netlify%'
+          AND last_message_from NOT ILIKE '%heroku%'
+          AND last_message_from NOT ILIKE '%stripe%'
+          AND last_message_from NOT ILIKE '%paypal%'
+          AND last_message_from NOT ILIKE '%razorpay%'
+          AND last_message_from NOT ILIKE '%paddle%'
+          AND last_message_from NOT ILIKE '%bank%'
+          AND last_message_from NOT ILIKE '%axis%'
+          AND last_message_from NOT ILIKE '%hdfc%'
+          AND last_message_from NOT ILIKE '%icici%'
+          AND last_message_from NOT ILIKE '%udemy%'
+          AND last_message_from NOT ILIKE '%coursera%'
+          AND last_message_from NOT ILIKE '%myprotein%'
+          AND last_message_from NOT ILIKE '%amazon%'
+          AND last_message_from NOT ILIKE '%flipkart%'
+          AND last_message_from NOT ILIKE '%etsy%'
         GROUP BY last_message_from
         ORDER BY count DESC
         LIMIT 10
