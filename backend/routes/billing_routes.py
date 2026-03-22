@@ -48,7 +48,7 @@ PLANS = {
             "description": "For professionals",
             "price_monthly": 19,
             "price_yearly": 190,
-            "features": ["2,500 follow-ups per month", "Connect up to 3 email accounts", "Advanced AI tones", "Manual sending", "Auto-send automation", "Analytics dashboard", "Inbox scanning", "Follow-up detection", "Priority support"],
+            "features": ["5,000 follow-ups per month", "Connect up to 3 email accounts", "Advanced AI tones", "Manual sending", "Auto-send automation", "Analytics dashboard", "Inbox scanning", "Follow-up detection", "Priority support"],
         },
         {
             "id": "business",
