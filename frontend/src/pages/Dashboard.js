@@ -9,12 +9,37 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   MessageSquare, Mail, Send, TrendingUp, Clock, Zap,
   ArrowRight, Plus, RefreshCw, AlertCircle, CheckCircle2,
-  Bot, EyeOff, Flame, Activity, BarChart3,
+  Bot, EyeOff, Flame, Activity, BarChart3, User, Users,
 } from "lucide-react";
 import { toast } from "sonner";
 
 /* ─────────────────────────────────────────────────────────────
-   BADGE COMPONENTS — identical to original, zero changes
+   HELPERS — parse display name from RFC 5322 email header
+   "John Doe <john@example.com>"  →  "John Doe"
+   "<john@example.com>"           →  "john@example.com"
+   "john@example.com"             →  "john@example.com"
+   Handles multiple recipients:   "A, B" → "A, B"
+───────────────────────────────────────────────────────────── */
+function parseDisplayName(header) {
+  if (!header) return "";
+  const h = header.trim();
+  if (h.includes("<")) {
+    const name = h.slice(0, h.indexOf("<")).trim().replace(/^"|"$/g, "");
+    if (name) return name;
+    return h.slice(h.indexOf("<") + 1, h.indexOf(">")).trim();
+  }
+  return h;
+}
+
+/** For a comma-separated To header, return first name only */
+function parseFirstRecipient(header) {
+  if (!header) return "";
+  const first = header.split(",")[0];
+  return parseDisplayName(first);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   BADGE COMPONENTS
 ───────────────────────────────────────────────────────────── */
 function PriorityBadge({ level }) {
   const cfg = {
@@ -42,13 +67,13 @@ function TypeBadge({ type }) {
 
 function ThreadStatusBadge({ status }) {
   const cfg = {
-    needs_reply:        { label: "Needs Reply", cls: "bg-amber-50 text-amber-700 border-amber-200",      Icon: AlertCircle  },
+    needs_reply:        { label: "Needs Reply", cls: "bg-amber-50 text-amber-700 border-amber-200",       Icon: AlertCircle  },
     replied:            { label: "Replied",     cls: "bg-emerald-50 text-emerald-700 border-emerald-200", Icon: CheckCircle2 },
-    awaiting_response:  { label: "Awaiting",   cls: "bg-blue-50 text-blue-700 border-blue-200",          Icon: Clock        },
-    follow_up_scheduled:{ label: "Scheduled",  cls: "bg-purple-50 text-purple-700 border-purple-200",    Icon: Zap          },
-    dismissed:          { label: "Dismissed",  cls: "bg-gray-50 text-gray-500 border-gray-200",          Icon: EyeOff       },
-    automated:          { label: "Auto",       cls: "bg-gray-50 text-gray-400 border-gray-200",          Icon: Bot          },
-    reply_pending:      { label: "Draft Ready",cls: "bg-orange-50 text-orange-700 border-orange-200",    Icon: Zap          },
+    awaiting_response:  { label: "Awaiting",   cls: "bg-blue-50 text-blue-700 border-blue-200",           Icon: Clock        },
+    follow_up_scheduled:{ label: "Scheduled",  cls: "bg-purple-50 text-purple-700 border-purple-200",     Icon: Zap          },
+    dismissed:          { label: "Dismissed",  cls: "bg-gray-50 text-gray-500 border-gray-200",           Icon: EyeOff       },
+    automated:          { label: "Auto",       cls: "bg-gray-50 text-gray-400 border-gray-200",           Icon: Bot          },
+    reply_pending:      { label: "Draft Ready",cls: "bg-orange-50 text-orange-700 border-orange-200",     Icon: Zap          },
   };
   const c = cfg[status] || cfg.needs_reply;
   const Icon = c.Icon;
@@ -60,7 +85,7 @@ function ThreadStatusBadge({ status }) {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   STAT CARD — redesigned with micro-text, hover lift
+   STAT CARD
 ───────────────────────────────────────────────────────────── */
 function StatCard({ label, value, icon: Icon, color, bg, micro, loading, testId, index }) {
   return (
@@ -86,7 +111,7 @@ function StatCard({ label, value, icon: Icon, color, bg, micro, loading, testId,
 }
 
 /* ─────────────────────────────────────────────────────────────
-   PRIORITY ACTION BAR — new component
+   PRIORITY ACTION BAR
 ───────────────────────────────────────────────────────────── */
 function ActionBar({ highPriority, total, loading, onNavigate }) {
   if (loading) return <Skeleton className="h-12 w-full rounded-xl" />;
@@ -139,10 +164,38 @@ function ActionBar({ highPriority, total, loading, onNavigate }) {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   OPPORTUNITY ROW — inbox-preview style
+   OPPORTUNITY ROW
+   ✅ FIXED:
+     - Subject always shown prominently
+     - Sender name parsed from "Name <email>" → shows "Name"
+     - Recipient name parsed and shown (To: ...)
+     - Falls back gracefully if fields are missing
 ───────────────────────────────────────────────────────────── */
 function OpportunityRow({ thread, onClick }) {
   const context = thread.opportunity_context || "";
+
+  // ── Resolve subject ──────────────────────────────────────────────────
+  const subject = thread.subject?.trim() || "(No subject)";
+
+  // ── Resolve sender display name ──────────────────────────────────────
+  // last_message_from may be:
+  //   A) Already a clean name if the new backend is deployed: "John Doe"
+  //   B) An RFC 5322 header from old data:  "John Doe <john@example.com>"
+  //   C) A bare email address:              "john@example.com"
+  // parseDisplayName() handles all three cases.
+  const senderRaw    = thread.last_message_from || "";
+  const senderName   = parseDisplayName(senderRaw) || senderRaw || "Unknown sender";
+
+  // ── Resolve recipient display name ───────────────────────────────────
+  // to_email may come from new backend field, or participant_names array.
+  const recipientRaw  = thread.to_email
+    || (Array.isArray(thread.participant_names) && thread.participant_names.length > 1
+        ? thread.participant_names[1]
+        : null)
+    || "";
+  const recipientName = parseFirstRecipient(recipientRaw);
+
+  // ── Days label ───────────────────────────────────────────────────────
   const daysLabel = thread.days_silent >= 7
     ? `${thread.days_silent}d silent`
     : thread.days_silent >= 3
@@ -170,22 +223,43 @@ function OpportunityRow({ thread, onClick }) {
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold truncate">{thread.subject}</p>
+
+        {/* ── Subject ── */}
+        <p className="text-sm font-semibold truncate leading-snug" title={subject}>
+          {subject}
+        </p>
+
+        {/* ── Sender → Recipient row ── */}
+        <div className="flex items-center gap-1.5 mt-0.5 text-xs text-muted-foreground truncate">
+          <User className="w-3 h-3 shrink-0 text-muted-foreground/60" />
+          <span className="font-medium text-foreground/80 truncate">{senderName}</span>
+          {recipientName && (
+            <>
+              <ArrowRight className="w-3 h-3 shrink-0 text-muted-foreground/40" />
+              <span className="truncate">{recipientName}</span>
+            </>
+          )}
+        </div>
+
+        {/* ── Context / snippet row ── */}
         {context ? (
-          <p className="text-xs text-primary/70 font-medium mt-0.5 truncate">💡 {context}</p>
+          <p className="text-xs text-primary/70 font-medium mt-1 truncate">💡 {context}</p>
+        ) : thread.snippet ? (
+          <p className="text-xs text-muted-foreground mt-1 truncate italic">
+            {thread.snippet}
+          </p>
         ) : (
-          <p className="text-xs text-muted-foreground mt-0.5 truncate">
+          <p className="text-xs text-muted-foreground mt-1">
             {thread.days_silent > 0
-              ? `No reply for ${thread.days_silent} days after your last message`
+              ? `No reply for ${thread.days_silent} day${thread.days_silent !== 1 ? "s" : ""}`
               : "Waiting for response"}
           </p>
         )}
+
+        {/* ── Badges ── */}
         <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
           <TypeBadge type={thread.type} />
           {thread.thread_status && <ThreadStatusBadge status={thread.thread_status} />}
-          <span className="text-xs text-muted-foreground">
-            {thread.last_message_from || "Unknown"}
-          </span>
         </div>
       </div>
 
@@ -212,7 +286,7 @@ function FollowupRow({ followup, onClick }) {
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <p className="text-sm font-medium truncate">{followup.original_subject}</p>
+          <p className="text-sm font-medium truncate">{followup.original_subject || "(No subject)"}</p>
           <Badge variant="outline" className="text-xs shrink-0 capitalize">{followup.tone}</Badge>
         </div>
         <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{followup.ai_draft}</p>
@@ -243,22 +317,20 @@ function SectionSkeleton() {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   MAIN DASHBOARD — all state + logic IDENTICAL to original
+   MAIN DASHBOARD
 ───────────────────────────────────────────────────────────── */
 export default function Dashboard() {
   const navigate = useNavigate();
   const { user }  = useAuth();
 
-  // ── All state unchanged ──
-  const [stats, setStats]                   = useState(null);
-  const [opportunities, setOpportunities]   = useState([]);
+  const [stats, setStats]                     = useState(null);
+  const [opportunities, setOpportunities]     = useState([]);
   const [recentFollowups, setRecentFollowups] = useState([]);
-  const [loading, setLoading]               = useState(true);
-  const [syncing, setSyncing]               = useState(false);
+  const [loading, setLoading]                 = useState(true);
+  const [syncing, setSyncing]                 = useState(false);
 
   useEffect(() => { loadData(); }, []);
 
-  // ── All handlers unchanged ──
   const loadData = async () => {
     setLoading(true);
     try {
@@ -296,11 +368,9 @@ export default function Dashboard() {
     }
   };
 
-  // ── Derived values unchanged ──
   const highPriority = opportunities.filter(t => t.priority_level === "high").length;
   const actionable   = opportunities.filter(t => t.show_reply).length;
 
-  // ── Stat cards — redesigned labels + micro-text ──
   const statCards = [
     {
       label: "🔥 Needs Attention",
@@ -373,7 +443,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ── Priority Action Bar (NEW) ── */}
+      {/* ── Priority Action Bar ── */}
       <ActionBar
         highPriority={highPriority}
         total={opportunities.length}
@@ -399,13 +469,12 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* ── Main content: Opportunities + Pending ── */}
+      {/* ── Main content ── */}
       <div className="grid lg:grid-cols-5 gap-5">
 
-        {/* ── LEFT: Opportunities (3/5 width) ── */}
+        {/* LEFT: Opportunities */}
         <div className="lg:col-span-3" data-testid="opportunities-card">
           <div className="rounded-2xl border border-border bg-card overflow-hidden">
-            {/* Section header */}
             <div className="flex items-center justify-between px-4 py-3.5 border-b border-border">
               <div>
                 <h2 className="text-sm font-semibold">Opportunities</h2>
@@ -424,7 +493,6 @@ export default function Dashboard() {
               </Button>
             </div>
 
-            {/* Content */}
             {loading ? (
               <SectionSkeleton />
             ) : opportunities.length === 0 ? (
@@ -447,7 +515,6 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Footer CTA */}
             {!loading && opportunities.length > 0 && (
               <div className="px-4 py-3 border-t border-border bg-muted/20">
                 <button
@@ -462,10 +529,9 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* ── RIGHT: Pending Follow-ups (2/5 width) ── */}
+        {/* RIGHT: Pending Follow-ups */}
         <div className="lg:col-span-2" data-testid="pending-followups-card">
           <div className="rounded-2xl border border-border bg-card overflow-hidden h-full">
-            {/* Section header */}
             <div className="flex items-center justify-between px-4 py-3.5 border-b border-border">
               <h2 className="text-sm font-semibold">Pending Follow-Ups</h2>
               <span className="text-xs font-semibold bg-muted text-muted-foreground px-2 py-0.5 rounded-full">
@@ -473,7 +539,6 @@ export default function Dashboard() {
               </span>
             </div>
 
-            {/* Content */}
             {loading ? (
               <SectionSkeleton />
             ) : recentFollowups.length === 0 ? (
@@ -508,7 +573,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ── Connect Gmail prompt — identical logic, improved style ── */}
+      {/* ── Connect Gmail prompt ── */}
       {stats && stats.accounts_connected === 0 && (
         <div
           className="rounded-2xl border-2 border-dashed border-primary/25 bg-accent/20 py-10 px-6 text-center"
