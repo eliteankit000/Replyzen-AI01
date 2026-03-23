@@ -705,13 +705,13 @@ export default function LandingPage() {
               </ul>
             </div>
             <div>
-              <h3 className="font-semibold mb-4 text-sm">Resources</h3>
-              <ul className="space-y-3">
-                <li><a href="/docs"   className="text-sm text-muted-foreground hover:text-foreground transition-colors">Docs</a></li>
-                <li><a href="/api"    className="text-sm text-muted-foreground hover:text-foreground transition-colors">API</a></li>
-                <li><a href="/status" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Status</a></li>
-              </ul>
-            </div>
+  <h3 className="font-semibold mb-4 text-sm">Learn</h3>
+  <ul className="space-y-3">
+    <li><a href="/docs"   title="Product Documentation" className="text-sm text-muted-foreground hover:text-foreground transition-colors">Docs</a></li>
+    <li><a href="/guides" title="Growth Playbooks"       className="text-sm text-muted-foreground hover:text-foreground transition-colors">Guides</a></li>
+    <li><a href="/blog"   title="Insights & Updates"     className="text-sm text-muted-foreground hover:text-foreground transition-colors">Blog</a></li>
+  </ul>
+</div>
             <div>
               <h3 className="font-semibold mb-4 text-sm">Company</h3>
               <ul className="space-y-3">
