@@ -448,6 +448,12 @@ async def sync_emails(
             # PostgreSQL unnest() expands parallel arrays into rows so the
             # entire batch lands in ONE round-trip.  Previously this was
             # one await db.execute(...) per thread — 50× more DB traffic.
+            #
+            # ✅ FIX: Use CAST(:param AS type[]) instead of :param::type[]
+            # asyncpg's SQLAlchemy dialect chokes on `::` immediately after
+            # a named parameter — it fails to substitute some params and
+            # leaves them as raw `:name` literals, causing a syntax error.
+            # CAST(...) is semantically identical and avoids the conflict.
             upsert_result = await db.execute(
                 text("""
                 INSERT INTO email_threads (
@@ -458,22 +464,22 @@ async def sync_emails(
                     is_opportunity, is_filtered, filter_reason
                 )
                 SELECT
-                    unnest(:ids          ::uuid[]),
+                    unnest(CAST(:ids          AS uuid[])),
                     :uid,
-                    unnest(:account_ids  ::uuid[]),
-                    unnest(:tids         ::text[]),
-                    unnest(:subjects     ::text[]),
-                    unnest(:last_ats     ::timestamp[]),
-                    unnest(:from_emails  ::text[]),
+                    unnest(CAST(:account_ids  AS uuid[])),
+                    unnest(CAST(:tids         AS text[])),
+                    unnest(CAST(:subjects     AS text[])),
+                    unnest(CAST(:last_ats     AS timestamp[])),
+                    unnest(CAST(:from_emails  AS text[])),
                     :created_at,
                     false, false, false, false,
-                    unnest(:is_autos       ::boolean[]),
-                    unnest(:is_user_senders::boolean[]),
-                    unnest(:snippets      ::text[]),
-                    unnest(:msg_counts    ::integer[]),
-                    unnest(:is_opps       ::boolean[]),
-                    unnest(:is_filtereds  ::boolean[]),
-                    unnest(:filter_reasons::text[])
+                    unnest(CAST(:is_autos        AS boolean[])),
+                    unnest(CAST(:is_user_senders AS boolean[])),
+                    unnest(CAST(:snippets        AS text[])),
+                    unnest(CAST(:msg_counts      AS integer[])),
+                    unnest(CAST(:is_opps         AS boolean[])),
+                    unnest(CAST(:is_filtereds    AS boolean[])),
+                    unnest(CAST(:filter_reasons  AS text[]))
                 ON CONFLICT (user_id, thread_id) DO UPDATE SET
                     subject             = EXCLUDED.subject,
                     last_message_at     = EXCLUDED.last_message_at,
