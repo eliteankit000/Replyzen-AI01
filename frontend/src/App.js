@@ -4,6 +4,9 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { Toaster } from "@/components/ui/sonner";
 import AppLayout from "@/components/AppLayout";
+import DocsPage   from "./pages/DocsPage";
+import GuidesPage from "./pages/GuidesPage";
+import BlogPage   from "./pages/BlogPage";
 
 // Existing pages (unchanged)
 const LandingPage    = lazy(() => import("@/pages/LandingPage"));
@@ -64,6 +67,9 @@ function App() {
             <Route path="/terms-of-service" element={<TermsOfService />} />
             <Route path="/support" element={<Support />} />
             <Route path="/contact" element={<Contact />} />
+             <Route path="/docs"   element={<DocsPage />} />
+             <Route path="/guides" element={<GuidesPage />} />
+             <Route path="/blog"   element={<BlogPage />} />
 
             {/* Google OAuth callback */}
             <Route path="/auth/callback" element={<AuthCallback />} />
