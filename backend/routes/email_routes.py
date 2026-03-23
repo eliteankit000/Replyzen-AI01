@@ -1,8 +1,17 @@
+import uuid
+import os
+import logging
+import email.utils as _eu  # ✅ moved out of the hot loop
+
+from datetime import datetime, timezone, timedelta
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+
 from database import get_db
 from auth import get_current_user
 from services.gmail_service import (
@@ -15,9 +24,6 @@ from services.thread_filter_service import (
     is_automated_subject, is_real_opportunity,
 )
 from plan_permissions import check_account_limit
-import uuid, os, logging
-from datetime import datetime, timezone, timedelta
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -93,126 +99,70 @@ async def get_full_user(user_id: str, db: AsyncSession) -> dict:
         {"uid": user_id},
     )
     settings_row = settings_result.fetchone()
-    if settings_row:
-        user["silence_delay_days"] = settings_row.silence_delay_days
-    else:
-        user["silence_delay_days"] = 3
+    user["silence_delay_days"] = settings_row.silence_delay_days if settings_row else 3
 
     return user
 
 
 # ─────────────────────────────────────────────────────────────
-# ✅ NEW HELPER: mark a thread as recovered
+# ✅ REPLACED: single-query batch recovery (was N*2 queries)
 #
-# Called inside sync when we detect:
-#   - The contact sent the last message (last_sender_is_user = False)
-#   - A follow-up was previously sent for this thread
-#   - The contact's message arrived AFTER the follow-up was sent
-#   - The thread isn't already marked recovered
+# Old approach: for each thread → SELECT is_recovered → SELECT
+#   latest followup → UPDATE  (2 DB round-trips × N threads)
 #
-# This is intentionally a separate async function so the sync
-# loop stays readable and the logic is easy to test/extend.
+# New approach: one UPDATE ... FROM subquery covering ALL threads
+#   for this user at once.  Zero per-thread round-trips.
 # ─────────────────────────────────────────────────────────────
 
-async def maybe_mark_recovered(
-    thread_db_id: str,
-    user_id: str,
-    is_last_sender_user: bool,
-    last_message_at: Optional[datetime],
-    db: AsyncSession,
-) -> None:
+async def batch_mark_recovered(user_id: str, db: AsyncSession) -> int:
     """
-    Check if a thread qualifies as 'recovered' and update it if so.
-    A thread is recovered when:
-      1. The contact (not us) sent the most recent message
-      2. We previously sent a follow-up for this thread
-      3. The contact's message arrived after our follow-up was sent
+    Detect and mark all recovered threads for a user in a single query.
+
+    A thread is 'recovered' when:
+      1. The contact (not the user) sent the most recent message
+      2. A follow-up was previously sent for this thread
+      3. The contact's reply arrived AFTER our follow-up was sent
       4. The thread isn't already marked is_recovered = true
     """
-    # Skip if last sender was us — no recovery to detect
-    if is_last_sender_user:
-        return
-
-    # Skip if we don't know when the last message arrived
-    if not last_message_at:
-        return
-
     try:
-        # Check if already recovered — avoid redundant writes
-        already = await db.execute(
+        result = await db.execute(
             text("""
-            SELECT is_recovered FROM email_threads
-            WHERE id = :tid AND user_id = :uid
+            UPDATE email_threads et
+            SET
+                is_recovered = TRUE,
+                recovered_at = :now,
+                updated_at   = :now
+            FROM (
+                -- Latest sent follow-up per thread
+                SELECT DISTINCT ON (fs.thread_id)
+                    fs.thread_id,
+                    fs.sent_at AS followup_sent_at
+                FROM followup_suggestions fs
+                WHERE fs.user_id = :uid
+                  AND fs.status  = 'sent'
+                  AND fs.sent_at IS NOT NULL
+                ORDER BY fs.thread_id, fs.sent_at DESC
+            ) latest_followup
+            WHERE et.id                  = latest_followup.thread_id
+              AND et.user_id             = :uid
+              AND et.is_recovered        = FALSE
+              AND et.last_sender_is_user = FALSE
+              AND et.last_message_at     > latest_followup.followup_sent_at
             """),
-            {"tid": thread_db_id, "uid": user_id},
+            {"uid": user_id, "now": datetime.utcnow()},
         )
-        row = already.fetchone()
-        if not row or row[0]:  # already True or thread missing
-            return
-
-        # Find the most recent sent follow-up for this thread
-        followup_result = await db.execute(
-            text("""
-            SELECT sent_at FROM followup_suggestions
-            WHERE thread_id = :tid
-              AND user_id   = :uid
-              AND status    = 'sent'
-              AND sent_at   IS NOT NULL
-            ORDER BY sent_at DESC
-            LIMIT 1
-            """),
-            {"tid": thread_db_id, "uid": user_id},
-        )
-        followup_row = followup_result.fetchone()
-        if not followup_row:
-            return  # no sent follow-up → not a recovery
-
-        followup_sent_at = followup_row[0]
-
-        # Normalise to naive UTC for comparison
-        def to_naive_utc(dt):
-            if dt is None:
-                return None
-            if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
-                return dt.astimezone(timezone.utc).replace(tzinfo=None)
-            return dt
-
-        naive_last_msg  = to_naive_utc(last_message_at)
-        naive_followup  = to_naive_utc(followup_sent_at)
-
-        if naive_last_msg is None or naive_followup is None:
-            return
-
-        # Only recover if the contact replied AFTER our follow-up
-        if naive_last_msg <= naive_followup:
-            return
-
-        # Mark thread as recovered
-        now = datetime.utcnow()
-        await db.execute(
-            text("""
-            UPDATE email_threads
-            SET is_recovered    = TRUE,
-                recovered_at    = :recovered_at,
-                updated_at      = :updated
-            WHERE id = :tid AND user_id = :uid
-            """),
-            {
-                "tid":          thread_db_id,
-                "uid":          user_id,
-                "recovered_at": now,
-                "updated":      now,
-            },
-        )
-        logger.info(f"✅ Thread {thread_db_id} marked as recovered for user {user_id}")
-
+        count = result.rowcount
+        if count:
+            logger.info(f"✅ Batch-recovered {count} thread(s) for user {user_id}")
+        return count
     except Exception as e:
-        # Non-critical — log and continue, never crash the sync
-        logger.warning(f"Recovery detection failed for thread {thread_db_id}: {e}")
+        # Non-critical — never crash the sync
+        logger.warning(f"Batch recovery failed for user {user_id}: {e}")
+        return 0
 
 
 # ─────────────────────────────────────────────────────────────
-# Gmail OAuth — ALL IDENTICAL TO ORIGINAL
+# Gmail OAuth — IDENTICAL TO ORIGINAL
 # ─────────────────────────────────────────────────────────────
 
 @router.get("/gmail/auth-url")
@@ -373,7 +323,17 @@ async def list_accounts(
 
 
 # ─────────────────────────────────────────────────────────────
-# Sync — ORIGINAL LOGIC + recovery hook added in UPDATE branch
+# ✅ OPTIMISED SYNC
+#
+# Changes vs original:
+#  1. Top-level try/except → surfaces the REAL error to the client
+#     instead of a generic "Sync failed"
+#  2. Bulk upsert via PostgreSQL unnest() — all threads for one
+#     account are written in a SINGLE round-trip instead of N
+#  3. Recovery detection replaced with batch_mark_recovered() —
+#     one UPDATE query total instead of 2×N per-thread queries
+#  4. max_results bumped to 100 (was 50)
+#  5. email.utils import moved to module top (was inside the loop)
 # ─────────────────────────────────────────────────────────────
 
 @router.post("/sync")
@@ -381,171 +341,201 @@ async def sync_emails(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    user_id    = current_user["user_id"]
-    user_email = await get_user_email_address(user_id, db)
-    user       = await get_full_user(user_id, db)
+    user_id = current_user["user_id"]
 
-    result = await db.execute(
-        text("""
-        SELECT id, email_address, access_token, refresh_token, token_expiry
-        FROM email_accounts WHERE user_id=:uid AND is_active=true
-        """),
-        {"uid": user_id},
-    )
-    accounts = result.fetchall()
-    if not accounts:
-        raise HTTPException(
-            status_code=404,
-            detail="No connected email accounts found. Please connect Gmail first.",
+    try:
+        user_email = await get_user_email_address(user_id, db)
+        user       = await get_full_user(user_id, db)
+
+        result = await db.execute(
+            text("""
+            SELECT id, email_address, access_token, refresh_token, token_expiry
+            FROM email_accounts WHERE user_id=:uid AND is_active=true
+            """),
+            {"uid": user_id},
         )
-
-    total_synced = 0
-    errors       = []
-
-    for account in accounts:
-        account_dict  = dict(account._mapping)
-        account_id    = account_dict["id"]
-        account_email = account_dict.get("email_address", "")
-
-        db_tokens = {
-            "access_token":  account_dict["access_token"],
-            "refresh_token": account_dict["refresh_token"],
-            "token_expiry":  account_dict["token_expiry"],
-        }
-
-        try:
-            threads = fetch_threads(db_tokens, max_results=50)
-        except Exception as e:
-            errors.append(f"Failed to fetch from {account_email}")
-            logger.error(f"Gmail API failed for {account_id}: {e}")
-            continue
-
-        for thread in threads:
-            existing = await db.execute(
-                text("SELECT id FROM email_threads WHERE thread_id=:tid AND user_id=:uid"),
-                {"tid": thread["gmail_thread_id"], "uid": user_id},
-            )
-            existing_row = existing.fetchone()
-
-            last_message_at = None
-            if thread.get("last_message_date"):
-                try:
-                    import email.utils as eu
-                    parsed = eu.parsedate_to_datetime(thread["last_message_date"])
-                    last_message_at = parsed.astimezone(timezone.utc).replace(tzinfo=None)
-                except Exception:
-                    last_message_at = datetime.utcnow()
-
-            from_email     = thread.get("from_email", "")
-            subject        = thread.get("subject", "")
-            is_automated   = is_automated_sender(from_email) or is_automated_subject(subject)
-            last_from      = thread.get("from_email", "").lower()
-            is_last_from_user = (
-                account_email.lower() in last_from or
-                (user_email.lower() in last_from if user_email else False)
+        accounts = result.fetchall()
+        if not accounts:
+            raise HTTPException(
+                status_code=404,
+                detail="No connected email accounts found. Please connect Gmail first.",
             )
 
-            # Run opportunity filter at sync time — UNCHANGED
-            thread_dict = {
-                **thread,
-                "last_message_from":   from_email,
-                "last_sender_is_user": is_last_from_user,
-                "replied_by_user":     False,
-                "is_dismissed":        False,
-                "days_silent": (
-                    (datetime.utcnow() - last_message_at).days
-                    if last_message_at else 0
-                ),
+        total_synced = 0
+        errors       = []
+
+        for account in accounts:
+            account_dict  = dict(account._mapping)
+            account_id    = account_dict["id"]
+            account_email = account_dict.get("email_address", "")
+
+            db_tokens = {
+                "access_token":  account_dict["access_token"],
+                "refresh_token": account_dict["refresh_token"],
+                "token_expiry":  account_dict["token_expiry"],
             }
-            opp_result    = is_real_opportunity(thread_dict, user)
-            is_opp        = opp_result["allowed"]
-            is_filtered   = not is_opp
-            filter_reason = opp_result["reason"] if not is_opp else None
 
-            # ✅ FIX: Replace SELECT-then-INSERT/UPDATE pattern with a single
-            # atomic upsert (INSERT ... ON CONFLICT DO UPDATE).
-            #
-            # ROOT CAUSE of the UniqueViolationError:
-            #   The original code did SELECT → check → INSERT or UPDATE as
-            #   separate statements. If two sync requests run concurrently
-            #   (e.g. user double-clicks Sync, or auto-sync fires alongside
-            #   manual sync), both SELECT calls return no row, both proceed
-            #   to INSERT, and the second one crashes with:
-            #   "duplicate key value violates unique constraint
-            #    email_threads_user_id_thread_id_key"
-            #
-            # The upsert is atomic — INSERT wins on first sync, UPDATE wins
-            # on every subsequent sync. No race condition possible.
-            upsert_result = await db.execute(
-                text("""
-                INSERT INTO email_threads
-                (id, user_id, account_id, thread_id, subject,
-                 last_message_at, last_message_from, created_at,
-                 is_silent, needs_followup, is_dismissed, reply_generated,
-                 is_automated, last_sender_is_user, snippet, message_count,
-                 is_opportunity, is_filtered, filter_reason)
-                VALUES
-                (:id, :uid, :account_id, :tid, :subject,
-                 :last_at, :from_email, :created,
-                 false, false, false, false,
-                 :is_auto, :is_user_sender, :snippet, :msg_count,
-                 :is_opp, :is_filtered, :filter_reason)
-                ON CONFLICT (user_id, thread_id) DO UPDATE SET
-                    subject              = EXCLUDED.subject,
-                    last_message_at      = EXCLUDED.last_message_at,
-                    last_message_from    = EXCLUDED.last_message_from,
-                    is_automated         = EXCLUDED.is_automated,
-                    last_sender_is_user  = EXCLUDED.last_sender_is_user,
-                    snippet              = EXCLUDED.snippet,
-                    message_count        = EXCLUDED.message_count,
-                    updated_at           = :updated,
-                    is_opportunity       = EXCLUDED.is_opportunity,
-                    is_filtered          = EXCLUDED.is_filtered,
-                    filter_reason        = EXCLUDED.filter_reason
-                RETURNING id, (xmax = 0) AS inserted
-                """),
-                {
-                    "id":             str(uuid.uuid4()),
-                    "uid":            user_id,
-                    "account_id":     account_id,
-                    "tid":            thread["gmail_thread_id"],
-                    "subject":        thread["subject"],
-                    "last_at":        last_message_at,
-                    "from_email":     from_email,
-                    "created":        datetime.utcnow(),
-                    "is_auto":        is_automated,
-                    "is_user_sender": is_last_from_user,
-                    "snippet":        thread.get("snippet", ""),
-                    "msg_count":      thread.get("message_count", 1),
-                    "is_opp":         is_opp,
-                    "is_filtered":    is_filtered,
-                    "filter_reason":  filter_reason,
-                    "updated":        datetime.utcnow(),
-                },
-            )
-            upsert_row = upsert_result.fetchone()
-            was_inserted = upsert_row[1] if upsert_row else False
-            thread_db_id = str(upsert_row[0]) if upsert_row else None
+            # ── Fetch from Gmail ──────────────────────────────────────────
+            try:
+                threads = fetch_threads(db_tokens, max_results=100)  # ↑ was 50
+            except Exception as e:
+                err_msg = f"Failed to fetch from {account_email}: {e}"
+                errors.append(err_msg)
+                logger.error(f"Gmail API failed for account {account_id}: {e}")
+                continue
 
-            if was_inserted and is_opp:
-                total_synced += 1
+            if not threads:
+                continue
 
-            # Recovery detection — only meaningful on existing threads
-            if not was_inserted and thread_db_id:
-                await maybe_mark_recovered(
-                    thread_db_id        = thread_db_id,
-                    user_id             = user_id,
-                    is_last_sender_user = is_last_from_user,
-                    last_message_at     = last_message_at,
-                    db                  = db,
+            # ── Build batch rows (pure Python, no DB) ────────────────────
+            now  = datetime.utcnow()
+            rows = []
+
+            for thread in threads:
+                # Parse last-message date
+                lmd = thread.get("last_message_date")
+                if lmd:
+                    try:
+                        parsed          = _eu.parsedate_to_datetime(lmd)
+                        last_message_at = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+                    except Exception:
+                        last_message_at = now
+                else:
+                    last_message_at = None
+
+                from_email = thread.get("from_email", "") or ""
+                subject    = thread.get("subject", "")  or ""
+                last_from  = from_email.lower()
+
+                is_automated      = is_automated_sender(from_email) or is_automated_subject(subject)
+                is_last_from_user = (
+                    account_email.lower() in last_from
+                    or (bool(user_email) and user_email.lower() in last_from)
                 )
 
+                thread_dict = {
+                    **thread,
+                    "last_message_from":   from_email,
+                    "last_sender_is_user": is_last_from_user,
+                    "replied_by_user":     False,
+                    "is_dismissed":        False,
+                    "days_silent": (
+                        (now - last_message_at).days if last_message_at else 0
+                    ),
+                }
+                opp_result    = is_real_opportunity(thread_dict, user)
+                is_opp        = opp_result["allowed"]
+                filter_reason = opp_result["reason"] if not is_opp else None
+
+                rows.append({
+                    "id":             str(uuid.uuid4()),
+                    "account_id":     account_id,
+                    "tid":            thread["gmail_thread_id"],
+                    "subject":        subject,
+                    "last_at":        last_message_at,
+                    "from_email":     from_email,
+                    "is_auto":        is_automated,
+                    "is_user_sender": is_last_from_user,
+                    "snippet":        thread.get("snippet") or "",
+                    "msg_count":      thread.get("message_count") or 1,
+                    "is_opp":         is_opp,
+                    "is_filtered":    not is_opp,
+                    "filter_reason":  filter_reason,
+                })
+
+            # ── Single bulk upsert for ALL threads in this account ────────
+            #
+            # PostgreSQL unnest() expands parallel arrays into rows so the
+            # entire batch lands in ONE round-trip.  Previously this was
+            # one await db.execute(...) per thread — 50× more DB traffic.
+            upsert_result = await db.execute(
+                text("""
+                INSERT INTO email_threads (
+                    id, user_id, account_id, thread_id, subject,
+                    last_message_at, last_message_from, created_at,
+                    is_silent, needs_followup, is_dismissed, reply_generated,
+                    is_automated, last_sender_is_user, snippet, message_count,
+                    is_opportunity, is_filtered, filter_reason
+                )
+                SELECT
+                    unnest(:ids          ::uuid[]),
+                    :uid,
+                    unnest(:account_ids  ::uuid[]),
+                    unnest(:tids         ::text[]),
+                    unnest(:subjects     ::text[]),
+                    unnest(:last_ats     ::timestamp[]),
+                    unnest(:from_emails  ::text[]),
+                    :created_at,
+                    false, false, false, false,
+                    unnest(:is_autos       ::boolean[]),
+                    unnest(:is_user_senders::boolean[]),
+                    unnest(:snippets      ::text[]),
+                    unnest(:msg_counts    ::integer[]),
+                    unnest(:is_opps       ::boolean[]),
+                    unnest(:is_filtereds  ::boolean[]),
+                    unnest(:filter_reasons::text[])
+                ON CONFLICT (user_id, thread_id) DO UPDATE SET
+                    subject             = EXCLUDED.subject,
+                    last_message_at     = EXCLUDED.last_message_at,
+                    last_message_from   = EXCLUDED.last_message_from,
+                    is_automated        = EXCLUDED.is_automated,
+                    last_sender_is_user = EXCLUDED.last_sender_is_user,
+                    snippet             = EXCLUDED.snippet,
+                    message_count       = EXCLUDED.message_count,
+                    updated_at          = :updated_at,
+                    is_opportunity      = EXCLUDED.is_opportunity,
+                    is_filtered         = EXCLUDED.is_filtered,
+                    filter_reason       = EXCLUDED.filter_reason
+                RETURNING id, (xmax = 0) AS inserted, is_opportunity
+                """),
+                {
+                    "uid":             user_id,
+                    "created_at":      now,
+                    "updated_at":      now,
+                    "ids":             [r["id"]             for r in rows],
+                    "account_ids":     [r["account_id"]     for r in rows],
+                    "tids":            [r["tid"]            for r in rows],
+                    "subjects":        [r["subject"]        for r in rows],
+                    "last_ats":        [r["last_at"]        for r in rows],
+                    "from_emails":     [r["from_email"]     for r in rows],
+                    "is_autos":        [r["is_auto"]        for r in rows],
+                    "is_user_senders": [r["is_user_sender"] for r in rows],
+                    "snippets":        [r["snippet"]        for r in rows],
+                    "msg_counts":      [r["msg_count"]      for r in rows],
+                    "is_opps":         [r["is_opp"]         for r in rows],
+                    "is_filtereds":    [r["is_filtered"]    for r in rows],
+                    "filter_reasons":  [r["filter_reason"]  for r in rows],
+                },
+            )
+
+            # Count newly inserted opportunity threads
+            for upsert_row in upsert_result.fetchall():
+                was_inserted = upsert_row[1]   # (xmax = 0) → True when INSERTed
+                is_opp_row   = upsert_row[2]   # is_opportunity
+                if was_inserted and is_opp_row:
+                    total_synced += 1
+
+            await db.commit()
+
+        # ── Batch recovery detection — ONE query, replaces N*2 queries ───
+        await batch_mark_recovered(user_id, db)
         await db.commit()
 
-    response = {"message": "Sync complete", "new_threads": total_synced}
-    if errors:
-        response["warnings"] = errors
-    return response
+        response: dict = {"message": "Sync complete", "new_threads": total_synced}
+        if errors:
+            response["warnings"] = errors
+        return response
+
+    except HTTPException:
+        raise  # let FastAPI handle 404 / 403 etc. as-is
+
+    except Exception as exc:
+        # ✅ Surface the REAL error so "Sync failed" stops being a mystery
+        logger.exception(f"Sync failed for user {user_id}: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Sync failed: {exc}",
+        )
 
 
 # ─────────────────────────────────────────────────────────────
