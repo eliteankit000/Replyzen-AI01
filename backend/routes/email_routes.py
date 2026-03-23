@@ -462,85 +462,83 @@ async def sync_emails(
             is_filtered   = not is_opp
             filter_reason = opp_result["reason"] if not is_opp else None
 
-            if existing_row:
-                # ── EXISTING THREAD UPDATE — original SQL unchanged ──
-                await db.execute(
-                    text("""
-                    UPDATE email_threads
-                    SET subject=:subject, last_message_at=:last_at,
-                        last_message_from=:from_email, is_automated=:is_auto,
-                        last_sender_is_user=:is_user_sender, snippet=:snippet,
-                        message_count=:msg_count, updated_at=:updated,
-                        is_opportunity=:is_opp, is_filtered=:is_filtered,
-                        filter_reason=:filter_reason
-                    WHERE thread_id=:tid AND user_id=:uid
-                    """),
-                    {
-                        "subject":        thread["subject"],
-                        "last_at":        last_message_at,
-                        "from_email":     from_email,
-                        "is_auto":        is_automated,
-                        "is_user_sender": is_last_from_user,
-                        "snippet":        thread.get("snippet", ""),
-                        "msg_count":      thread.get("message_count", 1),
-                        "updated":        datetime.utcnow(),
-                        "is_opp":         is_opp,
-                        "is_filtered":    is_filtered,
-                        "filter_reason":  filter_reason,
-                        "tid":            thread["gmail_thread_id"],
-                        "uid":            user_id,
-                    },
-                )
+            # ✅ FIX: Replace SELECT-then-INSERT/UPDATE pattern with a single
+            # atomic upsert (INSERT ... ON CONFLICT DO UPDATE).
+            #
+            # ROOT CAUSE of the UniqueViolationError:
+            #   The original code did SELECT → check → INSERT or UPDATE as
+            #   separate statements. If two sync requests run concurrently
+            #   (e.g. user double-clicks Sync, or auto-sync fires alongside
+            #   manual sync), both SELECT calls return no row, both proceed
+            #   to INSERT, and the second one crashes with:
+            #   "duplicate key value violates unique constraint
+            #    email_threads_user_id_thread_id_key"
+            #
+            # The upsert is atomic — INSERT wins on first sync, UPDATE wins
+            # on every subsequent sync. No race condition possible.
+            upsert_result = await db.execute(
+                text("""
+                INSERT INTO email_threads
+                (id, user_id, account_id, thread_id, subject,
+                 last_message_at, last_message_from, created_at,
+                 is_silent, needs_followup, is_dismissed, reply_generated,
+                 is_automated, last_sender_is_user, snippet, message_count,
+                 is_opportunity, is_filtered, filter_reason)
+                VALUES
+                (:id, :uid, :account_id, :tid, :subject,
+                 :last_at, :from_email, :created,
+                 false, false, false, false,
+                 :is_auto, :is_user_sender, :snippet, :msg_count,
+                 :is_opp, :is_filtered, :filter_reason)
+                ON CONFLICT (user_id, thread_id) DO UPDATE SET
+                    subject              = EXCLUDED.subject,
+                    last_message_at      = EXCLUDED.last_message_at,
+                    last_message_from    = EXCLUDED.last_message_from,
+                    is_automated         = EXCLUDED.is_automated,
+                    last_sender_is_user  = EXCLUDED.last_sender_is_user,
+                    snippet              = EXCLUDED.snippet,
+                    message_count        = EXCLUDED.message_count,
+                    updated_at           = :updated,
+                    is_opportunity       = EXCLUDED.is_opportunity,
+                    is_filtered          = EXCLUDED.is_filtered,
+                    filter_reason        = EXCLUDED.filter_reason
+                RETURNING id, (xmax = 0) AS inserted
+                """),
+                {
+                    "id":             str(uuid.uuid4()),
+                    "uid":            user_id,
+                    "account_id":     account_id,
+                    "tid":            thread["gmail_thread_id"],
+                    "subject":        thread["subject"],
+                    "last_at":        last_message_at,
+                    "from_email":     from_email,
+                    "created":        datetime.utcnow(),
+                    "is_auto":        is_automated,
+                    "is_user_sender": is_last_from_user,
+                    "snippet":        thread.get("snippet", ""),
+                    "msg_count":      thread.get("message_count", 1),
+                    "is_opp":         is_opp,
+                    "is_filtered":    is_filtered,
+                    "filter_reason":  filter_reason,
+                    "updated":        datetime.utcnow(),
+                },
+            )
+            upsert_row = upsert_result.fetchone()
+            was_inserted = upsert_row[1] if upsert_row else False
+            thread_db_id = str(upsert_row[0]) if upsert_row else None
 
-                # ✅ NEW: recovery detection — non-blocking, safe
-                # Runs only on existing threads (new threads can't be recovered
-                # on first sync since no follow-up has been sent yet).
-                thread_db_id = str(existing_row[0])
+            if was_inserted and is_opp:
+                total_synced += 1
+
+            # Recovery detection — only meaningful on existing threads
+            if not was_inserted and thread_db_id:
                 await maybe_mark_recovered(
-                    thread_db_id    = thread_db_id,
-                    user_id         = user_id,
+                    thread_db_id        = thread_db_id,
+                    user_id             = user_id,
                     is_last_sender_user = is_last_from_user,
-                    last_message_at = last_message_at,
-                    db              = db,
+                    last_message_at     = last_message_at,
+                    db                  = db,
                 )
-
-            else:
-                # ── NEW THREAD INSERT — identical to original ──
-                await db.execute(
-                    text("""
-                    INSERT INTO email_threads
-                    (id, user_id, account_id, thread_id, subject,
-                     last_message_at, last_message_from, created_at,
-                     is_silent, needs_followup, is_dismissed, reply_generated,
-                     is_automated, last_sender_is_user, snippet, message_count,
-                     is_opportunity, is_filtered, filter_reason)
-                    VALUES
-                    (:id, :uid, :account_id, :tid, :subject,
-                     :last_at, :from_email, :created,
-                     false, false, false, false,
-                     :is_auto, :is_user_sender, :snippet, :msg_count,
-                     :is_opp, :is_filtered, :filter_reason)
-                    """),
-                    {
-                        "id":           str(uuid.uuid4()),
-                        "uid":          user_id,
-                        "account_id":   account_id,
-                        "tid":          thread["gmail_thread_id"],
-                        "subject":      thread["subject"],
-                        "last_at":      last_message_at,
-                        "from_email":   from_email,
-                        "created":      datetime.utcnow(),
-                        "is_auto":      is_automated,
-                        "is_user_sender": is_last_from_user,
-                        "snippet":      thread.get("snippet", ""),
-                        "msg_count":    thread.get("message_count", 1),
-                        "is_opp":       is_opp,
-                        "is_filtered":  is_filtered,
-                        "filter_reason": filter_reason,
-                    },
-                )
-                if is_opp:
-                    total_synced += 1
 
         await db.commit()
 
