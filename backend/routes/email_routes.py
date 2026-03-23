@@ -403,9 +403,28 @@ async def sync_emails(
                 else:
                     last_message_at = None
 
-                from_email = thread.get("from_email", "") or ""
-                subject    = thread.get("subject", "")  or ""
-                last_from  = from_email.lower()
+                # ── Parse display names from RFC 5322 headers ───────────────
+                # Gmail returns "John Doe <john@example.com>" in From/To headers.
+                # _parse_display() extracts the human name so the UI shows
+                # "John Doe" instead of a raw email address.
+                def _parse_display(header: str) -> str:
+                    h = (header or "").strip()
+                    if "<" in h:
+                        name = h[:h.index("<")].strip().strip('"')
+                        if name:
+                            return name
+                        # no display name → return just the address part
+                        return h[h.index("<")+1 : h.index(">")].strip()
+                    return h
+
+                raw_from     = thread.get("from_email", "") or ""
+                raw_to       = thread.get("to_email",   "") or ""   # recipient header
+                subject      = thread.get("subject",    "") or ""
+
+                from_display = _parse_display(raw_from)   # "John Doe"
+                to_display   = _parse_display(raw_to)     # "Jane Smith" / account email
+                from_email   = raw_from                   # full header kept for identity checks
+                last_from    = from_email.lower()
 
                 is_automated      = is_automated_sender(from_email) or is_automated_subject(subject)
                 is_last_from_user = (
@@ -433,7 +452,9 @@ async def sync_emails(
                     "tid":            thread["gmail_thread_id"],
                     "subject":        subject,
                     "last_at":        last_message_at,
-                    "from_email":     from_email,
+                    # ✅ Store parsed display name, not raw RFC 5322 header
+                    "from_email":     from_display or raw_from,
+                    "to_email":       to_display   or raw_to,
                     "is_auto":        is_automated,
                     "is_user_sender": is_last_from_user,
                     "snippet":        thread.get("snippet") or "",
