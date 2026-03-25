@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # route files (e.g. routes/settings.py). Wrong imports = silent 500 errors.
 # -------------------------------------------------------------------------
 from database import get_db                # match your project
-from .dependencies import get_current_user  # match your project
+from auth import get_current_user  # match your project
 # -------------------------------------------------------------------------
 
 from services.smart_reply_service import (
