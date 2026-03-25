@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from dotenv import load_dotenv
 import logging
+from routes.smart_reply import router as smart_reply_router
 import asyncio
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -120,6 +121,7 @@ from routes.settings_routes import router as settings_router
 from routes.admin_routes import router as admin_router        # ← ADDED
 
 app.include_router(auth_router)
+app.include_router(smart_reply_router)
 app.include_router(email_router)
 app.include_router(followup_router)
 app.include_router(billing_router)
