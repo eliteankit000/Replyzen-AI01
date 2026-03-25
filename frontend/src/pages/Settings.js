@@ -1,4 +1,17 @@
-import { useState, useEffect } from "react";
+/**
+ * Settings.js — Refactored with Smart Reply Mode
+ * ================================================
+ * CHANGES vs original:
+ *   1. "Auto-Send" card replaced with "Smart Reply Mode" card (same position in page).
+ *   2. Smart Reply Mode card has: toggle, config panel, first-time modal.
+ *   3. New "Smart Reply Activity" card shows queued / sent / cancelled emails.
+ *   4. Live countdown timer for queued emails with Cancel button.
+ *
+ * ALL other cards (Profile, Email Accounts, Follow-Up Control,
+ * Blocked Senders, Silence Rules, Notifications) are 100% unchanged.
+ */
+
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { settingsAPI, emailAPI, billingAPI } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
@@ -13,16 +26,54 @@ import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
   User, Mail, Bell, Clock, Shield, Trash2, Plus, Save,
   Loader2, CheckCircle2, Lock, ArrowUpRight, Filter, X, Target,
+  Zap, Timer, Ban, Send, AlertCircle, Info,
 } from "lucide-react";
 import { toast } from "sonner";
 
-// ── Chip / Tag component for contact & domain lists ──────────
+// ─────────────────────────────────────────────────────────────────
+// Smart Reply API helper
+// NOTE: Add these methods to your @/lib/api.js file and remove this block.
+// ─────────────────────────────────────────────────────────────────
+const smartReplyAPI = {
+  getSettings: () =>
+    fetch("/api/smart-reply/settings", { credentials: "include" }).then(r => r.json()),
+
+  saveSettings: (data) =>
+    fetch("/api/smart-reply/settings", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }).then(r => {
+      if (!r.ok) return r.json().then(e => Promise.reject(e));
+      return r.json();
+    }),
+
+  getQueue: (status) => {
+    const qs = status ? `?status=${status}` : "";
+    return fetch(`/api/smart-reply/queue${qs}`, { credentials: "include" }).then(r => r.json());
+  },
+
+  cancelEmail: (queueId) =>
+    fetch(`/api/smart-reply/queue/${queueId}/cancel`, {
+      method: "POST",
+      credentials: "include",
+    }).then(r => {
+      if (!r.ok) return r.json().then(e => Promise.reject(e));
+      return r.json();
+    }),
+};
+
+// ─────────────────────────────────────────────────────────────────
+// Chip / Tag component — UNCHANGED from original
+// ─────────────────────────────────────────────────────────────────
 function TagInput({ tags, onAdd, onRemove, placeholder }) {
   const [input, setInput] = useState("");
 
@@ -60,11 +111,200 @@ function TagInput({ tags, onAdd, onRemove, placeholder }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Countdown display for queued emails
+// ─────────────────────────────────────────────────────────────────
+function CountdownTimer({ scheduledAt }) {
+  const [secondsLeft, setSecondsLeft] = useState(0);
+
+  useEffect(() => {
+    const target = new Date(scheduledAt).getTime();
+    const tick = () => {
+      const diff = Math.max(0, Math.ceil((target - Date.now()) / 1000));
+      setSecondsLeft(diff);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [scheduledAt]);
+
+  if (secondsLeft <= 0) return <span className="text-xs text-emerald-600 font-medium">Sending now…</span>;
+
+  const mins = Math.floor(secondsLeft / 60);
+  const secs = secondsLeft % 60;
+  const label = mins > 0
+    ? `${mins}m ${secs}s`
+    : `${secs}s`;
+
+  return (
+    <span className="text-xs text-amber-600 font-medium flex items-center gap-1">
+      <Timer className="w-3 h-3" />
+      Sends in {label}
+    </span>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Category options for Smart Reply
+// ─────────────────────────────────────────────────────────────────
+const CATEGORY_OPTIONS = [
+  { value: "faq",       label: "FAQ",        description: "Frequently asked questions" },
+  { value: "inquiry",   label: "Inquiry",    description: "General inquiries" },
+  { value: "follow_up", label: "Follow-up",  description: "Follow-up conversations" },
+  { value: "support",   label: "Support",    description: "Support requests" },
+  { value: "sales",     label: "Sales",      description: "Sales-related emails" },
+];
+
+// ─────────────────────────────────────────────────────────────────
+// First-Time Confirmation Modal
+// ─────────────────────────────────────────────────────────────────
+function SmartReplyConfirmationModal({ open, onConfirm, onCancel }) {
+  const [checked, setChecked] = useState(false);
+
+  return (
+    <Dialog open={open} onOpenChange={val => !val && onCancel()}>
+      <DialogContent className="max-w-md" data-testid="smart-reply-confirm-modal">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Zap className="w-5 h-5 text-primary" />
+            Enable Smart Reply Mode
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-3">
+            <p className="text-sm font-medium text-foreground">
+              How Smart Reply Mode works:
+            </p>
+            <ul className="space-y-2">
+              {[
+                "Emails are sent based on your rules — never without your configuration.",
+                "Each email waits in a queue for your chosen delay before sending.",
+                "You can cancel any queued email before it sends.",
+                "You can disable Smart Reply Mode at any time.",
+                "Daily send limits are enforced automatically.",
+              ].map((item, i) => (
+                <li key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mt-0.5 shrink-0" />
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-900/40 p-3 flex gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              Smart Reply Mode is a user-controlled automation.
+              Emails are sent based on your rules — you remain in control at all times.
+            </p>
+          </div>
+
+          <div
+            className="flex items-start gap-2.5 cursor-pointer"
+            onClick={() => setChecked(c => !c)}
+          >
+            <Checkbox checked={checked} onCheckedChange={setChecked} id="sr-confirm-check"
+              className="mt-0.5" />
+            <Label htmlFor="sr-confirm-check" className="text-sm cursor-pointer leading-snug">
+              I understand how Smart Reply Mode works and want to enable it
+            </Label>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onCancel} data-testid="sr-modal-cancel">
+            Cancel
+          </Button>
+          <Button
+            onClick={onConfirm}
+            disabled={!checked}
+            className="bg-primary hover:bg-primary/90 text-white"
+            data-testid="sr-modal-confirm"
+          >
+            <Zap className="w-4 h-4 mr-1.5" />
+            Enable Smart Reply Mode
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Queue Item Row
+// ─────────────────────────────────────────────────────────────────
+function QueueItemRow({ item, onCancel }) {
+  const [cancelling, setCancelling] = useState(false);
+
+  const handleCancel = async () => {
+    setCancelling(true);
+    try {
+      await onCancel(item.id);
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  const statusBadge = {
+    queued:    <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 text-xs">Queued</Badge>,
+    sent:      <Badge variant="outline" className="text-emerald-600 border-emerald-300 bg-emerald-50 text-xs">Sent</Badge>,
+    cancelled: <Badge variant="outline" className="text-muted-foreground border-muted text-xs">Cancelled</Badge>,
+  }[item.status] || null;
+
+  return (
+    <div
+      className="p-3 rounded-lg border border-border bg-background space-y-1.5"
+      data-testid={`queue-item-${item.id}`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-medium truncate flex-1">{item.subject || "(No Subject)"}</p>
+        {statusBadge}
+      </div>
+      <p className="text-xs text-muted-foreground truncate">To: {item.to_email}</p>
+      <div className="flex items-center justify-between">
+        {item.status === "queued" ? (
+          <CountdownTimer scheduledAt={item.scheduled_at} />
+        ) : item.status === "sent" ? (
+          <span className="text-xs text-muted-foreground flex items-center gap-1">
+            <Send className="w-3 h-3" />
+            Sent {item.sent_at ? new Date(item.sent_at).toLocaleTimeString() : ""}
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground flex items-center gap-1">
+            <Ban className="w-3 h-3" /> Cancelled
+          </span>
+        )}
+
+        {item.status === "queued" && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleCancel}
+            disabled={cancelling}
+            className="h-6 px-2 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+            data-testid={`cancel-queue-${item.id}`}
+          >
+            {cancelling
+              ? <Loader2 className="w-3 h-3 animate-spin" />
+              : <><X className="w-3 h-3 mr-1" />Cancel</>}
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+// ─────────────────────────────────────────────────────────────────
+// Main Settings Component
+// ─────────────────────────────────────────────────────────────────
 export default function Settings() {
   const navigate        = useNavigate();
   const [searchParams]  = useSearchParams();
   const { user, refreshUser } = useAuth();
 
+  // ── Existing state (UNCHANGED) ──────────────────────────────────
   const [settings, setSettings]     = useState(null);
   const [accounts, setAccounts]     = useState([]);
   const [planLimits, setPlanLimits] = useState(null);
@@ -75,16 +315,36 @@ export default function Settings() {
   const [connecting, setConnecting]       = useState(false);
   const [fullName, setFullName]           = useState("");
 
-  // Follow-up scope state
   const [scope, setScope]                   = useState("sent_only");
   const [allowedContacts, setAllowedContacts] = useState([]);
   const [allowedDomains, setAllowedDomains]   = useState([]);
   const [blockedSenders, setBlockedSenders]   = useState([]);
   const [savingScope, setSavingScope]         = useState(false);
 
+  // ── NEW: Smart Reply state ───────────────────────────────────────
+  const [srSettings, setSrSettings] = useState({
+    enabled:              false,
+    confidence_threshold: 80,
+    daily_limit:          20,
+    delay_seconds:        120,
+    allowed_categories:   ["faq", "inquiry"],
+    confirmed_first_use:  false,
+  });
+  const [srMeta, setSrMeta]           = useState({ daily_sent_today: 0, daily_remaining: 20 });
+  const [srLoading, setSrLoading]     = useState(true);
+  const [srSaving, setSrSaving]       = useState(false);
+  const [srConfirmModal, setSrConfirmModal] = useState(false);
+
+  const [queueItems, setQueueItems]   = useState([]);
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [queueTab, setQueueTab]       = useState("queued"); // 'queued' | 'sent' | 'cancelled'
+
+  const queuePollRef = useRef(null);
+
   const userPlan        = user?.plan || "free";
   const autoSendAllowed = isAutoSendAllowed(userPlan);
 
+  // ── Load all data ────────────────────────────────────────────────
   useEffect(() => {
     loadData();
     if (searchParams.get("gmail") === "connected") {
@@ -92,6 +352,14 @@ export default function Settings() {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
+
+  // Poll queue every 10s when tab is 'queued' and Smart Reply is enabled
+  useEffect(() => {
+    if (srSettings.enabled && queueTab === "queued") {
+      queuePollRef.current = setInterval(() => loadQueue("queued"), 10_000);
+    }
+    return () => clearInterval(queuePollRef.current);
+  }, [srSettings.enabled, queueTab]);
 
   const loadData = async () => {
     setLoading(true);
@@ -105,7 +373,6 @@ export default function Settings() {
       if (settingsRes.status === "fulfilled") {
         const s = settingsRes.value.data;
         setSettings(s);
-        // Populate scope state from settings response
         setScope(s.follow_up_scope || "sent_only");
         setAllowedContacts(s.allowed_contacts || []);
         setAllowedDomains(s.allowed_domains || []);
@@ -126,9 +393,42 @@ export default function Settings() {
     } finally {
       setLoading(false);
     }
+
+    // Load Smart Reply settings separately (non-blocking)
+    loadSmartReplySettings();
+    loadQueue("queued");
   };
 
-  // ── Profile ──────────────────────────────────────────────
+  const loadSmartReplySettings = async () => {
+    setSrLoading(true);
+    try {
+      const res = await smartReplyAPI.getSettings();
+      if (res.data) {
+        setSrSettings(res.data);
+        setSrMeta(res.meta || { daily_sent_today: 0, daily_remaining: 20 });
+      }
+    } catch (e) {
+      // Non-fatal — Smart Reply settings may not exist yet (first use)
+      console.warn("Smart Reply settings not loaded:", e);
+    } finally {
+      setSrLoading(false);
+    }
+  };
+
+  const loadQueue = useCallback(async (status) => {
+    setQueueLoading(true);
+    try {
+      const res = await smartReplyAPI.getQueue(status);
+      if (res.data) setQueueItems(res.data);
+    } catch (e) {
+      console.warn("Queue load failed:", e);
+    } finally {
+      setQueueLoading(false);
+    }
+  }, []);
+
+  // ── Existing handlers (UNCHANGED) ───────────────────────────────
+
   const handleSaveProfile = async () => {
     setSaving(true);
     try {
@@ -142,7 +442,6 @@ export default function Settings() {
     }
   };
 
-  // ── General settings ─────────────────────────────────────
   const handleSaveSettings = async (field, value) => {
     try {
       await settingsAPI.update({ [field]: value });
@@ -164,7 +463,6 @@ export default function Settings() {
     }
   };
 
-  // ── Follow-up scope ──────────────────────────────────────
   const handleSaveScope = async () => {
     setSavingScope(true);
     try {
@@ -181,7 +479,6 @@ export default function Settings() {
     }
   };
 
-  // ── Block / Unblock sender ───────────────────────────────
   const handleUnblockSender = async (email) => {
     try {
       await settingsAPI.unblockSender(email);
@@ -192,7 +489,6 @@ export default function Settings() {
     }
   };
 
-  // ── Gmail connect ────────────────────────────────────────
   const handleConnectGmail = async () => {
     setConnecting(true);
     try {
@@ -228,6 +524,77 @@ export default function Settings() {
     }
   };
 
+  // ── NEW: Smart Reply handlers ────────────────────────────────────
+
+  const handleSmartReplyToggle = (newValue) => {
+    if (newValue && !srSettings.confirmed_first_use) {
+      // Show first-time confirmation modal
+      setSrConfirmModal(true);
+      return;
+    }
+    saveSmartReplySettings({ ...srSettings, enabled: newValue });
+  };
+
+  const handleSmartReplyConfirm = async () => {
+    setSrConfirmModal(false);
+    await saveSmartReplySettings({
+      ...srSettings,
+      enabled: true,
+      confirmed_first_use: true,
+    });
+  };
+
+  const saveSmartReplySettings = async (newSettings) => {
+    setSrSaving(true);
+    try {
+      const res = await smartReplyAPI.saveSettings(newSettings);
+      if (res.data) {
+        setSrSettings(res.data);
+        toast.success("Smart Reply Mode updated ✅");
+      }
+    } catch (err) {
+      const detail = err?.detail || "Failed to save Smart Reply settings";
+      toast.error(detail);
+    } finally {
+      setSrSaving(false);
+    }
+  };
+
+  const handleSrFieldChange = (field, value) => {
+    setSrSettings(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleSrSaveConfig = () => {
+    saveSmartReplySettings(srSettings);
+  };
+
+  const handleCategoryToggle = (cat) => {
+    setSrSettings(prev => {
+      const current = prev.allowed_categories || [];
+      const updated = current.includes(cat)
+        ? current.filter(c => c !== cat)
+        : [...current, cat];
+      return { ...prev, allowed_categories: updated };
+    });
+  };
+
+  const handleCancelQueueItem = async (queueId) => {
+    try {
+      await smartReplyAPI.cancelEmail(queueId);
+      toast.success("Email cancelled — it will not be sent.");
+      // Refresh queue
+      await loadQueue(queueTab);
+    } catch (err) {
+      const detail = err?.detail || "Failed to cancel email";
+      toast.error(detail);
+    }
+  };
+
+  const handleQueueTabChange = (tab) => {
+    setQueueTab(tab);
+    loadQueue(tab);
+  };
+
   const accountLimitReached = planLimits && accounts.length >= planLimits.max_email_accounts;
 
   if (loading) {
@@ -246,7 +613,7 @@ export default function Settings() {
         <p className="text-sm text-muted-foreground mt-1">Manage your account and preferences</p>
       </div>
 
-      {/* ── Profile ── */}
+      {/* ── Profile (UNCHANGED) ── */}
       <Card data-testid="profile-card">
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
@@ -277,7 +644,7 @@ export default function Settings() {
         </CardContent>
       </Card>
 
-      {/* ── Email Accounts ── */}
+      {/* ── Email Accounts (UNCHANGED) ── */}
       <Card data-testid="email-accounts-card">
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
@@ -346,7 +713,7 @@ export default function Settings() {
         </CardContent>
       </Card>
 
-      {/* ── NEW: Follow-Up Control ── */}
+      {/* ── Follow-Up Control (UNCHANGED) ── */}
       <Card data-testid="followup-scope-card">
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
@@ -357,84 +724,48 @@ export default function Settings() {
           </p>
         </CardHeader>
         <CardContent className="space-y-6">
-
-          {/* Scope radio buttons */}
           <RadioGroup value={scope} onValueChange={setScope} className="space-y-3">
-            <div className={`flex items-start gap-3 p-3 rounded-lg border transition-colors cursor-pointer
-              ${scope === "sent_only" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
-              onClick={() => setScope("sent_only")}>
-              <RadioGroupItem value="sent_only" id="sent_only" className="mt-0.5" />
-              <div>
-                <Label htmlFor="sent_only" className="text-sm font-medium cursor-pointer">
-                  Only emails I sent <Badge variant="secondary" className="ml-1.5 text-xs">Recommended</Badge>
-                </Label>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Follow up only on conversations where you sent the last message
-                </p>
+            {[
+              { value: "sent_only", label: "Only emails I sent", rec: true,
+                desc: "Follow up only on conversations where you sent the last message" },
+              { value: "manual_contacts", label: "Only selected contacts",
+                desc: "Follow up only with specific email addresses" },
+              { value: "domain_based", label: "Only specific domains",
+                desc: "Follow up only with emails from certain domains (e.g. @client.com)" },
+              { value: "all", label: "All emails",
+                desc: "Process all non-automated conversations" },
+            ].map(opt => (
+              <div key={opt.value}
+                className={`flex items-start gap-3 p-3 rounded-lg border transition-colors cursor-pointer
+                  ${scope === opt.value ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
+                onClick={() => setScope(opt.value)}>
+                <RadioGroupItem value={opt.value} id={opt.value} className="mt-0.5" />
+                <div className="flex-1">
+                  <Label htmlFor={opt.value} className="text-sm font-medium cursor-pointer">
+                    {opt.label}
+                    {opt.rec && <Badge variant="secondary" className="ml-1.5 text-xs">Recommended</Badge>}
+                  </Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">{opt.desc}</p>
+                  {scope === "manual_contacts" && opt.value === "manual_contacts" && (
+                    <div className="mt-3">
+                      <TagInput tags={allowedContacts}
+                        onAdd={val => setAllowedContacts(prev => [...prev, val])}
+                        onRemove={val => setAllowedContacts(prev => prev.filter(c => c !== val))}
+                        placeholder="Add email address…" />
+                    </div>
+                  )}
+                  {scope === "domain_based" && opt.value === "domain_based" && (
+                    <div className="mt-3">
+                      <TagInput tags={allowedDomains}
+                        onAdd={val => setAllowedDomains(prev => [...prev, val.startsWith("@") ? val : `@${val}`])}
+                        onRemove={val => setAllowedDomains(prev => prev.filter(d => d !== val))}
+                        placeholder="Add domain e.g. @client.com…" />
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-
-            <div className={`flex items-start gap-3 p-3 rounded-lg border transition-colors cursor-pointer
-              ${scope === "manual_contacts" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
-              onClick={() => setScope("manual_contacts")}>
-              <RadioGroupItem value="manual_contacts" id="manual_contacts" className="mt-0.5" />
-              <div className="flex-1">
-                <Label htmlFor="manual_contacts" className="text-sm font-medium cursor-pointer">
-                  Only selected contacts
-                </Label>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Follow up only with specific email addresses
-                </p>
-                {scope === "manual_contacts" && (
-                  <div className="mt-3">
-                    <TagInput
-                      tags={allowedContacts}
-                      onAdd={val => setAllowedContacts(prev => [...prev, val])}
-                      onRemove={val => setAllowedContacts(prev => prev.filter(c => c !== val))}
-                      placeholder="Add email address…"
-                    />
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className={`flex items-start gap-3 p-3 rounded-lg border transition-colors cursor-pointer
-              ${scope === "domain_based" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
-              onClick={() => setScope("domain_based")}>
-              <RadioGroupItem value="domain_based" id="domain_based" className="mt-0.5" />
-              <div className="flex-1">
-                <Label htmlFor="domain_based" className="text-sm font-medium cursor-pointer">
-                  Only specific domains
-                </Label>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Follow up only with emails from certain domains (e.g. @client.com)
-                </p>
-                {scope === "domain_based" && (
-                  <div className="mt-3">
-                    <TagInput
-                      tags={allowedDomains}
-                      onAdd={val => setAllowedDomains(prev => [...prev, val.startsWith("@") ? val : `@${val}`])}
-                      onRemove={val => setAllowedDomains(prev => prev.filter(d => d !== val))}
-                      placeholder="Add domain e.g. @client.com…"
-                    />
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className={`flex items-start gap-3 p-3 rounded-lg border transition-colors cursor-pointer
-              ${scope === "all" ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
-              onClick={() => setScope("all")}>
-              <RadioGroupItem value="all" id="all" className="mt-0.5" />
-              <div>
-                <Label htmlFor="all" className="text-sm font-medium cursor-pointer">All emails</Label>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Process all non-automated conversations
-                </p>
-              </div>
-            </div>
+            ))}
           </RadioGroup>
-
           <Button size="sm" onClick={handleSaveScope} disabled={savingScope}
             className="bg-primary hover:bg-primary/90 text-white">
             {savingScope ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
@@ -443,7 +774,7 @@ export default function Settings() {
         </CardContent>
       </Card>
 
-      {/* ── NEW: Blocked Senders ── */}
+      {/* ── Blocked Senders (UNCHANGED) ── */}
       <Card data-testid="blocked-senders-card">
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
@@ -475,7 +806,7 @@ export default function Settings() {
         </CardContent>
       </Card>
 
-      {/* ── Silence Detection Rules ── */}
+      {/* ── Silence Detection Rules (UNCHANGED) ── */}
       <Card data-testid="silence-rules-card">
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
@@ -520,7 +851,7 @@ export default function Settings() {
         </CardContent>
       </Card>
 
-      {/* ── Notifications ── */}
+      {/* ── Notifications (UNCHANGED) ── */}
       <Card data-testid="notifications-card">
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
@@ -550,64 +881,195 @@ export default function Settings() {
         </CardContent>
       </Card>
 
-      {/* ── Auto-Send ── */}
-      <Card data-testid="autosend-card">
+      {/* ── NEW: Smart Reply Mode (replaces Auto-Send card) ── */}
+      <Card data-testid="smart-reply-card">
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
-            <Shield className="w-4 h-4" /> Auto-Send
+            <Zap className="w-4 h-4" /> Smart Reply Mode
             {!autoSendAllowed && (
               <Badge variant="outline" className="text-xs text-muted-foreground">
                 <Lock className="w-3 h-3 mr-1" /> Pro+
               </Badge>
             )}
+            {srSettings.enabled && (
+              <Badge className="text-xs bg-emerald-100 text-emerald-700 border-emerald-200">Active</Badge>
+            )}
           </CardTitle>
+          <p className="text-xs text-muted-foreground">
+            User-controlled automation — emails are sent based on your rules. You can cancel anytime before sending.
+          </p>
         </CardHeader>
-        <CardContent className="space-y-4">
+
+        <CardContent className="space-y-5">
           {!autoSendAllowed ? (
             <div className="text-center py-4">
-              <p className="text-sm text-muted-foreground mb-3">Auto-send is available on Pro and Business plans.</p>
+              <p className="text-sm text-muted-foreground mb-3">
+                Smart Reply Mode is available on Pro and Business plans.
+              </p>
               <Button size="sm" onClick={() => navigate("/billing")}
-                className="bg-primary hover:bg-primary/90 text-white" data-testid="upgrade-autosend-btn">
+                className="bg-primary hover:bg-primary/90 text-white" data-testid="upgrade-smartreply-btn">
                 Upgrade Plan <ArrowUpRight className="w-3.5 h-3.5 ml-1.5" />
               </Button>
             </div>
+          ) : srLoading ? (
+            <div className="space-y-3">
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-3/4" />
+            </div>
           ) : (
             <>
+              {/* Toggle */}
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium">Enable Auto-Send</p>
+                  <p className="text-sm font-medium">Enable Smart Reply Mode</p>
                   <p className="text-xs text-muted-foreground">
-                    Automatically send approved follow-ups within your send window
+                    Emails are sent based on your rules, with a delay window you can cancel
                   </p>
                 </div>
-                <Switch checked={settings?.auto_send ?? false}
-                  onCheckedChange={v => handleSaveSettings("auto_send", v)}
-                  data-testid="auto-send-switch" />
+                <Switch
+                  checked={srSettings.enabled}
+                  onCheckedChange={handleSmartReplyToggle}
+                  disabled={srSaving}
+                  data-testid="smart-reply-toggle"
+                />
               </div>
-              {settings?.auto_send && (
+
+              {/* Info banner when disabled */}
+              {!srSettings.enabled && (
+                <div className="flex gap-2 p-3 rounded-lg bg-muted/50 border border-border">
+                  <Info className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+                  <p className="text-xs text-muted-foreground">
+                    No email will be sent automatically until you enable Smart Reply Mode
+                    and configure your rules below.
+                  </p>
+                </div>
+              )}
+
+              {/* Config panel — visible when enabled */}
+              {srSettings.enabled && (
                 <>
                   <Separator />
-                  <div className="grid grid-cols-2 gap-4">
+
+                  {/* Daily usage indicator */}
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-primary/5 border border-primary/20">
                     <div>
-                      <Label className="text-sm">Send Window Start</Label>
-                      <Input type="time" value={settings?.send_window_start || "09:00"}
-                        onChange={e => handleSaveSettings("send_window_start", e.target.value)}
-                        className="mt-1.5" data-testid="send-start-input" />
+                      <p className="text-xs font-medium text-primary">Today's Usage</p>
+                      <p className="text-xs text-muted-foreground">
+                        {srMeta.daily_sent_today} sent · {srMeta.daily_remaining} remaining
+                      </p>
                     </div>
-                    <div>
-                      <Label className="text-sm">Send Window End</Label>
-                      <Input type="time" value={settings?.send_window_end || "18:00"}
-                        onChange={e => handleSaveSettings("send_window_end", e.target.value)}
-                        className="mt-1.5" data-testid="send-end-input" />
-                    </div>
+                    <Badge variant="outline" className="text-primary border-primary/30 text-xs">
+                      {srMeta.daily_sent_today} / {srSettings.daily_limit}
+                    </Badge>
                   </div>
+
+                  {/* AI Confidence Threshold */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <Label className="text-sm">
+                        AI Confidence Threshold
+                        <span className="ml-1 text-xs text-muted-foreground">(minimum to queue)</span>
+                      </Label>
+                      <span className="text-sm font-medium text-primary">
+                        {srSettings.confidence_threshold}%
+                      </span>
+                    </div>
+                    <Slider
+                      value={[srSettings.confidence_threshold]}
+                      onValueChange={([val]) => handleSrFieldChange("confidence_threshold", val)}
+                      min={50} max={100} step={5}
+                      className="max-w-sm"
+                      data-testid="confidence-threshold-slider"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Only queue emails where AI confidence is at or above this level
+                    </p>
+                  </div>
+
+                  {/* Daily Limit */}
                   <div>
                     <Label className="text-sm">Daily Send Limit</Label>
-                    <Input type="number" min={1} max={100}
-                      value={settings?.daily_send_limit || 20}
-                      onChange={e => handleSaveSettings("daily_send_limit", parseInt(e.target.value) || 20)}
-                      className="mt-1.5 max-w-[120px]" data-testid="daily-limit-input" />
+                    <div className="flex items-center gap-3 mt-1.5">
+                      <Input
+                        type="number" min={1} max={500}
+                        value={srSettings.daily_limit}
+                        onChange={e => handleSrFieldChange("daily_limit", parseInt(e.target.value) || 20)}
+                        className="max-w-[120px]"
+                        data-testid="sr-daily-limit-input"
+                      />
+                      <p className="text-xs text-muted-foreground">emails per day</p>
+                    </div>
                   </div>
+
+                  {/* Delay Before Sending */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <Label className="text-sm">
+                        Delay Before Sending
+                        <span className="ml-1 text-xs text-muted-foreground">(cancel window)</span>
+                      </Label>
+                      <span className="text-sm font-medium text-primary">
+                        {srSettings.delay_seconds >= 60
+                          ? `${Math.floor(srSettings.delay_seconds / 60)}m ${srSettings.delay_seconds % 60}s`
+                          : `${srSettings.delay_seconds}s`}
+                      </span>
+                    </div>
+                    <Slider
+                      value={[srSettings.delay_seconds]}
+                      onValueChange={([val]) => handleSrFieldChange("delay_seconds", val)}
+                      min={30} max={3600} step={30}
+                      className="max-w-sm"
+                      data-testid="sr-delay-slider"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Emails wait this long in the queue — cancel anytime before they send
+                    </p>
+                  </div>
+
+                  {/* Category Selection */}
+                  <div>
+                    <Label className="text-sm mb-2 block">Allowed Email Categories</Label>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {CATEGORY_OPTIONS.map(cat => (
+                        <div
+                          key={cat.value}
+                          onClick={() => handleCategoryToggle(cat.value)}
+                          className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors
+                            ${srSettings.allowed_categories?.includes(cat.value)
+                              ? "border-primary bg-primary/5"
+                              : "border-border hover:border-primary/40"}`}
+                          data-testid={`category-${cat.value}`}
+                        >
+                          <Checkbox
+                            checked={srSettings.allowed_categories?.includes(cat.value)}
+                            onCheckedChange={() => handleCategoryToggle(cat.value)}
+                            onClick={e => e.stopPropagation()}
+                          />
+                          <div>
+                            <p className="text-xs font-medium">{cat.label}</p>
+                            <p className="text-xs text-muted-foreground hidden sm:block">{cat.description}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Only emails matching these categories will enter the Smart Reply queue
+                    </p>
+                  </div>
+
+                  {/* Save config button */}
+                  <Button
+                    size="sm"
+                    onClick={handleSrSaveConfig}
+                    disabled={srSaving}
+                    className="bg-primary hover:bg-primary/90 text-white"
+                    data-testid="save-smart-reply-btn"
+                  >
+                    {srSaving
+                      ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      : <Save className="w-4 h-4 mr-2" />}
+                    Save Smart Reply Settings
+                  </Button>
                 </>
               )}
             </>
@@ -615,7 +1077,77 @@ export default function Settings() {
         </CardContent>
       </Card>
 
-      {/* ── Connect Gmail Dialog ── */}
+      {/* ── NEW: Smart Reply Activity (queue visibility) ── */}
+      {autoSendAllowed && (
+        <Card data-testid="smart-reply-activity-card">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Timer className="w-4 h-4" /> Smart Reply Activity
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              View queued, sent, and cancelled emails from Smart Reply Mode
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Tab row */}
+            <div className="flex gap-1 p-1 rounded-lg bg-muted">
+              {[
+                { key: "queued",    label: "Queued",    icon: Timer },
+                { key: "sent",      label: "Sent",      icon: Send  },
+                { key: "cancelled", label: "Cancelled", icon: Ban   },
+              ].map(({ key, label, icon: Icon }) => (
+                <button
+                  key={key}
+                  onClick={() => handleQueueTabChange(key)}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-xs font-medium transition-colors
+                    ${queueTab === key
+                      ? "bg-background shadow-sm text-foreground"
+                      : "text-muted-foreground hover:text-foreground"}`}
+                  data-testid={`queue-tab-${key}`}
+                >
+                  <Icon className="w-3 h-3" />
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* Queue list */}
+            {queueLoading ? (
+              <div className="space-y-2">
+                {[1, 2].map(i => <Skeleton key={i} className="h-20 w-full" />)}
+              </div>
+            ) : queueItems.length === 0 ? (
+              <div className="text-center py-8">
+                <Timer className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+                <p className="text-sm text-muted-foreground">
+                  {queueTab === "queued"
+                    ? "No emails queued right now"
+                    : queueTab === "sent"
+                    ? "No emails sent via Smart Reply yet"
+                    : "No cancelled emails"}
+                </p>
+                {queueTab === "queued" && !srSettings.enabled && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Enable Smart Reply Mode above to start queuing emails
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {queueItems.map(item => (
+                  <QueueItemRow
+                    key={item.id}
+                    item={item}
+                    onCancel={handleCancelQueueItem}
+                  />
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Connect Gmail Dialog (UNCHANGED) ── */}
       <Dialog open={connectDialog} onOpenChange={setConnectDialog}>
         <DialogContent data-testid="connect-gmail-dialog">
           <DialogHeader>
@@ -653,6 +1185,13 @@ export default function Settings() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── NEW: Smart Reply First-Time Confirmation Modal ── */}
+      <SmartReplyConfirmationModal
+        open={srConfirmModal}
+        onConfirm={handleSmartReplyConfirm}
+        onCancel={() => setSrConfirmModal(false)}
+      />
     </div>
   );
 }
