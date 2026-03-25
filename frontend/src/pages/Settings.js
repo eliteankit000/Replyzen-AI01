@@ -41,23 +41,25 @@ import { toast } from "sonner";
 // Smart Reply API helper
 // NOTE: Add these methods to your @/lib/api.js file and remove this block.
 // ─────────────────────────────────────────────────────────────────
-const smartReplyAPI = {
-  getSettings: () => {
-  const token = localStorage.getItem("token");
 
-  return fetch("/api/smart-reply/settings", {
-    credentials: "include",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  }).then(r => r.json());
-},
+// Shared auth header builder — reads the correct localStorage key
+const _srAuthHeaders = () => ({
+  Authorization: `Bearer ${localStorage.getItem("replyzen_token") || ""}`,
+});
+
+const smartReplyAPI = {
+  getSettings: () =>
+    fetch("/api/smart-reply/settings", {
+      headers: _srAuthHeaders(),                       // ✅ correct key + header
+    }).then(r => r.json()),
 
   saveSettings: async (data) => {
     const r = await fetch("/api/smart-reply/settings", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
+      method:  "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ..._srAuthHeaders(),                           // ✅ auth header added
+      },
       body: JSON.stringify(data),
     });
     // Always parse JSON — on error the body contains {detail: "real reason"}
@@ -69,18 +71,22 @@ const smartReplyAPI = {
 
   getQueue: (status) => {
     const qs = status ? `?status=${status}` : "";
-    return fetch(`/api/smart-reply/queue${qs}`, { credentials: "include" }).then(r => r.json());
+    return fetch(`/api/smart-reply/queue${qs}`, {
+      headers: _srAuthHeaders(),                       // ✅ auth header added
+    }).then(r => r.json());
   },
 
   cancelEmail: (queueId) =>
     fetch(`/api/smart-reply/queue/${queueId}/cancel`, {
-      method: "POST",
-      credentials: "include",
+      method:  "POST",
+      headers: _srAuthHeaders(),                       // ✅ auth header added
     }).then(r => {
       if (!r.ok) return r.json().then(e => Promise.reject(e));
       return r.json();
     }),
 };
+
+// ─── END OF REPLACEMENT ───────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────
 // Chip / Tag component — UNCHANGED from original
