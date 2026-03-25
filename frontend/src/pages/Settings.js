@@ -42,8 +42,16 @@ import { toast } from "sonner";
 // NOTE: Add these methods to your @/lib/api.js file and remove this block.
 // ─────────────────────────────────────────────────────────────────
 const smartReplyAPI = {
-  getSettings: () =>
-    fetch("/api/smart-reply/settings", { credentials: "include" }).then(r => r.json()),
+  getSettings: () => {
+  const token = localStorage.getItem("token");
+
+  return fetch("/api/smart-reply/settings", {
+    credentials: "include",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  }).then(r => r.json());
+},
 
   saveSettings: async (data) => {
     const r = await fetch("/api/smart-reply/settings", {
