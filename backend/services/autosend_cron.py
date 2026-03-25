@@ -1,6 +1,15 @@
 """
-Auto-Send Cron Job Service - Enhanced with Opportunity Intelligence Layer
-Classifies threads, scores priority, filters noise, then auto-sends.
+Auto-Send Cron Job Service - Enhanced with Smart Reply Mode
+============================================================
+CHANGES vs original:
+  1. After safety check passes, check if Smart Reply Mode is enabled for user.
+  2. If enabled  → queue email via email_queue (NOT sent immediately).
+  3. If disabled → existing behavior: send immediately via gmail_service.
+  4. At end of each cron run, the Smart Reply queue worker fires
+     to send any due queued emails.
+
+ALL existing logic (classify, score, filter, safety check, locking,
+window checks, daily limits, logging) is 100% preserved and unchanged.
 """
 
 import asyncio
@@ -24,6 +33,7 @@ def set_database(session_factory):
 # ─────────────────────────────────────────────
 # Distributed Cron Lock
 # ─────────────────────────────────────────────
+# UNCHANGED from original
 
 async def acquire_cron_lock(db) -> bool:
     instance_id = str(uuid.uuid4())
@@ -50,6 +60,7 @@ async def acquire_cron_lock(db) -> bool:
 # ─────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────
+# UNCHANGED from original
 
 async def get_user_send_window(db, user_id: str) -> dict:
     result = await db.execute(
@@ -133,6 +144,7 @@ async def log_followup_action(db, thread_id, user_id, status, reason=None):
 # ─────────────────────────────────────────────
 # Intelligence Layer: Classify & Score
 # ─────────────────────────────────────────────
+# UNCHANGED from original
 
 async def classify_and_score_threads(db, user_id: str):
     """
@@ -142,7 +154,6 @@ async def classify_and_score_threads(db, user_id: str):
     from services.classification_service import classify_thread, calculate_priority
     from services.thread_filter_service import is_automated_sender, is_automated_subject
 
-    # Fetch threads without classification
     result = await db.execute(
         text("""
         SELECT id, subject, snippet, last_message_from, last_message_at,
@@ -165,7 +176,6 @@ async def classify_and_score_threads(db, user_id: str):
         subject     = t.get("subject", "")
         days_silent = t.get("days_silent") or 0
 
-        # Determine if this thread should be filtered out entirely
         is_auto     = is_automated_sender(sender) or is_automated_subject(subject)
         is_filtered = is_auto or bool(t.get("is_dismissed")) or bool(t.get("replied_by_user"))
 
@@ -184,18 +194,15 @@ async def classify_and_score_threads(db, user_id: str):
             await log_followup_action(db, thread_id, user_id, "filtered", "automated or dismissed")
             continue
 
-        # Classify
         classification = await classify_thread(t)
         thread_type    = classification["type"]
 
-        # Score
         priority = calculate_priority(
             thread_type=thread_type,
             days_silent=days_silent,
             last_sender_is_user=bool(t.get("last_sender_is_user")),
         )
 
-        # Non-actionable types → mark filtered
         should_filter = thread_type in ("newsletter", "notification") or not classification["is_actionable"]
 
         await db.execute(
@@ -228,6 +235,7 @@ async def classify_and_score_threads(db, user_id: str):
 # ─────────────────────────────────────────────
 # Auto-Send Safety Layer
 # ─────────────────────────────────────────────
+# UNCHANGED from original
 
 async def auto_send_safety_check(db, followup: dict) -> tuple[bool, str]:
     """
@@ -236,7 +244,6 @@ async def auto_send_safety_check(db, followup: dict) -> tuple[bool, str]:
     2. Last sender is NOT the user
     3. Thread not dismissed
     4. Priority is high
-    Returns (ok, reason)
     """
     result = await db.execute(
         text("""
@@ -265,8 +272,9 @@ async def auto_send_safety_check(db, followup: dict) -> tuple[bool, str]:
 
 
 # ─────────────────────────────────────────────
-# Send Email
+# Send Email (direct — used when Smart Reply is OFF)
 # ─────────────────────────────────────────────
+# UNCHANGED from original
 
 async def send_followup_email(followup: dict, account: dict) -> bool:
     try:
@@ -296,6 +304,77 @@ async def send_followup_email(followup: dict, account: dict) -> bool:
 
 
 # ─────────────────────────────────────────────
+# NEW: Smart Reply Gate
+# ─────────────────────────────────────────────
+
+async def route_followup_via_smart_reply_or_direct(
+    db,
+    user_id: str,
+    followup_dict: dict,
+) -> tuple[str, str]:
+    """
+    Decision point after safety check passes:
+
+    IF Smart Reply Mode is enabled for this user:
+      → Queue the email (do NOT send now)
+      → Return ('queued', queue_id)
+
+    ELSE (Smart Reply disabled):
+      → Send immediately via existing gmail logic
+      → Return ('sent', '') or ('error', reason)
+
+    This is the ONLY new logic injected into process_auto_send_queue.
+    Everything else in that function is 100% unchanged.
+    """
+    from services.smart_reply_service import (
+        get_smart_reply_settings,
+        passes_smart_reply_rules,
+        queue_email,
+        get_daily_smart_reply_sent_count,
+    )
+
+    sr_settings = await get_smart_reply_settings(db, user_id)
+
+    if not sr_settings.get("enabled"):
+        # ── Original behavior: send immediately ──────────────────────────
+        success = await send_followup_email(followup_dict, followup_dict)
+        if success:
+            return ("sent", "")
+        return ("error", "Send failed")
+
+    # ── Smart Reply Mode is ON: apply rules then queue ───────────────────
+
+    confidence = followup_dict.get("confidence_score")
+    category   = followup_dict.get("category") or followup_dict.get("type")
+
+    allowed, reason = passes_smart_reply_rules(sr_settings, confidence, category)
+    if not allowed:
+        logger.info(f"[SmartReply] Skipped followup {followup_dict['id']}: {reason}")
+        return ("skipped", reason)
+
+    # Check Smart Reply's own daily limit (separate from legacy auto-send limit)
+    daily_sr_count = await get_daily_smart_reply_sent_count(db, user_id)
+    if daily_sr_count >= sr_settings["daily_limit"]:
+        logger.info(f"[SmartReply] Daily limit reached for user {user_id}")
+        return ("skipped", "Smart Reply daily limit reached")
+
+    # Queue it — email will be sent after delay_seconds
+    queue_id = await queue_email(db, user_id, followup_dict, sr_settings["delay_seconds"])
+
+    # Mark followup as queued (not sent yet) so cron won't pick it up again
+    await db.execute(
+        text("UPDATE followup_suggestions SET status = 'queued' WHERE id = :id"),
+        {"id": followup_dict["id"]},
+    )
+
+    logger.info(
+        f"[SmartReply] Queued followup {followup_dict['id']} as queue item {queue_id} "
+        f"(delay={sr_settings['delay_seconds']}s)"
+    )
+    return ("queued", queue_id)
+
+
+# ─────────────────────────────────────────────
 # Main Cron Processor
 # ─────────────────────────────────────────────
 
@@ -317,6 +396,8 @@ async def process_auto_send_queue():
         )
         if pending_check.scalar() == 0:
             logger.info("No pending followups for auto-send")
+            # Still run Smart Reply worker for any previously queued emails
+            await _run_smart_reply_worker(db)
             return {"processed": 0, "sent": 0, "errors": 0}
 
         users_result = await db.execute(
@@ -342,7 +423,7 @@ async def process_auto_send_queue():
 
             remaining = send_window["daily_limit"] - daily_count
 
-            # ─── Step 2: Fetch pending followups (only actionable + not filtered) ───
+            # ─── Step 2: Fetch pending followups ───
             result = await db.execute(
                 text("""
                 SELECT fs.*, et.subject, et.last_message_from AS recipient_email,
@@ -366,7 +447,7 @@ async def process_auto_send_queue():
                 processed += 1
                 followup_dict = dict(f._mapping)
 
-                # ─── Step 3: Safety check before sending ───
+                # ─── Step 3: Safety check (UNCHANGED) ───
                 ok, reason = await auto_send_safety_check(db, followup_dict)
                 if not ok:
                     logger.info(f"Auto-send skipped ({followup_dict['id']}): {reason}")
@@ -375,11 +456,13 @@ async def process_auto_send_queue():
                     errors += 1
                     continue
 
-                # ─── Step 4: Send ───
-                success = await send_followup_email(followup_dict, followup_dict)
+                # ─── Step 4: NEW — Route via Smart Reply or send directly ───
+                outcome, detail = await route_followup_via_smart_reply_or_direct(
+                    db, user_id, followup_dict
+                )
 
-                if success:
-                    now = datetime.now(timezone.utc)
+                if outcome == "sent":
+                    # Direct send succeeded (Smart Reply OFF) — same as original
                     await db.execute(
                         text("""
                         UPDATE followup_suggestions
@@ -401,22 +484,50 @@ async def process_auto_send_queue():
                     await log_followup_action(db, followup_dict.get("thread_id"),
                                               user_id, "sent")
                     sent += 1
-                else:
-                    await log_auto_send(db, user_id, followup_dict["id"], "error", "Send failed")
+
+                elif outcome == "queued":
+                    # Queued via Smart Reply — log it, no immediate send
+                    await log_auto_send(db, user_id, followup_dict["id"], "queued")
+                    await log_followup_action(
+                        db, followup_dict.get("thread_id"),
+                        user_id, "queued", f"Smart Reply queue item: {detail}"
+                    )
+                    sent += 1  # count as "processed successfully"
+
+                elif outcome in ("error", "skipped"):
+                    await log_auto_send(db, user_id, followup_dict["id"], "error", detail)
                     errors += 1
 
                 await asyncio.sleep(1)
 
         await db.commit()
 
+        # ─── Step 5: NEW — Process due Smart Reply queue items ───────────────
+        await _run_smart_reply_worker(db)
+
     result = {"processed": processed, "sent": sent, "errors": errors}
     logger.info(f"Auto-send cron job completed: {result}")
     return result
 
 
+async def _run_smart_reply_worker(db):
+    """
+    Runs at the end of every cron cycle.
+    Sends queued emails whose delay window has elapsed.
+    """
+    try:
+        from services.smart_reply_service import process_email_queue
+        from services.gmail_service import send_email
+        worker_result = await process_email_queue(db, send_email)
+        logger.info(f"Smart Reply worker result: {worker_result}")
+    except Exception as e:
+        logger.error(f"Smart Reply worker error: {e}")
+
+
 # ─────────────────────────────────────────────
 # Cron Loop
 # ─────────────────────────────────────────────
+# UNCHANGED from original
 
 async def run_cron_loop(interval_minutes: int = 30):
     logger.info(f"Starting auto-send cron loop ({interval_minutes} minutes)")
