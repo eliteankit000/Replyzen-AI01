@@ -161,6 +161,11 @@ const CATEGORY_OPTIONS = [
 function SmartReplyConfirmationModal({ open, onConfirm, onCancel }) {
   const [checked, setChecked] = useState(false);
 
+  // Reset checkbox every time the modal opens
+  useEffect(() => {
+    if (open) setChecked(false);
+  }, [open]);
+
   return (
     <Dialog open={open} onOpenChange={val => !val && onCancel()}>
       <DialogContent className="max-w-md" data-testid="smart-reply-confirm-modal">
@@ -200,13 +205,18 @@ function SmartReplyConfirmationModal({ open, onConfirm, onCancel }) {
             </p>
           </div>
 
-          <div
-            className="flex items-start gap-2.5 cursor-pointer"
-            onClick={() => setChecked(c => !c)}
-          >
-            <Checkbox checked={checked} onCheckedChange={setChecked} id="sr-confirm-check"
-              className="mt-0.5" />
-            <Label htmlFor="sr-confirm-check" className="text-sm cursor-pointer leading-snug">
+          {/* FIX: removed onClick from parent div — it was double-toggling with onCheckedChange */}
+          <div className="flex items-start gap-2.5">
+            <Checkbox
+              checked={checked}
+              onCheckedChange={(val) => setChecked(Boolean(val))}
+              id="sr-confirm-check"
+              className="mt-0.5 cursor-pointer"
+            />
+            <Label
+              htmlFor="sr-confirm-check"
+              className="text-sm cursor-pointer leading-snug select-none"
+            >
               I understand how Smart Reply Mode works and want to enable it
             </Label>
           </div>
