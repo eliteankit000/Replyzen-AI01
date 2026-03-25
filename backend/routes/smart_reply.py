@@ -1,43 +1,31 @@
 """
-Smart Reply Mode — API Routes
-==============================
-Mount this router in your main app file:
+Smart Reply Mode - API Routes
 
+Mount this router in your main app file:
     from routes.smart_reply import router as smart_reply_router
     app.include_router(smart_reply_router)
 
-4 endpoints:
-  GET  /api/smart-reply/settings         → fetch settings
-  POST /api/smart-reply/settings         → save settings
-  GET  /api/smart-reply/queue            → list queue items (filterable by status)
-  POST /api/smart-reply/queue/{id}/cancel → cancel a queued email
-
-All endpoints are protected by your existing auth dependency.
-Adjust the import path for `get_current_user` and `get_db` to match your project.
+FIX LOG:
+  - Replaced silent try/except import chain with explicit imports (was causing 500s)
+  - Fixed Pydantic v1/v2 validator compatibility
+  - Fixed mutable list default for allowed_categories
+  - Added real error messages in all HTTP exceptions
 """
 
 import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, VERSION as PYDANTIC_VERSION
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# ── Adjust these imports to match your project structure ──────────────────────
-# These are the same patterns used across your other route files.
-try:
-    from database import get_db
-except ImportError:
-    from db import get_db  # fallback common name
-
-try:
-    from dependencies import get_current_user
-except ImportError:
-    try:
-        from auth import get_current_user
-    except ImportError:
-        from middleware.auth import get_current_user
-# ─────────────────────────────────────────────────────────────────────────────
+# -------------------------------------------------------------------------
+# IMPORTANT: Replace these two lines with the exact imports from your other
+# route files (e.g. routes/settings.py). Wrong imports = silent 500 errors.
+# -------------------------------------------------------------------------
+from database import get_db                # match your project
+from dependencies import get_current_user  # match your project
+# -------------------------------------------------------------------------
 
 from services.smart_reply_service import (
     get_smart_reply_settings,
@@ -49,75 +37,60 @@ from services.smart_reply_service import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(
-    prefix="/api/smart-reply",
-    tags=["smart-reply"],
-)
+router = APIRouter(prefix="/api/smart-reply", tags=["smart-reply"])
+
+# ---------------------------------------------------------------------------
+# Pydantic v1 / v2 compatible validator
+# ---------------------------------------------------------------------------
+_PYDANTIC_V2 = int(PYDANTIC_VERSION.split(".")[0]) >= 2
+
+if _PYDANTIC_V2:
+    from pydantic import field_validator
+
+    class SmartReplySettingsPayload(BaseModel):
+        enabled:              bool      = False
+        confidence_threshold: int       = Field(80,  ge=0,  le=100)
+        daily_limit:          int       = Field(20,  ge=1,  le=500)
+        delay_seconds:        int       = Field(120, ge=30, le=3600)
+        # FIX: Field(default_factory) avoids mutable default list corruption
+        allowed_categories:   List[str] = Field(default_factory=lambda: ["faq", "inquiry"])
+        confirmed_first_use:  bool      = False
+
+        @field_validator("allowed_categories", mode="before")
+        @classmethod
+        def lowercase_categories(cls, v):
+            if isinstance(v, list):
+                return [str(item).strip().lower() for item in v]
+            return v
+
+else:
+    from pydantic import validator as pydantic_validator
+
+    class SmartReplySettingsPayload(BaseModel):
+        enabled:              bool      = False
+        confidence_threshold: int       = Field(80,  ge=0,  le=100)
+        daily_limit:          int       = Field(20,  ge=1,  le=500)
+        delay_seconds:        int       = Field(120, ge=30, le=3600)
+        allowed_categories:   List[str] = Field(default_factory=lambda: ["faq", "inquiry"])
+        confirmed_first_use:  bool      = False
+
+        @pydantic_validator("allowed_categories", each_item=True, pre=True)
+        @classmethod
+        def lowercase_categories(cls, v):
+            return str(v).strip().lower()
 
 
-# ─────────────────────────────────────────────
-# Pydantic Schemas
-# ─────────────────────────────────────────────
-
-class SmartReplySettingsPayload(BaseModel):
-    enabled:              bool       = False
-    confidence_threshold: int        = Field(80,  ge=0,   le=100)
-    daily_limit:          int        = Field(20,  ge=1,   le=500)
-    delay_seconds:        int        = Field(120, ge=30,  le=3600)
-    allowed_categories:   List[str]  = ["faq", "inquiry"]
-    confirmed_first_use:  bool       = False
-
-    @validator("allowed_categories", each_item=True)
-    def lowercase_categories(cls, v):
-        return v.strip().lower()
-
-
-class SmartReplySettingsResponse(BaseModel):
-    id:                   Optional[str]
-    user_id:              str
-    enabled:              bool
-    confidence_threshold: int
-    daily_limit:          int
-    delay_seconds:        int
-    allowed_categories:   List[str]
-    confirmed_first_use:  bool
-    created_at:           Optional[str]
-    updated_at:           Optional[str]
-
-
-class QueueItemResponse(BaseModel):
-    id:           str
-    to_email:     str
-    subject:      str
-    status:       str
-    scheduled_at: Optional[str]
-    created_at:   Optional[str]
-    sent_at:      Optional[str]
-    cancelled_at: Optional[str]
-    cancelled:    bool
-
-
-# ─────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 # GET /api/smart-reply/settings
-# ─────────────────────────────────────────────
-
-@router.get(
-    "/settings",
-    summary="Get Smart Reply Mode settings for the authenticated user",
-)
+# ---------------------------------------------------------------------------
+@router.get("/settings", summary="Get Smart Reply Mode settings")
 async def get_settings(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Returns current Smart Reply settings.
-    If the user has never configured Smart Reply, returns safe defaults
-    (enabled=false) without creating a DB row.
-    """
     try:
-        settings = await get_smart_reply_settings(db, current_user.id)
+        settings   = await get_smart_reply_settings(db, current_user.id)
         daily_sent = await get_daily_smart_reply_sent_count(db, current_user.id)
-
         return {
             "data": settings,
             "meta": {
@@ -126,139 +99,92 @@ async def get_settings(
             },
         }
     except Exception as e:
-        logger.error(f"Failed to fetch smart reply settings for {current_user.id}: {e}")
+        logger.error(f"[SmartReply] GET settings failed for {current_user.id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to load Smart Reply settings",
+            detail=f"Failed to load Smart Reply settings: {str(e)}",
         )
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 # POST /api/smart-reply/settings
-# ─────────────────────────────────────────────
-
-@router.post(
-    "/settings",
-    summary="Save Smart Reply Mode settings",
-)
+# ---------------------------------------------------------------------------
+@router.post("/settings", summary="Save Smart Reply Mode settings")
 async def update_settings(
     payload: SmartReplySettingsPayload,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Upserts Smart Reply settings for the authenticated user.
-
-    Safety rules enforced server-side:
-    - confirmed_first_use must be True before enabling
-    - delay_seconds minimum is 30 (cannot bypass delay entirely)
-    """
+    # Safety: must explicitly confirm before enabling
     if payload.enabled and not payload.confirmed_first_use:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 "Smart Reply Mode requires explicit user confirmation. "
-                "Set confirmed_first_use=true after the user accepts the confirmation dialog."
+                "Please accept the confirmation dialog first."
             ),
         )
 
     try:
-        updated = await upsert_smart_reply_settings(
-            db, current_user.id, payload.dict()
-        )
-        logger.info(
-            f"[SmartReply] Settings updated for user {current_user.id} | "
-            f"enabled={payload.enabled}"
-        )
+        updated = await upsert_smart_reply_settings(db, current_user.id, payload.dict())
+        logger.info(f"[SmartReply] Settings saved for {current_user.id} | enabled={payload.enabled}")
         return {"data": updated, "success": True}
-
     except Exception as e:
-        logger.error(f"Failed to save smart reply settings for {current_user.id}: {e}")
+        logger.error(f"[SmartReply] POST settings failed for {current_user.id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to save Smart Reply settings",
+            detail=f"Failed to save Smart Reply settings: {str(e)}",
         )
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 # GET /api/smart-reply/queue
-# ─────────────────────────────────────────────
-
-@router.get(
-    "/queue",
-    summary="List email queue items for the authenticated user",
-)
+# ---------------------------------------------------------------------------
+@router.get("/queue", summary="List email queue items")
 async def list_queue(
-    status_filter: Optional[str] = Query(
-        None,
-        alias="status",
-        description="Filter by status: queued | sent | cancelled",
-    ),
+    status_filter: Optional[str] = Query(None, alias="status"),
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Returns queued, sent, and/or cancelled emails for the current user.
-    Useful for rendering the Smart Reply activity panel in the UI.
-    """
-    VALID_STATUSES = {"queued", "sent", "cancelled"}
-    if status_filter and status_filter not in VALID_STATUSES:
+    VALID = {"queued", "sent", "cancelled"}
+    if status_filter and status_filter not in VALID:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid status filter. Must be one of: {VALID_STATUSES}",
+            detail=f"Invalid status. Must be one of: {sorted(VALID)}",
         )
-
     try:
         items = await get_queued_emails(db, current_user.id, status_filter)
         return {"data": items, "count": len(items)}
     except Exception as e:
-        logger.error(f"Failed to fetch queue for {current_user.id}: {e}")
+        logger.error(f"[SmartReply] GET queue failed for {current_user.id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch email queue",
+            detail=f"Failed to fetch email queue: {str(e)}",
         )
 
 
-# ─────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 # POST /api/smart-reply/queue/{queue_id}/cancel
-# ─────────────────────────────────────────────
-
-@router.post(
-    "/queue/{queue_id}/cancel",
-    summary="Cancel a queued email before it is sent",
-)
+# ---------------------------------------------------------------------------
+@router.post("/queue/{queue_id}/cancel", summary="Cancel a queued email")
 async def cancel_email(
     queue_id: str,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Cancels a queued email.
-    Fails gracefully if the email was already sent or already cancelled.
-
-    The user_id check is enforced in the service layer —
-    users can only cancel their own queued emails.
-    """
     try:
         success = await cancel_queued_email(db, queue_id, current_user.id)
     except Exception as e:
-        logger.error(f"Failed to cancel queue item {queue_id}: {e}")
+        logger.error(f"[SmartReply] Cancel {queue_id} failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to cancel queued email",
+            detail=f"Failed to cancel queued email: {str(e)}",
         )
 
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                "Email not found, already sent, or already cancelled. "
-                "You can only cancel emails that are still in the queue."
-            ),
+            detail="Email not found, already sent, or already cancelled.",
         )
 
-    return {
-        "success": True,
-        "queue_id": queue_id,
-        "message": "Email cancelled. It will not be sent.",
-    }
+    return {"success": True, "queue_id": queue_id, "message": "Email cancelled successfully."}
