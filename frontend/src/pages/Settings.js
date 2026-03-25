@@ -45,16 +45,19 @@ const smartReplyAPI = {
   getSettings: () =>
     fetch("/api/smart-reply/settings", { credentials: "include" }).then(r => r.json()),
 
-  saveSettings: (data) =>
-    fetch("/api/smart-reply/settings", {
+  saveSettings: async (data) => {
+    const r = await fetch("/api/smart-reply/settings", {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
-    }).then(r => {
-      if (!r.ok) return r.json().then(e => Promise.reject(e));
-      return r.json();
-    }),
+    });
+    // Always parse JSON — on error the body contains {detail: "real reason"}
+    let json;
+    try { json = await r.json(); } catch { json = { detail: `HTTP ${r.status}` }; }
+    if (!r.ok) return Promise.reject(json);
+    return json;
+  },
 
   getQueue: (status) => {
     const qs = status ? `?status=${status}` : "";
@@ -558,12 +561,21 @@ export default function Settings() {
     setSrSaving(true);
     try {
       const res = await smartReplyAPI.saveSettings(newSettings);
-      if (res.data) {
-        setSrSettings(res.data);
+      // Update local state if server returned updated data
+      if (res.data) setSrSettings(res.data);
+      if (res.success !== false) {
         toast.success("Smart Reply Mode updated ✅");
       }
     } catch (err) {
-      const detail = err?.detail || "Failed to save Smart Reply settings";
+      // err is the parsed JSON body from the server e.g. {detail: "..."}
+      // Surface the real server error so user sees what actually went wrong
+      const detail =
+        err?.detail ||
+        err?.message ||
+        err?.error ||
+        (typeof err === "string" ? err : null) ||
+        "Failed to save Smart Reply settings";
+      console.error("[SmartReply] Save failed:", err);
       toast.error(detail);
     } finally {
       setSrSaving(false);
