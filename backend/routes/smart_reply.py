@@ -1,15 +1,14 @@
 """
 Smart Reply Mode - API Routes
 
-Mount this router in your main app file:
-    from routes.smart_reply import router as smart_reply_router
-    app.include_router(smart_reply_router)
+📁 Place this file at: backend/routes/smart_reply.py
 
 FIX LOG:
   - Replaced silent try/except import chain with explicit imports (was causing 500s)
   - Fixed Pydantic v1/v2 validator compatibility
   - Fixed mutable list default for allowed_categories
   - Added real error messages in all HTTP exceptions
+  - FIXED: payload.dict() → _payload_to_dict() for Pydantic v2 (was causing HTTP 500 on POST /settings)
 """
 
 import logging
@@ -19,13 +18,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, VERSION as PYDANTIC_VERSION
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# -------------------------------------------------------------------------
-# IMPORTANT: Replace these two lines with the exact imports from your other
-# route files (e.g. routes/settings.py). Wrong imports = silent 500 errors.
-# -------------------------------------------------------------------------
-from database import get_db                # match your project
-from auth import get_current_user  # match your project
-# -------------------------------------------------------------------------
+from database import get_db
+from auth import get_current_user
 
 from services.smart_reply_service import (
     get_smart_reply_settings,
@@ -52,7 +46,6 @@ if _PYDANTIC_V2:
         confidence_threshold: int       = Field(80,  ge=0,  le=100)
         daily_limit:          int       = Field(20,  ge=1,  le=500)
         delay_seconds:        int       = Field(120, ge=30, le=3600)
-        # FIX: Field(default_factory) avoids mutable default list corruption
         allowed_categories:   List[str] = Field(default_factory=lambda: ["faq", "inquiry"])
         confirmed_first_use:  bool      = False
 
@@ -78,6 +71,16 @@ else:
         @classmethod
         def lowercase_categories(cls, v):
             return str(v).strip().lower()
+
+
+# ---------------------------------------------------------------------------
+# FIX: payload.dict() is removed in Pydantic v2 — use model_dump() instead.
+# This helper works safely on both versions.
+# ---------------------------------------------------------------------------
+def _payload_to_dict(payload: SmartReplySettingsPayload) -> dict:
+    if _PYDANTIC_V2:
+        return payload.model_dump()
+    return payload.dict()
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +118,6 @@ async def update_settings(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # Safety: must explicitly confirm before enabling
     if payload.enabled and not payload.confirmed_first_use:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -126,7 +128,8 @@ async def update_settings(
         )
 
     try:
-        updated = await upsert_smart_reply_settings(db, current_user.id, payload.dict())
+        # FIX: was payload.dict() — breaks on Pydantic v2
+        updated = await upsert_smart_reply_settings(db, current_user.id, _payload_to_dict(payload))
         logger.info(f"[SmartReply] Settings saved for {current_user.id} | enabled={payload.enabled}")
         return {"data": updated, "success": True}
     except Exception as e:
