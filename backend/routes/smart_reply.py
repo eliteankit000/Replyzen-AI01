@@ -97,9 +97,10 @@ async def get_settings(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    user_id = current_user.get("user_id", "") if isinstance(current_user, dict) else getattr(current_user, "id", "")
     try:
-        settings   = await get_smart_reply_settings(db, current_user.id)
-        daily_sent = await get_daily_smart_reply_sent_count(db, current_user.id)
+        settings   = await get_smart_reply_settings(db, user_id)
+        daily_sent = await get_daily_smart_reply_sent_count(db, user_id)
         return {
             "data": settings,
             "meta": {
@@ -108,7 +109,7 @@ async def get_settings(
             },
         }
     except Exception as e:
-        logger.error(f"[SmartReply] GET settings failed for {current_user.id}: {e}", exc_info=True)
+        logger.error(f"[SmartReply] GET settings failed for {user_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to load Smart Reply settings: {str(e)}",
@@ -124,6 +125,8 @@ async def update_settings(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    user_id = current_user.get("user_id", "") if isinstance(current_user, dict) else getattr(current_user, "id", "")
+
     if payload.enabled and not payload.confirmed_first_use:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -134,12 +137,11 @@ async def update_settings(
         )
 
     try:
-        # FIX: was payload.dict() — breaks on Pydantic v2
-        updated = await upsert_smart_reply_settings(db, current_user.id, _payload_to_dict(payload))
-        logger.info(f"[SmartReply] Settings saved for {current_user.id} | enabled={payload.enabled}")
+        updated = await upsert_smart_reply_settings(db, user_id, _payload_to_dict(payload))
+        logger.info(f"[SmartReply] Settings saved for {user_id} | enabled={payload.enabled}")
         return {"data": updated, "success": True}
     except Exception as e:
-        logger.error(f"[SmartReply] POST settings failed for {current_user.id}: {e}", exc_info=True)
+        logger.error(f"[SmartReply] POST settings failed for {user_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to save Smart Reply settings: {str(e)}",

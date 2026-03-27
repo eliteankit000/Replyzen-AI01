@@ -334,20 +334,23 @@ async def disconnect_email(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        text("""
-        DELETE FROM email_accounts
-        WHERE id = :aid AND user_id = :uid
-        RETURNING id
-        """),
+    # Verify the account belongs to this user before deleting
+    check = await db.execute(
+        text("SELECT id FROM email_accounts WHERE id = :aid AND user_id = :uid"),
         {"aid": account_id, "uid": current_user["user_id"]},
     )
-    deleted = result.fetchone()
-    if not deleted:
+    if not check.fetchone():
         raise HTTPException(status_code=404, detail="Account not found")
 
+    # Delete threads first so any DB cascade trigger on email_accounts
+    # finds no rows to act on, avoiding TriggeredDataChangeViolationError
     await db.execute(
         text("DELETE FROM email_threads WHERE account_id = :aid AND user_id = :uid"),
+        {"aid": account_id, "uid": current_user["user_id"]},
+    )
+
+    await db.execute(
+        text("DELETE FROM email_accounts WHERE id = :aid AND user_id = :uid"),
         {"aid": account_id, "uid": current_user["user_id"]},
     )
     await db.commit()
