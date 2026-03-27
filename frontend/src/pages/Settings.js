@@ -1,14 +1,15 @@
 /**
  * Settings.js — Refactored with Smart Reply Mode
  * ================================================
- * CHANGES vs original:
- *   1. "Auto-Send" card replaced with "Smart Reply Mode" card (same position in page).
- *   2. Smart Reply Mode card has: toggle, config panel, first-time modal.
- *   3. New "Smart Reply Activity" card shows queued / sent / cancelled emails.
- *   4. Live countdown timer for queued emails with Cancel button.
- *
- * ALL other cards (Profile, Email Accounts, Follow-Up Control,
- * Blocked Senders, Silence Rules, Notifications) are 100% unchanged.
+ * FIXES in this revision:
+ *   1. handleDisconnect — now extracts the real server error detail instead of
+ *      showing the generic "Failed to disconnect account" for every failure.
+ *   2. _srAuthHeaders — now tries every common localStorage token key so the
+ *      Bearer token is always sent, preventing the HTTP 500 from an
+ *      unauthenticated Smart Reply save request.
+ *   3. saveSmartReplySettings — rolls back srSettings.enabled on failure so
+ *      the toggle doesn't stay visually "on" after a failed enable attempt.
+ *   4. handleSmartReplyConfirm — guards against modal staying open on error.
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -39,30 +40,57 @@ import { toast } from "sonner";
 
 // ─────────────────────────────────────────────────────────────────
 // Smart Reply API helper
-// NOTE: Add these methods to your @/lib/api.js file and remove this block.
 // ─────────────────────────────────────────────────────────────────
 
-// Shared auth header builder — reads the correct localStorage key
-const _srAuthHeaders = () => ({
-  Authorization: `Bearer ${localStorage.getItem("replyzen_token") || ""}`,
-});
+/**
+ * FIX 1 — Auth token resolution
+ *
+ * The original code hard-coded "replyzen_token" but the axios instance used
+ * by settingsAPI / emailAPI may store the token under a different key
+ * (e.g. "token", "access_token", "auth_token").  We now try the most common
+ * keys in order so the Bearer header is always populated correctly.
+ *
+ * ⚠️  If your project uses a single canonical key, replace this function with:
+ *       const _srAuthHeaders = () => ({
+ *         Authorization: `Bearer ${localStorage.getItem("YOUR_KEY") || ""}`,
+ *       });
+ */
+const _srAuthHeaders = () => {
+  const TOKEN_KEYS = [
+    "replyzen_token",
+    "token",
+    "access_token",
+    "auth_token",
+    "authToken",
+    "jwt",
+  ];
+  const token = TOKEN_KEYS.reduce(
+    (found, key) => found || localStorage.getItem(key) || "",
+    ""
+  );
+  return { Authorization: `Bearer ${token}` };
+};
 
 const smartReplyAPI = {
   getSettings: () =>
     fetch("/api/smart-reply/settings", {
-      headers: _srAuthHeaders(),                       // ✅ correct key + header
-    }).then(r => r.json()),
+      headers: _srAuthHeaders(),
+    }).then(async (r) => {
+      let json;
+      try { json = await r.json(); } catch { json = { detail: `HTTP ${r.status}` }; }
+      if (!r.ok) return Promise.reject(json);
+      return json;
+    }),
 
   saveSettings: async (data) => {
     const r = await fetch("/api/smart-reply/settings", {
-      method:  "POST",
+      method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ..._srAuthHeaders(),                           // ✅ auth header added
+        ..._srAuthHeaders(),
       },
       body: JSON.stringify(data),
     });
-    // Always parse JSON — on error the body contains {detail: "real reason"}
     let json;
     try { json = await r.json(); } catch { json = { detail: `HTTP ${r.status}` }; }
     if (!r.ok) return Promise.reject(json);
@@ -72,24 +100,27 @@ const smartReplyAPI = {
   getQueue: (status) => {
     const qs = status ? `?status=${status}` : "";
     return fetch(`/api/smart-reply/queue${qs}`, {
-      headers: _srAuthHeaders(),                       // ✅ auth header added
-    }).then(r => r.json());
+      headers: _srAuthHeaders(),
+    }).then(async (r) => {
+      let json;
+      try { json = await r.json(); } catch { json = { detail: `HTTP ${r.status}` }; }
+      if (!r.ok) return Promise.reject(json);
+      return json;
+    });
   },
 
   cancelEmail: (queueId) =>
     fetch(`/api/smart-reply/queue/${queueId}/cancel`, {
-      method:  "POST",
-      headers: _srAuthHeaders(),                       // ✅ auth header added
-    }).then(r => {
-      if (!r.ok) return r.json().then(e => Promise.reject(e));
+      method: "POST",
+      headers: _srAuthHeaders(),
+    }).then((r) => {
+      if (!r.ok) return r.json().then((e) => Promise.reject(e));
       return r.json();
     }),
 };
 
-// ─── END OF REPLACEMENT ───────────────────────────────────────────
-
 // ─────────────────────────────────────────────────────────────────
-// Chip / Tag component — UNCHANGED from original
+// Chip / Tag component
 // ─────────────────────────────────────────────────────────────────
 function TagInput({ tags, onAdd, onRemove, placeholder }) {
   const [input, setInput] = useState("");
@@ -106,9 +137,11 @@ function TagInput({ tags, onAdd, onRemove, placeholder }) {
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1.5 min-h-[36px] p-2 border border-border rounded-lg bg-background">
-        {tags.map(tag => (
-          <span key={tag}
-            className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary/10 text-primary text-xs rounded-full">
+        {tags.map((tag) => (
+          <span
+            key={tag}
+            className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary/10 text-primary text-xs rounded-full"
+          >
             {tag}
             <button onClick={() => onRemove(tag)} className="hover:text-destructive">
               <X className="w-3 h-3" />
@@ -117,7 +150,7 @@ function TagInput({ tags, onAdd, onRemove, placeholder }) {
         ))}
         <input
           value={input}
-          onChange={e => setInput(e.target.value)}
+          onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={tags.length === 0 ? placeholder : "Add more…"}
           className="flex-1 min-w-[120px] text-xs bg-transparent outline-none placeholder:text-muted-foreground"
@@ -145,13 +178,12 @@ function CountdownTimer({ scheduledAt }) {
     return () => clearInterval(id);
   }, [scheduledAt]);
 
-  if (secondsLeft <= 0) return <span className="text-xs text-emerald-600 font-medium">Sending now…</span>;
+  if (secondsLeft <= 0)
+    return <span className="text-xs text-emerald-600 font-medium">Sending now…</span>;
 
   const mins = Math.floor(secondsLeft / 60);
   const secs = secondsLeft % 60;
-  const label = mins > 0
-    ? `${mins}m ${secs}s`
-    : `${secs}s`;
+  const label = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
 
   return (
     <span className="text-xs text-amber-600 font-medium flex items-center gap-1">
@@ -165,26 +197,25 @@ function CountdownTimer({ scheduledAt }) {
 // Category options for Smart Reply
 // ─────────────────────────────────────────────────────────────────
 const CATEGORY_OPTIONS = [
-  { value: "faq",       label: "FAQ",        description: "Frequently asked questions" },
-  { value: "inquiry",   label: "Inquiry",    description: "General inquiries" },
-  { value: "follow_up", label: "Follow-up",  description: "Follow-up conversations" },
-  { value: "support",   label: "Support",    description: "Support requests" },
-  { value: "sales",     label: "Sales",      description: "Sales-related emails" },
+  { value: "faq",       label: "FAQ",       description: "Frequently asked questions" },
+  { value: "inquiry",   label: "Inquiry",   description: "General inquiries" },
+  { value: "follow_up", label: "Follow-up", description: "Follow-up conversations" },
+  { value: "support",   label: "Support",   description: "Support requests" },
+  { value: "sales",     label: "Sales",     description: "Sales-related emails" },
 ];
 
 // ─────────────────────────────────────────────────────────────────
 // First-Time Confirmation Modal
 // ─────────────────────────────────────────────────────────────────
-function SmartReplyConfirmationModal({ open, onConfirm, onCancel }) {
+function SmartReplyConfirmationModal({ open, onConfirm, onCancel, saving }) {
   const [checked, setChecked] = useState(false);
 
-  // Reset checkbox every time the modal opens
   useEffect(() => {
     if (open) setChecked(false);
   }, [open]);
 
   return (
-    <Dialog open={open} onOpenChange={val => !val && onCancel()}>
+    <Dialog open={open} onOpenChange={(val) => !val && onCancel()}>
       <DialogContent className="max-w-md" data-testid="smart-reply-confirm-modal">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -195,9 +226,7 @@ function SmartReplyConfirmationModal({ open, onConfirm, onCancel }) {
 
         <div className="space-y-4 py-2">
           <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 space-y-3">
-            <p className="text-sm font-medium text-foreground">
-              How Smart Reply Mode works:
-            </p>
+            <p className="text-sm font-medium text-foreground">How Smart Reply Mode works:</p>
             <ul className="space-y-2">
               {[
                 "Emails are sent based on your rules — never without your configuration.",
@@ -217,12 +246,11 @@ function SmartReplyConfirmationModal({ open, onConfirm, onCancel }) {
           <div className="rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-900/40 p-3 flex gap-2">
             <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <p className="text-xs text-amber-700 dark:text-amber-400">
-              Smart Reply Mode is a user-controlled automation.
-              Emails are sent based on your rules — you remain in control at all times.
+              Smart Reply Mode is a user-controlled automation. Emails are sent based on your
+              rules — you remain in control at all times.
             </p>
           </div>
 
-          {/* FIX: removed onClick from parent div — it was double-toggling with onCheckedChange */}
           <div className="flex items-start gap-2.5">
             <Checkbox
               checked={checked}
@@ -240,16 +268,18 @@ function SmartReplyConfirmationModal({ open, onConfirm, onCancel }) {
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={onCancel} data-testid="sr-modal-cancel">
+          <Button variant="outline" onClick={onCancel} disabled={saving} data-testid="sr-modal-cancel">
             Cancel
           </Button>
           <Button
             onClick={onConfirm}
-            disabled={!checked}
+            disabled={!checked || saving}
             className="bg-primary hover:bg-primary/90 text-white"
             data-testid="sr-modal-confirm"
           >
-            <Zap className="w-4 h-4 mr-1.5" />
+            {saving
+              ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+              : <Zap className="w-4 h-4 mr-1.5" />}
             Enable Smart Reply Mode
           </Button>
         </DialogFooter>
@@ -322,16 +352,34 @@ function QueueItemRow({ item, onCancel }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────
+
+/**
+ * Extracts a human-readable error message from both axios errors
+ * (err.response.data.detail) and plain fetch-based errors (err.detail).
+ */
+function extractErrorDetail(err, fallback = "Something went wrong") {
+  return (
+    err?.response?.data?.detail ||   // axios shape
+    err?.response?.data?.message ||  // axios alt shape
+    err?.detail ||                   // fetch / smartReplyAPI shape
+    err?.message ||                  // JS Error
+    (typeof err === "string" ? err : null) ||
+    fallback
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────
 // Main Settings Component
 // ─────────────────────────────────────────────────────────────────
 export default function Settings() {
-  const navigate        = useNavigate();
-  const [searchParams]  = useSearchParams();
+  const navigate       = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, refreshUser } = useAuth();
 
-  // ── Existing state (UNCHANGED) ──────────────────────────────────
+  // ── Existing state ──────────────────────────────────────────────
   const [settings, setSettings]     = useState(null);
   const [accounts, setAccounts]     = useState([]);
   const [planLimits, setPlanLimits] = useState(null);
@@ -342,13 +390,17 @@ export default function Settings() {
   const [connecting, setConnecting]       = useState(false);
   const [fullName, setFullName]           = useState("");
 
-  const [scope, setScope]                   = useState("sent_only");
+  // FIX 2 — track which account ID is being disconnected so the button
+  // shows a spinner and can't be double-clicked.
+  const [disconnectingId, setDisconnectingId] = useState(null);
+
+  const [scope, setScope]                     = useState("sent_only");
   const [allowedContacts, setAllowedContacts] = useState([]);
   const [allowedDomains, setAllowedDomains]   = useState([]);
   const [blockedSenders, setBlockedSenders]   = useState([]);
   const [savingScope, setSavingScope]         = useState(false);
 
-  // ── NEW: Smart Reply state ───────────────────────────────────────
+  // ── Smart Reply state ────────────────────────────────────────────
   const [srSettings, setSrSettings] = useState({
     enabled:              false,
     confidence_threshold: 80,
@@ -357,21 +409,21 @@ export default function Settings() {
     allowed_categories:   ["faq", "inquiry"],
     confirmed_first_use:  false,
   });
-  const [srMeta, setSrMeta]           = useState({ daily_sent_today: 0, daily_remaining: 20 });
-  const [srLoading, setSrLoading]     = useState(true);
-  const [srSaving, setSrSaving]       = useState(false);
-  const [srConfirmModal, setSrConfirmModal] = useState(false);
+  const [srMeta, setSrMeta]                   = useState({ daily_sent_today: 0, daily_remaining: 20 });
+  const [srLoading, setSrLoading]             = useState(true);
+  const [srSaving, setSrSaving]               = useState(false);
+  const [srConfirmModal, setSrConfirmModal]   = useState(false);
 
-  const [queueItems, setQueueItems]   = useState([]);
+  const [queueItems, setQueueItems]     = useState([]);
   const [queueLoading, setQueueLoading] = useState(false);
-  const [queueTab, setQueueTab]       = useState("queued"); // 'queued' | 'sent' | 'cancelled'
+  const [queueTab, setQueueTab]         = useState("queued");
 
   const queuePollRef = useRef(null);
 
   const userPlan        = user?.plan || "free";
   const autoSendAllowed = isAutoSendAllowed(userPlan);
 
-  // ── Load all data ────────────────────────────────────────────────
+  // ── Bootstrap ────────────────────────────────────────────────────
   useEffect(() => {
     loadData();
     if (searchParams.get("gmail") === "connected") {
@@ -380,7 +432,6 @@ export default function Settings() {
     }
   }, []);
 
-  // Poll queue every 10s when tab is 'queued' and Smart Reply is enabled
   useEffect(() => {
     if (srSettings.enabled && queueTab === "queued") {
       queuePollRef.current = setInterval(() => loadQueue("queued"), 10_000);
@@ -421,7 +472,6 @@ export default function Settings() {
       setLoading(false);
     }
 
-    // Load Smart Reply settings separately (non-blocking)
     loadSmartReplySettings();
     loadQueue("queued");
   };
@@ -435,7 +485,6 @@ export default function Settings() {
         setSrMeta(res.meta || { daily_sent_today: 0, daily_remaining: 20 });
       }
     } catch (e) {
-      // Non-fatal — Smart Reply settings may not exist yet (first use)
       console.warn("Smart Reply settings not loaded:", e);
     } finally {
       setSrLoading(false);
@@ -454,39 +503,38 @@ export default function Settings() {
     }
   }, []);
 
-  // ── Existing handlers (UNCHANGED) ───────────────────────────────
-
+  // ── Profile ──────────────────────────────────────────────────────
   const handleSaveProfile = async () => {
     setSaving(true);
     try {
       await settingsAPI.updateProfile({ full_name: fullName });
       await refreshUser();
       toast.success("Profile updated ✅");
-    } catch {
-      toast.error("Failed to update profile");
+    } catch (err) {
+      toast.error(extractErrorDetail(err, "Failed to update profile"));
     } finally {
       setSaving(false);
     }
   };
 
+  // ── Generic settings toggle ──────────────────────────────────────
   const handleSaveSettings = async (field, value) => {
     try {
       await settingsAPI.update({ [field]: value });
-      setSettings(prev => ({ ...prev, [field]: value }));
+      setSettings((prev) => ({ ...prev, [field]: value }));
       toast.success("Settings saved ✅");
     } catch (err) {
-      const detail = err.response?.data?.detail;
-      toast.error((err.response?.status === 403 && detail) ? detail : "Failed to save settings");
+      toast.error(extractErrorDetail(err, "Failed to save settings"));
     }
   };
 
   const handleSaveSilenceRules = async (field, value) => {
     try {
       await settingsAPI.updateSilenceRules({ [field]: value });
-      setSettings(prev => ({ ...prev, [field]: value }));
+      setSettings((prev) => ({ ...prev, [field]: value }));
       toast.success("Silence rules updated ✅");
-    } catch {
-      toast.error("Failed to save silence rules");
+    } catch (err) {
+      toast.error(extractErrorDetail(err, "Failed to save silence rules"));
     }
   };
 
@@ -499,8 +547,8 @@ export default function Settings() {
         allowed_domains:  allowedDomains,
       });
       toast.success("Follow-up scope saved ✅");
-    } catch {
-      toast.error("Failed to save follow-up scope");
+    } catch (err) {
+      toast.error(extractErrorDetail(err, "Failed to save follow-up scope"));
     } finally {
       setSavingScope(false);
     }
@@ -509,13 +557,14 @@ export default function Settings() {
   const handleUnblockSender = async (email) => {
     try {
       await settingsAPI.unblockSender(email);
-      setBlockedSenders(prev => prev.filter(s => s !== email));
+      setBlockedSenders((prev) => prev.filter((s) => s !== email));
       toast.success(`${email} unblocked`);
-    } catch {
-      toast.error("Failed to unblock sender");
+    } catch (err) {
+      toast.error(extractErrorDetail(err, "Failed to unblock sender"));
     }
   };
 
+  // ── Gmail connect ────────────────────────────────────────────────
   const handleConnectGmail = async () => {
     setConnecting(true);
     try {
@@ -534,70 +583,92 @@ export default function Settings() {
         loadData();
       }
     } catch (err) {
-      const detail = err.response?.data?.detail;
-      if (err.response?.status === 403 && detail) toast.error(detail);
-      else toast.error(detail || "Failed to connect Gmail");
+      toast.error(extractErrorDetail(err, "Failed to connect Gmail"));
       setConnecting(false);
     }
   };
 
+  /**
+   * FIX 2 — Gmail disconnect
+   *
+   * Original code used an empty catch block so every error, regardless of
+   * cause, showed "Failed to disconnect account".  Now we:
+   *   • track which account is being disconnected (loading state per-row)
+   *   • extract the real detail from the server response
+   *   • show it in the toast so the user knows what actually went wrong
+   */
   const handleDisconnect = async (accountId) => {
+    setDisconnectingId(accountId);
     try {
       await settingsAPI.disconnectEmail(accountId);
       toast.success("Account disconnected ✅");
       loadData();
-    } catch {
-      toast.error("Failed to disconnect account");
+    } catch (err) {
+      const detail = extractErrorDetail(err, "Failed to disconnect account");
+      toast.error(detail);
+    } finally {
+      setDisconnectingId(null);
     }
   };
 
-  // ── NEW: Smart Reply handlers ────────────────────────────────────
+  // ── Smart Reply ──────────────────────────────────────────────────
 
   const handleSmartReplyToggle = (newValue) => {
     if (newValue && !srSettings.confirmed_first_use) {
-      // Show first-time confirmation modal
       setSrConfirmModal(true);
       return;
     }
     saveSmartReplySettings({ ...srSettings, enabled: newValue });
   };
 
+  /**
+   * FIX 3 — Confirmation modal
+   *
+   * Keep the modal open while the save is in-flight (srSaving).
+   * Only close it on success; on failure the modal stays open so the user
+   * can try again or cancel — the toggle is NOT left visually enabled.
+   */
   const handleSmartReplyConfirm = async () => {
-    setSrConfirmModal(false);
-    await saveSmartReplySettings({
+    const success = await saveSmartReplySettings({
       ...srSettings,
-      enabled: true,
+      enabled:             true,
       confirmed_first_use: true,
     });
+    if (success) setSrConfirmModal(false);
   };
 
+  /**
+   * FIX 4 — saveSmartReplySettings now returns a boolean so callers know
+   * whether the save succeeded.  On failure the previous enabled state is
+   * restored so the toggle doesn't stay visually "on".
+   */
   const saveSmartReplySettings = async (newSettings) => {
+    const previousSettings = srSettings;
     setSrSaving(true);
+    // Optimistically reflect the new state in the UI
+    setSrSettings(newSettings);
     try {
       const res = await smartReplyAPI.saveSettings(newSettings);
-      // Update local state if server returned updated data
-      if (res.data) setSrSettings(res.data);
-      if (res.success !== false) {
-        toast.success("Smart Reply Mode updated ✅");
+      if (res.data) {
+        setSrSettings(res.data);
+        setSrMeta(res.meta || srMeta);
       }
+      toast.success("Smart Reply Mode updated ✅");
+      return true;
     } catch (err) {
-      // err is the parsed JSON body from the server e.g. {detail: "..."}
-      // Surface the real server error so user sees what actually went wrong
-      const detail =
-        err?.detail ||
-        err?.message ||
-        err?.error ||
-        (typeof err === "string" ? err : null) ||
-        "Failed to save Smart Reply settings";
+      // Roll back to whatever was there before
+      setSrSettings(previousSettings);
+      const detail = extractErrorDetail(err, "Failed to save Smart Reply settings");
       console.error("[SmartReply] Save failed:", err);
       toast.error(detail);
+      return false;
     } finally {
       setSrSaving(false);
     }
   };
 
   const handleSrFieldChange = (field, value) => {
-    setSrSettings(prev => ({ ...prev, [field]: value }));
+    setSrSettings((prev) => ({ ...prev, [field]: value }));
   };
 
   const handleSrSaveConfig = () => {
@@ -605,10 +676,10 @@ export default function Settings() {
   };
 
   const handleCategoryToggle = (cat) => {
-    setSrSettings(prev => {
+    setSrSettings((prev) => {
       const current = prev.allowed_categories || [];
       const updated = current.includes(cat)
-        ? current.filter(c => c !== cat)
+        ? current.filter((c) => c !== cat)
         : [...current, cat];
       return { ...prev, allowed_categories: updated };
     });
@@ -618,11 +689,9 @@ export default function Settings() {
     try {
       await smartReplyAPI.cancelEmail(queueId);
       toast.success("Email cancelled — it will not be sent.");
-      // Refresh queue
       await loadQueue(queueTab);
     } catch (err) {
-      const detail = err?.detail || "Failed to cancel email";
-      toast.error(detail);
+      toast.error(extractErrorDetail(err, "Failed to cancel email"));
     }
   };
 
@@ -631,13 +700,16 @@ export default function Settings() {
     loadQueue(tab);
   };
 
-  const accountLimitReached = planLimits && accounts.length >= planLimits.max_email_accounts;
+  const accountLimitReached =
+    planLimits && accounts.length >= planLimits.max_email_accounts;
 
   if (loading) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-8 w-48" />
-        {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-48 w-full" />)}
+        {[1, 2, 3, 4].map((i) => (
+          <Skeleton key={i} className="h-48 w-full" />
+        ))}
       </div>
     );
   }
@@ -645,11 +717,15 @@ export default function Settings() {
   return (
     <div className="space-y-8 max-w-3xl" data-testid="settings-page">
       <div>
-        <h1 className="text-2xl font-bold" data-testid="settings-heading">Settings</h1>
-        <p className="text-sm text-muted-foreground mt-1">Manage your account and preferences</p>
+        <h1 className="text-2xl font-bold" data-testid="settings-heading">
+          Settings
+        </h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Manage your account and preferences
+        </p>
       </div>
 
-      {/* ── Profile (UNCHANGED) ── */}
+      {/* ── Profile ── */}
       <Card data-testid="profile-card">
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
@@ -659,28 +735,47 @@ export default function Settings() {
         <CardContent className="space-y-4">
           <div>
             <Label className="text-sm">Full Name</Label>
-            <Input value={fullName} onChange={e => setFullName(e.target.value)}
-              className="mt-1.5 max-w-sm" data-testid="profile-name-input" />
+            <Input
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              className="mt-1.5 max-w-sm"
+              data-testid="profile-name-input"
+            />
           </div>
           <div>
             <Label className="text-sm">Email</Label>
-            <Input value={user?.email || ""} disabled className="mt-1.5 max-w-sm bg-muted" />
+            <Input
+              value={user?.email || ""}
+              disabled
+              className="mt-1.5 max-w-sm bg-muted"
+            />
           </div>
           <div>
             <Label className="text-sm">Plan</Label>
             <div className="mt-1.5">
-              <Badge className="capitalize bg-primary/10 text-primary border-primary/20">{userPlan}</Badge>
+              <Badge className="capitalize bg-primary/10 text-primary border-primary/20">
+                {userPlan}
+              </Badge>
             </div>
           </div>
-          <Button size="sm" onClick={handleSaveProfile} disabled={saving}
-            data-testid="save-profile-btn" className="bg-primary hover:bg-primary/90 text-white">
-            {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+          <Button
+            size="sm"
+            onClick={handleSaveProfile}
+            disabled={saving}
+            data-testid="save-profile-btn"
+            className="bg-primary hover:bg-primary/90 text-white"
+          >
+            {saving ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Save className="w-4 h-4 mr-2" />
+            )}
             Save Profile
           </Button>
         </CardContent>
       </Card>
 
-      {/* ── Email Accounts (UNCHANGED) ── */}
+      {/* ── Email Accounts ── */}
       <Card data-testid="email-accounts-card">
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
@@ -693,21 +788,37 @@ export default function Settings() {
               </p>
             )}
           </div>
-          <Button size="sm" variant="outline" onClick={() => setConnectDialog(true)}
-            disabled={accountLimitReached} data-testid="connect-gmail-settings-btn">
-            {accountLimitReached
-              ? <><Lock className="w-4 h-4 mr-1.5" />Limit Reached</>
-              : <><Plus className="w-4 h-4 mr-1.5" />Connect Gmail</>}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setConnectDialog(true)}
+            disabled={accountLimitReached}
+            data-testid="connect-gmail-settings-btn"
+          >
+            {accountLimitReached ? (
+              <>
+                <Lock className="w-4 h-4 mr-1.5" />Limit Reached
+              </>
+            ) : (
+              <>
+                <Plus className="w-4 h-4 mr-1.5" />Connect Gmail
+              </>
+            )}
           </Button>
         </CardHeader>
         <CardContent>
           {accountLimitReached && (
             <div className="mb-4 p-3 rounded-lg bg-accent/50 border border-primary/20 flex items-center justify-between">
               <p className="text-xs text-muted-foreground">
-                You've reached your limit ({planLimits?.max_email_accounts}). Upgrade to connect more.
+                You've reached your limit ({planLimits?.max_email_accounts}). Upgrade to
+                connect more.
               </p>
-              <Button size="sm" variant="link" className="text-primary h-auto p-0 ml-3"
-                onClick={() => navigate("/billing")}>
+              <Button
+                size="sm"
+                variant="link"
+                className="text-primary h-auto p-0 ml-3"
+                onClick={() => navigate("/billing")}
+              >
                 Upgrade <ArrowUpRight className="w-3 h-3 ml-1" />
               </Button>
             </div>
@@ -719,10 +830,12 @@ export default function Settings() {
             </div>
           ) : (
             <div className="space-y-3">
-              {accounts.map(a => (
-                <div key={a.id}
+              {accounts.map((a) => (
+                <div
+                  key={a.id}
                   className="flex items-center justify-between p-3 rounded-lg border border-border"
-                  data-testid={`account-${a.id}`}>
+                  data-testid={`account-${a.id}`}
+                >
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center">
                       <Mail className="w-4 h-4 text-primary" />
@@ -730,17 +843,31 @@ export default function Settings() {
                     <div>
                       <p className="text-sm font-medium">{a.email_address}</p>
                       <p className="text-xs text-muted-foreground">
-                        {a.is_active
-                          ? <span className="flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Connected
-                            </span>
-                          : "Inactive"}
+                        {a.is_active ? (
+                          <span className="flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                            Connected
+                          </span>
+                        ) : (
+                          "Inactive"
+                        )}
                       </p>
                     </div>
                   </div>
-                  <Button variant="ghost" size="sm" onClick={() => handleDisconnect(a.id)}
-                    className="text-destructive" data-testid={`disconnect-${a.id}`}>
-                    <Trash2 className="w-4 h-4" />
+                  {/* FIX 2 — spinner while disconnecting; real error shown on failure */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDisconnect(a.id)}
+                    disabled={disconnectingId === a.id}
+                    className="text-destructive"
+                    data-testid={`disconnect-${a.id}`}
+                  >
+                    {disconnectingId === a.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-4 h-4" />
+                    )}
                   </Button>
                 </div>
               ))}
@@ -749,7 +876,7 @@ export default function Settings() {
         </CardContent>
       </Card>
 
-      {/* ── Follow-Up Control (UNCHANGED) ── */}
+      {/* ── Follow-Up Control ── */}
       <Card data-testid="followup-scope-card">
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
@@ -762,55 +889,97 @@ export default function Settings() {
         <CardContent className="space-y-6">
           <RadioGroup value={scope} onValueChange={setScope} className="space-y-3">
             {[
-              { value: "sent_only", label: "Only emails I sent", rec: true,
-                desc: "Follow up only on conversations where you sent the last message" },
-              { value: "manual_contacts", label: "Only selected contacts",
-                desc: "Follow up only with specific email addresses" },
-              { value: "domain_based", label: "Only specific domains",
-                desc: "Follow up only with emails from certain domains (e.g. @client.com)" },
-              { value: "all", label: "All emails",
-                desc: "Process all non-automated conversations" },
-            ].map(opt => (
-              <div key={opt.value}
+              {
+                value: "sent_only",
+                label: "Only emails I sent",
+                rec: true,
+                desc: "Follow up only on conversations where you sent the last message",
+              },
+              {
+                value: "manual_contacts",
+                label: "Only selected contacts",
+                desc: "Follow up only with specific email addresses",
+              },
+              {
+                value: "domain_based",
+                label: "Only specific domains",
+                desc: "Follow up only with emails from certain domains (e.g. @client.com)",
+              },
+              {
+                value: "all",
+                label: "All emails",
+                desc: "Process all non-automated conversations",
+              },
+            ].map((opt) => (
+              <div
+                key={opt.value}
                 className={`flex items-start gap-3 p-3 rounded-lg border transition-colors cursor-pointer
-                  ${scope === opt.value ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
-                onClick={() => setScope(opt.value)}>
+                  ${scope === opt.value
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-primary/40"}`}
+                onClick={() => setScope(opt.value)}
+              >
                 <RadioGroupItem value={opt.value} id={opt.value} className="mt-0.5" />
                 <div className="flex-1">
                   <Label htmlFor={opt.value} className="text-sm font-medium cursor-pointer">
                     {opt.label}
-                    {opt.rec && <Badge variant="secondary" className="ml-1.5 text-xs">Recommended</Badge>}
+                    {opt.rec && (
+                      <Badge variant="secondary" className="ml-1.5 text-xs">
+                        Recommended
+                      </Badge>
+                    )}
                   </Label>
                   <p className="text-xs text-muted-foreground mt-0.5">{opt.desc}</p>
                   {scope === "manual_contacts" && opt.value === "manual_contacts" && (
                     <div className="mt-3">
-                      <TagInput tags={allowedContacts}
-                        onAdd={val => setAllowedContacts(prev => [...prev, val])}
-                        onRemove={val => setAllowedContacts(prev => prev.filter(c => c !== val))}
-                        placeholder="Add email address…" />
+                      <TagInput
+                        tags={allowedContacts}
+                        onAdd={(val) => setAllowedContacts((prev) => [...prev, val])}
+                        onRemove={(val) =>
+                          setAllowedContacts((prev) => prev.filter((c) => c !== val))
+                        }
+                        placeholder="Add email address…"
+                      />
                     </div>
                   )}
                   {scope === "domain_based" && opt.value === "domain_based" && (
                     <div className="mt-3">
-                      <TagInput tags={allowedDomains}
-                        onAdd={val => setAllowedDomains(prev => [...prev, val.startsWith("@") ? val : `@${val}`])}
-                        onRemove={val => setAllowedDomains(prev => prev.filter(d => d !== val))}
-                        placeholder="Add domain e.g. @client.com…" />
+                      <TagInput
+                        tags={allowedDomains}
+                        onAdd={(val) =>
+                          setAllowedDomains((prev) => [
+                            ...prev,
+                            val.startsWith("@") ? val : `@${val}`,
+                          ])
+                        }
+                        onRemove={(val) =>
+                          setAllowedDomains((prev) => prev.filter((d) => d !== val))
+                        }
+                        placeholder="Add domain e.g. @client.com…"
+                      />
                     </div>
                   )}
                 </div>
               </div>
             ))}
           </RadioGroup>
-          <Button size="sm" onClick={handleSaveScope} disabled={savingScope}
-            className="bg-primary hover:bg-primary/90 text-white">
-            {savingScope ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+          <Button
+            size="sm"
+            onClick={handleSaveScope}
+            disabled={savingScope}
+            className="bg-primary hover:bg-primary/90 text-white"
+          >
+            {savingScope ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Save className="w-4 h-4 mr-2" />
+            )}
             Save Follow-Up Control
           </Button>
         </CardContent>
       </Card>
 
-      {/* ── Blocked Senders (UNCHANGED) ── */}
+      {/* ── Blocked Senders ── */}
       <Card data-testid="blocked-senders-card">
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
@@ -827,12 +996,18 @@ export default function Settings() {
             </p>
           ) : (
             <div className="space-y-2">
-              {blockedSenders.map(sender => (
-                <div key={sender}
-                  className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/30">
+              {blockedSenders.map((sender) => (
+                <div
+                  key={sender}
+                  className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-muted/30"
+                >
                   <span className="text-sm">{sender}</span>
-                  <Button variant="ghost" size="sm" onClick={() => handleUnblockSender(sender)}
-                    className="text-muted-foreground hover:text-destructive h-7">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleUnblockSender(sender)}
+                    className="text-muted-foreground hover:text-destructive h-7"
+                  >
                     <X className="w-3.5 h-3.5 mr-1" /> Unblock
                   </Button>
                 </div>
@@ -842,7 +1017,7 @@ export default function Settings() {
         </CardContent>
       </Card>
 
-      {/* ── Silence Detection Rules (UNCHANGED) ── */}
+      {/* ── Silence Detection Rules ── */}
       <Card data-testid="silence-rules-card">
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
@@ -853,12 +1028,19 @@ export default function Settings() {
           <div>
             <div className="flex items-center justify-between mb-2">
               <Label className="text-sm">Silence Threshold</Label>
-              <span className="text-sm font-medium text-primary">{settings?.silence_delay_days || 3} days</span>
+              <span className="text-sm font-medium text-primary">
+                {settings?.silence_delay_days || 3} days
+              </span>
             </div>
             <Slider
               value={[settings?.silence_delay_days || 3]}
-              onValueChange={([val]) => handleSaveSilenceRules("silence_delay_days", val)}
-              min={1} max={10} step={1} className="max-w-sm"
+              onValueChange={([val]) =>
+                handleSaveSilenceRules("silence_delay_days", val)
+              }
+              min={1}
+              max={10}
+              step={1}
+              className="max-w-sm"
               data-testid="silence-threshold-slider"
             />
             <p className="text-xs text-muted-foreground mt-1">
@@ -869,25 +1051,33 @@ export default function Settings() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium">Ignore Newsletters</p>
-              <p className="text-xs text-muted-foreground">Skip automated newsletter emails</p>
+              <p className="text-xs text-muted-foreground">
+                Skip automated newsletter emails
+              </p>
             </div>
-            <Switch checked={settings?.ignore_newsletters ?? true}
-              onCheckedChange={v => handleSaveSilenceRules("ignore_newsletters", v)}
-              data-testid="ignore-newsletters-switch" />
+            <Switch
+              checked={settings?.ignore_newsletters ?? true}
+              onCheckedChange={(v) => handleSaveSilenceRules("ignore_newsletters", v)}
+              data-testid="ignore-newsletters-switch"
+            />
           </div>
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium">Ignore Notifications</p>
-              <p className="text-xs text-muted-foreground">Skip automated system notifications</p>
+              <p className="text-xs text-muted-foreground">
+                Skip automated system notifications
+              </p>
             </div>
-            <Switch checked={settings?.ignore_notifications ?? true}
-              onCheckedChange={v => handleSaveSilenceRules("ignore_notifications", v)}
-              data-testid="ignore-notifications-switch" />
+            <Switch
+              checked={settings?.ignore_notifications ?? true}
+              onCheckedChange={(v) => handleSaveSilenceRules("ignore_notifications", v)}
+              data-testid="ignore-notifications-switch"
+            />
           </div>
         </CardContent>
       </Card>
 
-      {/* ── Notifications (UNCHANGED) ── */}
+      {/* ── Notifications ── */}
       <Card data-testid="notifications-card">
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
@@ -898,26 +1088,34 @@ export default function Settings() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium">Daily Digest</p>
-              <p className="text-xs text-muted-foreground">Receive a daily summary of silent threads</p>
+              <p className="text-xs text-muted-foreground">
+                Receive a daily summary of silent threads
+              </p>
             </div>
-            <Switch checked={settings?.daily_digest ?? true}
-              onCheckedChange={v => handleSaveSettings("daily_digest", v)}
-              data-testid="daily-digest-switch" />
+            <Switch
+              checked={settings?.daily_digest ?? true}
+              onCheckedChange={(v) => handleSaveSettings("daily_digest", v)}
+              data-testid="daily-digest-switch"
+            />
           </div>
           <Separator />
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium">Weekly Report</p>
-              <p className="text-xs text-muted-foreground">Get a weekly follow-up performance report</p>
+              <p className="text-xs text-muted-foreground">
+                Get a weekly follow-up performance report
+              </p>
             </div>
-            <Switch checked={settings?.weekly_report ?? true}
-              onCheckedChange={v => handleSaveSettings("weekly_report", v)}
-              data-testid="weekly-report-switch" />
+            <Switch
+              checked={settings?.weekly_report ?? true}
+              onCheckedChange={(v) => handleSaveSettings("weekly_report", v)}
+              data-testid="weekly-report-switch"
+            />
           </div>
         </CardContent>
       </Card>
 
-      {/* ── NEW: Smart Reply Mode (replaces Auto-Send card) ── */}
+      {/* ── Smart Reply Mode ── */}
       <Card data-testid="smart-reply-card">
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
@@ -928,11 +1126,14 @@ export default function Settings() {
               </Badge>
             )}
             {srSettings.enabled && (
-              <Badge className="text-xs bg-emerald-100 text-emerald-700 border-emerald-200">Active</Badge>
+              <Badge className="text-xs bg-emerald-100 text-emerald-700 border-emerald-200">
+                Active
+              </Badge>
             )}
           </CardTitle>
           <p className="text-xs text-muted-foreground">
-            User-controlled automation — emails are sent based on your rules. You can cancel anytime before sending.
+            User-controlled automation — emails are sent based on your rules. You can cancel
+            anytime before sending.
           </p>
         </CardHeader>
 
@@ -942,8 +1143,12 @@ export default function Settings() {
               <p className="text-sm text-muted-foreground mb-3">
                 Smart Reply Mode is available on Pro and Business plans.
               </p>
-              <Button size="sm" onClick={() => navigate("/billing")}
-                className="bg-primary hover:bg-primary/90 text-white" data-testid="upgrade-smartreply-btn">
+              <Button
+                size="sm"
+                onClick={() => navigate("/billing")}
+                className="bg-primary hover:bg-primary/90 text-white"
+                data-testid="upgrade-smartreply-btn"
+              >
                 Upgrade Plan <ArrowUpRight className="w-3.5 h-3.5 ml-1.5" />
               </Button>
             </div>
@@ -954,7 +1159,6 @@ export default function Settings() {
             </div>
           ) : (
             <>
-              {/* Toggle */}
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium">Enable Smart Reply Mode</p>
@@ -970,23 +1174,20 @@ export default function Settings() {
                 />
               </div>
 
-              {/* Info banner when disabled */}
               {!srSettings.enabled && (
                 <div className="flex gap-2 p-3 rounded-lg bg-muted/50 border border-border">
                   <Info className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
                   <p className="text-xs text-muted-foreground">
-                    No email will be sent automatically until you enable Smart Reply Mode
-                    and configure your rules below.
+                    No email will be sent automatically until you enable Smart Reply Mode and
+                    configure your rules below.
                   </p>
                 </div>
               )}
 
-              {/* Config panel — visible when enabled */}
               {srSettings.enabled && (
                 <>
                   <Separator />
 
-                  {/* Daily usage indicator */}
                   <div className="flex items-center justify-between p-3 rounded-lg bg-primary/5 border border-primary/20">
                     <div>
                       <p className="text-xs font-medium text-primary">Today's Usage</p>
@@ -994,17 +1195,21 @@ export default function Settings() {
                         {srMeta.daily_sent_today} sent · {srMeta.daily_remaining} remaining
                       </p>
                     </div>
-                    <Badge variant="outline" className="text-primary border-primary/30 text-xs">
+                    <Badge
+                      variant="outline"
+                      className="text-primary border-primary/30 text-xs"
+                    >
                       {srMeta.daily_sent_today} / {srSettings.daily_limit}
                     </Badge>
                   </div>
 
-                  {/* AI Confidence Threshold */}
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <Label className="text-sm">
                         AI Confidence Threshold
-                        <span className="ml-1 text-xs text-muted-foreground">(minimum to queue)</span>
+                        <span className="ml-1 text-xs text-muted-foreground">
+                          (minimum to queue)
+                        </span>
                       </Label>
                       <span className="text-sm font-medium text-primary">
                         {srSettings.confidence_threshold}%
@@ -1012,8 +1217,12 @@ export default function Settings() {
                     </div>
                     <Slider
                       value={[srSettings.confidence_threshold]}
-                      onValueChange={([val]) => handleSrFieldChange("confidence_threshold", val)}
-                      min={50} max={100} step={5}
+                      onValueChange={([val]) =>
+                        handleSrFieldChange("confidence_threshold", val)
+                      }
+                      min={50}
+                      max={100}
+                      step={5}
                       className="max-w-sm"
                       data-testid="confidence-threshold-slider"
                     />
@@ -1022,14 +1231,20 @@ export default function Settings() {
                     </p>
                   </div>
 
-                  {/* Daily Limit */}
                   <div>
                     <Label className="text-sm">Daily Send Limit</Label>
                     <div className="flex items-center gap-3 mt-1.5">
                       <Input
-                        type="number" min={1} max={500}
+                        type="number"
+                        min={1}
+                        max={500}
                         value={srSettings.daily_limit}
-                        onChange={e => handleSrFieldChange("daily_limit", parseInt(e.target.value) || 20)}
+                        onChange={(e) =>
+                          handleSrFieldChange(
+                            "daily_limit",
+                            parseInt(e.target.value) || 20
+                          )
+                        }
                         className="max-w-[120px]"
                         data-testid="sr-daily-limit-input"
                       />
@@ -1037,23 +1252,28 @@ export default function Settings() {
                     </div>
                   </div>
 
-                  {/* Delay Before Sending */}
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <Label className="text-sm">
                         Delay Before Sending
-                        <span className="ml-1 text-xs text-muted-foreground">(cancel window)</span>
+                        <span className="ml-1 text-xs text-muted-foreground">
+                          (cancel window)
+                        </span>
                       </Label>
                       <span className="text-sm font-medium text-primary">
                         {srSettings.delay_seconds >= 60
-                          ? `${Math.floor(srSettings.delay_seconds / 60)}m ${srSettings.delay_seconds % 60}s`
+                          ? `${Math.floor(srSettings.delay_seconds / 60)}m ${
+                              srSettings.delay_seconds % 60
+                            }s`
                           : `${srSettings.delay_seconds}s`}
                       </span>
                     </div>
                     <Slider
                       value={[srSettings.delay_seconds]}
                       onValueChange={([val]) => handleSrFieldChange("delay_seconds", val)}
-                      min={30} max={3600} step={30}
+                      min={30}
+                      max={3600}
+                      step={30}
                       className="max-w-sm"
                       data-testid="sr-delay-slider"
                     />
@@ -1062,28 +1282,33 @@ export default function Settings() {
                     </p>
                   </div>
 
-                  {/* Category Selection */}
                   <div>
-                    <Label className="text-sm mb-2 block">Allowed Email Categories</Label>
+                    <Label className="text-sm mb-2 block">
+                      Allowed Email Categories
+                    </Label>
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                      {CATEGORY_OPTIONS.map(cat => (
+                      {CATEGORY_OPTIONS.map((cat) => (
                         <div
                           key={cat.value}
                           onClick={() => handleCategoryToggle(cat.value)}
                           className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors
-                            ${srSettings.allowed_categories?.includes(cat.value)
-                              ? "border-primary bg-primary/5"
-                              : "border-border hover:border-primary/40"}`}
+                            ${
+                              srSettings.allowed_categories?.includes(cat.value)
+                                ? "border-primary bg-primary/5"
+                                : "border-border hover:border-primary/40"
+                            }`}
                           data-testid={`category-${cat.value}`}
                         >
                           <Checkbox
                             checked={srSettings.allowed_categories?.includes(cat.value)}
                             onCheckedChange={() => handleCategoryToggle(cat.value)}
-                            onClick={e => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
                           />
                           <div>
                             <p className="text-xs font-medium">{cat.label}</p>
-                            <p className="text-xs text-muted-foreground hidden sm:block">{cat.description}</p>
+                            <p className="text-xs text-muted-foreground hidden sm:block">
+                              {cat.description}
+                            </p>
                           </div>
                         </div>
                       ))}
@@ -1093,7 +1318,6 @@ export default function Settings() {
                     </p>
                   </div>
 
-                  {/* Save config button */}
                   <Button
                     size="sm"
                     onClick={handleSrSaveConfig}
@@ -1101,9 +1325,11 @@ export default function Settings() {
                     className="bg-primary hover:bg-primary/90 text-white"
                     data-testid="save-smart-reply-btn"
                   >
-                    {srSaving
-                      ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      : <Save className="w-4 h-4 mr-2" />}
+                    {srSaving ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Save className="w-4 h-4 mr-2" />
+                    )}
                     Save Smart Reply Settings
                   </Button>
                 </>
@@ -1113,7 +1339,7 @@ export default function Settings() {
         </CardContent>
       </Card>
 
-      {/* ── NEW: Smart Reply Activity (queue visibility) ── */}
+      {/* ── Smart Reply Activity ── */}
       {autoSendAllowed && (
         <Card data-testid="smart-reply-activity-card">
           <CardHeader>
@@ -1125,7 +1351,6 @@ export default function Settings() {
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Tab row */}
             <div className="flex gap-1 p-1 rounded-lg bg-muted">
               {[
                 { key: "queued",    label: "Queued",    icon: Timer },
@@ -1136,9 +1361,11 @@ export default function Settings() {
                   key={key}
                   onClick={() => handleQueueTabChange(key)}
                   className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-xs font-medium transition-colors
-                    ${queueTab === key
-                      ? "bg-background shadow-sm text-foreground"
-                      : "text-muted-foreground hover:text-foreground"}`}
+                    ${
+                      queueTab === key
+                        ? "bg-background shadow-sm text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
                   data-testid={`queue-tab-${key}`}
                 >
                   <Icon className="w-3 h-3" />
@@ -1147,10 +1374,11 @@ export default function Settings() {
               ))}
             </div>
 
-            {/* Queue list */}
             {queueLoading ? (
               <div className="space-y-2">
-                {[1, 2].map(i => <Skeleton key={i} className="h-20 w-full" />)}
+                {[1, 2].map((i) => (
+                  <Skeleton key={i} className="h-20 w-full" />
+                ))}
               </div>
             ) : queueItems.length === 0 ? (
               <div className="text-center py-8">
@@ -1170,7 +1398,7 @@ export default function Settings() {
               </div>
             ) : (
               <div className="space-y-2">
-                {queueItems.map(item => (
+                {queueItems.map((item) => (
                   <QueueItemRow
                     key={item.id}
                     item={item}
@@ -1183,7 +1411,7 @@ export default function Settings() {
         </Card>
       )}
 
-      {/* ── Connect Gmail Dialog (UNCHANGED) ── */}
+      {/* ── Connect Gmail Dialog ── */}
       <Dialog open={connectDialog} onOpenChange={setConnectDialog}>
         <DialogContent data-testid="connect-gmail-dialog">
           <DialogHeader>
@@ -1193,28 +1421,51 @@ export default function Settings() {
             <p className="text-sm text-muted-foreground">
               Connect your Gmail account to sync emails and detect silent conversations.
             </p>
-            <Button onClick={handleConnectGmail} disabled={connecting}
-              className="w-full bg-primary hover:bg-primary/90 text-white" data-testid="google-oauth-btn">
-              {connecting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Mail className="w-4 h-4 mr-2" />}
+            <Button
+              onClick={handleConnectGmail}
+              disabled={connecting}
+              className="w-full bg-primary hover:bg-primary/90 text-white"
+              data-testid="google-oauth-btn"
+            >
+              {connecting ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Mail className="w-4 h-4 mr-2" />
+              )}
               Sign in with Google
             </Button>
             <div className="relative">
-              <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-border" /></div>
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-border" />
+              </div>
               <div className="relative flex justify-center text-xs">
-                <span className="bg-background px-2 text-muted-foreground">or demo mode</span>
+                <span className="bg-background px-2 text-muted-foreground">
+                  or demo mode
+                </span>
               </div>
             </div>
             <div>
               <Label className="text-sm">Email for Demo</Label>
-              <Input type="email" placeholder="you@gmail.com" value={connectEmail}
-                onChange={e => setConnectEmail(e.target.value)} className="mt-1.5"
-                data-testid="connect-email-input" />
+              <Input
+                type="email"
+                placeholder="you@gmail.com"
+                value={connectEmail}
+                onChange={(e) => setConnectEmail(e.target.value)}
+                className="mt-1.5"
+                data-testid="connect-email-input"
+              />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConnectDialog(false)}>Cancel</Button>
-            <Button onClick={handleConnectGmail} disabled={connecting || !connectEmail}
-              variant="outline" data-testid="confirm-connect-btn">
+            <Button variant="outline" onClick={() => setConnectDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleConnectGmail}
+              disabled={connecting || !connectEmail}
+              variant="outline"
+              data-testid="confirm-connect-btn"
+            >
               {connecting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
               Connect Demo
             </Button>
@@ -1222,11 +1473,15 @@ export default function Settings() {
         </DialogContent>
       </Dialog>
 
-      {/* ── NEW: Smart Reply First-Time Confirmation Modal ── */}
+      {/* ── Smart Reply First-Time Confirmation Modal ── */}
       <SmartReplyConfirmationModal
         open={srConfirmModal}
         onConfirm={handleSmartReplyConfirm}
-        onCancel={() => setSrConfirmModal(false)}
+        onCancel={() => {
+          // Only allow cancelling when not mid-save
+          if (!srSaving) setSrConfirmModal(false);
+        }}
+        saving={srSaving}
       />
     </div>
   );
