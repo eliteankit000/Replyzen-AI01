@@ -113,77 +113,83 @@ async def generate_reply_suggestion(
 ) -> Dict:
     """
     Generate AI reply suggestion for a message.
-    
+
     ⚠️ IMPORTANT: This ONLY generates a suggestion.
     No emails are sent. User must approve via send endpoint.
+
+    DB logging is best-effort — a logging failure never blocks the AI reply.
     """
+    # Ensure message content is a non-empty string
+    message = (message or "").strip() or "Please generate a professional email reply."
+
+    # ── Step 1: Generate AI reply (this MUST succeed for the endpoint to succeed) ──
+    ai_reply = await generate_ai_reply(
+        message=message,
+        tone=tone,
+        context=f"Platform: {platform}",
+    )
+
+    suggestion_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+
+    # ── Step 2: Store suggestion (best-effort — don't fail if DB insert fails) ──
     try:
-        # Generate AI reply using OpenAI service
-        ai_reply = await generate_ai_reply(
-            message=message,
-            tone=tone,
-            context=f"Platform: {platform}",
-        )
-        
-        # Store suggestion in inbox_messages table
-        suggestion_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
-        
         await db.execute(
             text("""
-                INSERT INTO inbox_messages 
+                INSERT INTO inbox_messages
                 (id, user_id, thread_id, message, reply, status, platform, tone, created_at)
                 VALUES (:id, :user_id, :thread_id, :message, :reply, 'pending', :platform, :tone, :created_at)
             """),
             {
-                "id": suggestion_id,
-                "user_id": user_id,
+                "id":        suggestion_id,
+                "user_id":   user_id,
                 "thread_id": message_id,
-                "message": message,
-                "reply": ai_reply,
-                "platform": platform,
-                "tone": tone,
+                "message":   message,
+                "reply":     ai_reply,
+                "platform":  platform,
+                "tone":      tone,
                 "created_at": now,
             }
         )
-        
-        # Log to smart_reply_logs for tracking
+        await db.commit()
+    except Exception as log_err:
+        logger.warning(f"[Inbox] Could not store inbox_messages log: {log_err}")
+        await db.rollback()
+
+    try:
         await db.execute(
             text("""
-                INSERT INTO smart_reply_logs 
+                INSERT INTO smart_reply_logs
                 (id, user_id, thread_id, message_snippet, generated_reply, platform, tone, status, created_at)
                 VALUES (:id, :user_id, :thread_id, :message, :reply, :platform, :tone, 'pending', :created_at)
             """),
             {
-                "id": str(uuid.uuid4()),
-                "user_id": user_id,
+                "id":        str(uuid.uuid4()),
+                "user_id":   user_id,
                 "thread_id": message_id,
-                "message": message[:200],  # Snippet
-                "reply": ai_reply,
-                "platform": platform,
-                "tone": tone,
+                "message":   message[:200],
+                "reply":     ai_reply,
+                "platform":  platform,
+                "tone":      tone,
                 "created_at": now,
             }
         )
-        
         await db.commit()
-        
-        logger.info(f"[Inbox] Generated reply suggestion for user {user_id}, message {message_id}")
-        
-        return {
-            "id": suggestion_id,
-            "message_id": message_id,
-            "reply": ai_reply,
-            "tone": tone,
-            "platform": platform,
-            "status": "pending",
-            "created_at": now.isoformat(),
-        }
-        
-    except Exception as e:
-        logger.error(f"[Inbox] Failed to generate reply for {user_id}: {e}", exc_info=True)
+    except Exception as log_err:
+        logger.warning(f"[Inbox] Could not store smart_reply_logs log: {log_err}")
         await db.rollback()
-        raise
+
+    logger.info(f"[Inbox] Generated reply suggestion for user {user_id}, message {message_id}")
+
+    return {
+        "id":         suggestion_id,
+        "message_id": message_id,
+        "reply":      ai_reply,
+        "tone":       tone,
+        "platform":   platform,
+        "status":     "pending",
+        "created_at": now.isoformat(),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════

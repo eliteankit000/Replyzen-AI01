@@ -102,7 +102,7 @@ export default function InboxPreview() {
       setGeneratingReply(true);
       const response = await inboxAPI.generateReply({
         message_id: message.id,
-        message: message.snippet || message.subject,
+        message: message.snippet || message.subject || "",
         platform: "gmail",
         tone: tone,
       });

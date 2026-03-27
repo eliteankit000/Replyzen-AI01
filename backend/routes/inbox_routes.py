@@ -12,7 +12,7 @@ Routes:
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Dict
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -40,7 +40,7 @@ router = APIRouter(prefix="/api/inbox", tags=["inbox"])
 
 class GenerateReplyRequest(BaseModel):
     message_id: str
-    message: str
+    message: Optional[str] = ""
     platform: str = "gmail"
     tone: str = "professional"
 
