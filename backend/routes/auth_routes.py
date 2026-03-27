@@ -357,6 +357,7 @@ async def log_permission(db: AsyncSession, user_id: str, action: str,
     """
     try:
         import uuid as _uuid
+        from datetime import datetime, timezone
         await db.execute(
             text("""
             INSERT INTO permission_logs (id, user_id, action, resource, platform, details, created_at)
@@ -367,6 +368,14 @@ async def log_permission(db: AsyncSession, user_id: str, action: str,
                 "user_id": user_id,
                 "action": action,
                 "resource": resource,
+                "platform": platform,
+                "details": details,
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
+        await db.commit()
+    except Exception as e:
+        logger.warning(f"Permission logging failed: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -419,11 +428,3 @@ async def complete_onboarding(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to complete onboarding"
         )
-
-                "platform": platform,
-                "details": details,
-                "created_at": datetime.now(timezone.utc),
-            }
-        )
-    except Exception as e:
-        logger.warning(f"Permission logging failed: {e}")
