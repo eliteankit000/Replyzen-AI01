@@ -56,7 +56,7 @@
     "zod": "^3.24.4"
   },
   "scripts": {
-    "start": "craco start",
+    "start": "PORT=5000 craco start",
     "build": "CI=false craco build",
     "test": "craco test"
   },

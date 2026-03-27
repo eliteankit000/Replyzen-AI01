@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -76,12 +77,17 @@ app = FastAPI(
 
 ALLOWED_ORIGINS = [
     "http://localhost:3000",
+    "http://localhost:5000",
     "http://localhost:5173",
     "https://replyzenai.com",
     "https://www.replyzenai.com",
     "https://replyzen-ai-01-wjzx.vercel.app",
     "https://replyzen-ai-01-3boy.vercel.app",
 ]
+
+REPLIT_DEV_DOMAIN = os.environ.get("REPLIT_DEV_DOMAIN", "")
+if REPLIT_DEV_DOMAIN:
+    ALLOWED_ORIGINS.append(f"https://{REPLIT_DEV_DOMAIN}")
 
 class CORSErrorMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -94,7 +100,7 @@ class CORSErrorMiddleware(BaseHTTPMiddleware):
                 status_code=500,
                 content={"detail": str(exc)}
             )
-        if origin and (origin in ALLOWED_ORIGINS or ".vercel.app" in origin):
+        if origin and (origin in ALLOWED_ORIGINS or ".vercel.app" in origin or ".replit.dev" in origin):
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Credentials"] = "true"
         return response
@@ -104,7 +110,7 @@ app.add_middleware(CORSErrorMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origin_regex=r"https://.*(\.vercel\.app|\.replit\.dev)",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=[
