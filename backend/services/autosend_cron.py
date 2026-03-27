@@ -160,9 +160,9 @@ async def classify_and_score_threads(db, user_id: str):
                is_dismissed, replied_by_user, last_sender_is_user,
                EXTRACT(DAY FROM (NOW() - last_message_at))::int AS days_silent
         FROM email_threads
-        WHERE user_id = :uid
+        WHERE user_id::text = :uid
           AND (type IS NULL OR type = 'other')
-          AND is_dismissed = false
+          AND is_dismissed::boolean = false
         LIMIT 100
         """),
         {"uid": user_id},
@@ -430,12 +430,12 @@ async def process_auto_send_queue():
                        et.thread_id AS gmail_thread_id, et.priority_level,
                        ea.access_token, ea.refresh_token, ea.token_expiry
                 FROM followup_suggestions fs
-                JOIN email_threads et ON et.id = fs.thread_id
-                JOIN email_accounts ea ON ea.user_id = fs.user_id AND ea.is_active = true
-                WHERE fs.user_id = :uid
+                JOIN email_threads et ON et.id::text = fs.thread_id::text
+                JOIN email_accounts ea ON ea.user_id::text = fs.user_id::text AND ea.is_active::boolean = true
+                WHERE fs.user_id::text = :uid
                   AND fs.status = 'pending'
-                  AND (et.is_filtered = false OR et.is_filtered IS NULL)
-                  AND (et.is_actionable = true OR et.is_actionable IS NULL)
+                  AND (et.is_filtered::boolean = false OR et.is_filtered IS NULL)
+                  AND (et.is_actionable::boolean = true OR et.is_actionable IS NULL)
                 ORDER BY et.priority_score DESC NULLS LAST
                 LIMIT :lim
                 """),

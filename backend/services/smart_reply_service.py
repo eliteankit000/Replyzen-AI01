@@ -373,9 +373,9 @@ async def process_email_queue(db, gmail_send_fn) -> dict:
             ea.token_expiry
         FROM email_queue eq
         JOIN email_accounts ea
-             ON ea.user_id = eq.user_id AND ea.is_active = true
+             ON ea.user_id::text = eq.user_id::text AND ea.is_active::boolean = true
         WHERE eq.status    = 'queued'
-          AND eq.cancelled = false
+          AND eq.cancelled::boolean = false
           AND eq.scheduled_at <= NOW()
         ORDER BY eq.scheduled_at ASC
         LIMIT 100

@@ -43,15 +43,16 @@ async def get_inbox_messages(
     """
     try:
         # Build query based on status filter
+        # ::boolean cast works for both INTEGER (0→false, 1→true) and BOOLEAN columns
         if status == "pending":
-            condition = "AND t.reply_generated = 0 AND t.is_dismissed = 0 AND t.replied_by_user = 0"
+            condition = "AND t.reply_generated::boolean = false AND t.is_dismissed::boolean = false AND t.replied_by_user::boolean = false"
         elif status == "replied":
-            condition = "AND t.replied_by_user = 1"
+            condition = "AND t.replied_by_user::boolean = true"
         elif status == "dismissed":
-            condition = "AND t.is_dismissed = 1"
+            condition = "AND t.is_dismissed::boolean = true"
         else:
-            condition = "AND t.is_dismissed = 0"  # Default: show non-dismissed
-        
+            condition = "AND t.is_dismissed::boolean = false"  # Default: show non-dismissed
+
         query = f"""
             SELECT 
                 t.id,
@@ -64,14 +65,14 @@ async def get_inbox_messages(
                 t.replied_by_user,
                 t.is_dismissed,
                 CASE 
-                    WHEN t.replied_by_user = 1 THEN 'replied'
-                    WHEN t.is_dismissed = 1 THEN 'dismissed'
-                    WHEN t.reply_generated = 1 THEN 'generated'
+                    WHEN t.replied_by_user::boolean = true THEN 'replied'
+                    WHEN t.is_dismissed::boolean = true THEN 'dismissed'
+                    WHEN t.reply_generated::boolean = true THEN 'generated'
                     ELSE 'pending'
                 END as status
             FROM email_threads t
-            WHERE t.user_id = :user_id
-              AND t.is_automated = 0
+            WHERE t.user_id::text = :user_id
+              AND t.is_automated::boolean = false
               {condition}
             ORDER BY t.last_message_at DESC
             LIMIT :limit
@@ -208,7 +209,7 @@ async def send_approved_reply(
             text("""
                 SELECT id, thread_id, subject, last_message_from
                 FROM email_threads
-                WHERE user_id = :user_id AND id = :message_id
+                WHERE user_id::text = :user_id AND id::text = :message_id
                 LIMIT 1
             """),
             {"user_id": user_id, "message_id": message_id}
@@ -235,7 +236,7 @@ async def send_approved_reply(
             text("""
                 UPDATE inbox_messages
                 SET status = 'sent', sent_at = :sent_at
-                WHERE user_id = :user_id AND thread_id = :message_id
+                WHERE user_id::text = :user_id AND thread_id::text = :message_id
             """),
             {
                 "user_id": user_id,
@@ -249,7 +250,7 @@ async def send_approved_reply(
             text("""
                 UPDATE email_threads
                 SET replied_by_user = 1, last_followup_sent_at = :sent_at
-                WHERE id = :message_id
+                WHERE id::text = :message_id
             """),
             {
                 "message_id": message_id,
@@ -262,7 +263,7 @@ async def send_approved_reply(
             text("""
                 UPDATE smart_reply_logs
                 SET status = 'sent'
-                WHERE user_id = :user_id AND thread_id = :message_id
+                WHERE user_id::text = :user_id AND thread_id::text = :message_id
                 ORDER BY created_at DESC
                 LIMIT 1
             """),
@@ -297,7 +298,7 @@ async def get_inbox_stats(db: AsyncSession, user_id: str) -> Dict:
     try:
         # Total messages
         result = await db.execute(
-            text("SELECT COUNT(*) FROM email_threads WHERE user_id = :user_id AND is_automated = 0"),
+            text("SELECT COUNT(*) FROM email_threads WHERE user_id::text = :user_id AND is_automated::boolean = false"),
             {"user_id": user_id}
         )
         total_messages = result.scalar() or 0
@@ -306,10 +307,10 @@ async def get_inbox_stats(db: AsyncSession, user_id: str) -> Dict:
         result = await db.execute(
             text("""
                 SELECT COUNT(*) FROM email_threads 
-                WHERE user_id = :user_id 
-                  AND is_dismissed = 0 
-                  AND replied_by_user = 0
-                  AND is_automated = 0
+                WHERE user_id::text = :user_id 
+                  AND is_dismissed::boolean = false
+                  AND replied_by_user::boolean = false
+                  AND is_automated::boolean = false
             """),
             {"user_id": user_id}
         )
@@ -319,7 +320,7 @@ async def get_inbox_stats(db: AsyncSession, user_id: str) -> Dict:
         result = await db.execute(
             text("""
                 SELECT COUNT(*) FROM inbox_messages
-                WHERE user_id = :user_id
+                WHERE user_id::text = :user_id
                   AND status = 'sent'
                   AND sent_at >= CURRENT_DATE
             """),
@@ -331,7 +332,7 @@ async def get_inbox_stats(db: AsyncSession, user_id: str) -> Dict:
         result = await db.execute(
             text("""
                 SELECT COUNT(*) FROM inbox_messages
-                WHERE user_id = :user_id AND status = 'sent'
+                WHERE user_id::text = :user_id AND status = 'sent'
             """),
             {"user_id": user_id}
         )
@@ -341,7 +342,7 @@ async def get_inbox_stats(db: AsyncSession, user_id: str) -> Dict:
         result = await db.execute(
             text("""
                 SELECT COUNT(*) FROM inbox_messages
-                WHERE user_id = :user_id
+                WHERE user_id::text = :user_id
             """),
             {"user_id": user_id}
         )
