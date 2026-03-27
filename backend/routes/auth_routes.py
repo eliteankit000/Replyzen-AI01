@@ -249,7 +249,10 @@ async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
     existing_user = result.fetchone()
 
     if existing_user:
-        user_id = str(dict(existing_user._mapping)["id"])
+        user_dict = dict(existing_user._mapping)
+        user_id = str(user_dict["id"])
+        is_new_user = False
+        
         # ✅ Update avatar_url every login so it stays fresh
         await db.execute(
             text("""
@@ -267,13 +270,14 @@ async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
         await sync_profile(db, user_id, email, name)
 
     else:
+        is_new_user = True
         user_id = str(uuid.uuid4())
         await db.execute(
             text("""
             INSERT INTO users
-            (id, email, full_name, plan, auth_provider, google_id, avatar_url, created_at, updated_at)
+            (id, email, full_name, plan, auth_provider, google_id, avatar_url, is_onboarded, created_at, updated_at)
             VALUES
-            (:id, :email, :full_name, :plan, :auth_provider, :google_id, :avatar_url, :created_at, :updated_at)
+            (:id, :email, :full_name, :plan, :auth_provider, :google_id, :avatar_url, 0, :created_at, :updated_at)
             """),
             {
                 "id":            user_id,
@@ -290,8 +294,16 @@ async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
         await db.commit()
         await sync_profile(db, user_id, email, name)
 
-    token        = create_token(user_id, email)
-    redirect_url = f"{FRONTEND_URL}/auth/callback?token={token}"
+    # Get final user data with is_onboarded status
+    result = await db.execute(
+        text("SELECT id, email, full_name, plan, avatar_url, is_onboarded FROM users WHERE id = :user_id"),
+        {"user_id": user_id}
+    )
+    user_row = result.fetchone()
+    user_data = dict(user_row._mapping) if user_row else {}
+    
+    token = create_token(user_id, email)
+    redirect_url = f"{FRONTEND_URL}/auth/callback?token={token}&is_new_user={str(is_new_user).lower()}&is_onboarded={user_data.get('is_onboarded', 0)}"
     return RedirectResponse(redirect_url)
 
 
@@ -355,6 +367,59 @@ async def log_permission(db: AsyncSession, user_id: str, action: str,
                 "user_id": user_id,
                 "action": action,
                 "resource": resource,
+
+
+# ═══════════════════════════════════════════════════════════════
+# POST /api/auth/complete-onboarding - Mark user as onboarded
+# ═══════════════════════════════════════════════════════════════
+
+@router.post("/complete-onboarding", summary="Complete onboarding flow")
+async def complete_onboarding(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Mark the user as having completed the onboarding flow.
+    Called after user completes the WelcomeFlow popup.
+    """
+    user_id = current_user.get("user_id", "") if isinstance(current_user, dict) else getattr(current_user, "id", "")
+    
+    try:
+        from sqlalchemy import text
+        from datetime import datetime, timezone
+        
+        # Update user as onboarded
+        await db.execute(
+            text("""
+                UPDATE users 
+                SET is_onboarded = 1, 
+                    consent_accepted_at = :now,
+                    user_consent = 1,
+                    updated_at = :now
+                WHERE id = :user_id
+            """),
+            {
+                "user_id": user_id,
+                "now": datetime.now(timezone.utc),
+            }
+        )
+        await db.commit()
+        
+        logger.info(f"User {user_id} completed onboarding")
+        
+        return {
+            "success": True,
+            "message": "Onboarding completed successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to complete onboarding for {user_id}: {e}", exc_info=True)
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to complete onboarding"
+        )
+
                 "platform": platform,
                 "details": details,
                 "created_at": datetime.now(timezone.utc),

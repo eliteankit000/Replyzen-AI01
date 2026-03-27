@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Mail, Loader2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import WelcomeFlow from "@/components/onboarding/WelcomeFlow";
 
 const BACKEND_URL = "https://replyzen-ai01-production.up.railway.app";
 
@@ -11,11 +12,14 @@ export default function AuthCallback() {
   const [searchParams] = useSearchParams();
   const [error, setError] = useState(null);
   const [status, setStatus] = useState("authenticating");
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
     const handleCallback = async () => {
       const token = searchParams.get("token");
       const errorParam = searchParams.get("error");
+      const isNewUser = searchParams.get("is_new_user") === "true";
+      const isOnboarded = searchParams.get("is_onboarded") !== "0";
 
       // Handle error from OAuth
       if (errorParam) {
@@ -60,12 +64,17 @@ export default function AuthCallback() {
         localStorage.setItem("replyzen_user", JSON.stringify(userData));
 
         setStatus("success");
-        toast.success(`Welcome${userData.full_name ? `, ${userData.full_name.split(" ")[0]}` : ""}! 🎉`);
 
-        // Full page reload so AuthProvider re-reads localStorage fresh
-        setTimeout(() => {
-          window.location.href = "/dashboard";
-        }, 500);
+        // Show onboarding for new users who haven't been onboarded
+        if (isNewUser && !isOnboarded) {
+          setShowOnboarding(true);
+        } else {
+          toast.success(`Welcome back${userData.full_name ? `, ${userData.full_name.split(" ")[0]}` : ""}! 🎉`);
+          // Full page reload so AuthProvider re-reads localStorage fresh
+          setTimeout(() => {
+            window.location.href = "/dashboard";
+          }, 500);
+        }
 
       } catch (err) {
         console.error("Auth callback error:", err);
@@ -86,6 +95,15 @@ export default function AuthCallback() {
 
     handleCallback();
   }, [searchParams]);
+
+  const handleOnboardingComplete = () => {
+    setShowOnboarding(false);
+    toast.success("Welcome to Replyzen AI! 🎉");
+    // Full page reload so AuthProvider re-reads localStorage fresh
+    setTimeout(() => {
+      window.location.href = "/dashboard";
+    }, 500);
+  };
 
   const handleRetry = () => {
     // Clear any stored data and go back to login
@@ -110,6 +128,11 @@ export default function AuthCallback() {
         </div>
       </div>
     );
+  }
+
+  // Show onboarding for new users
+  if (showOnboarding) {
+    return <WelcomeFlow open={true} onComplete={handleOnboardingComplete} />;
   }
 
   // Loading states

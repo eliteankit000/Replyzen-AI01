@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
-import GooglePermissionModal from "@/components/GooglePermissionModal";
 
 import { Mail, ArrowRight, Eye, EyeOff, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -35,7 +34,6 @@ export default function LoginPage() {
 
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [showPermissionModal, setShowPermissionModal] = useState(false); // NEW
 
   const [error, setError] = useState("");
 
@@ -66,28 +64,15 @@ export default function LoginPage() {
   }, [searchParams]);
 
   // --------------------------------------------------
-  // Google Login - Show Permission Modal First
+  // Google Login - Direct redirect (no permission modal)
   // --------------------------------------------------
-  const handleGoogleLoginClick = () => {
-    setShowPermissionModal(true);
-  };
-
-  const handlePermissionConfirm = () => {
-    setShowPermissionModal(false);
+  const handleGoogleLogin = () => {
     setGoogleLoading(true);
     setError("");
     toast.info("Redirecting to Google...");
     
-    // Store consent in localStorage for post-auth processing
-    localStorage.setItem("google_consent_given", "true");
-    
     // Use the direct redirect endpoint
     window.location.href = `${API_URL}/api/auth/google/login`;
-  };
-
-  const handlePermissionCancel = () => {
-    setShowPermissionModal(false);
-    toast.info("Google sign-in cancelled");
   };
 
   // --------------------------------------------------
@@ -168,7 +153,7 @@ export default function LoginPage() {
           <Button
             variant="outline"
             className="w-full mb-6 h-11"
-            onClick={handleGoogleLoginClick}
+            onClick={handleGoogleLogin}
             disabled={googleLoading || loading}
             data-testid="google-login-btn"
           >
@@ -336,13 +321,6 @@ export default function LoginPage() {
           </p>
         </div>
       </div>
-
-      {/* Google Permission Modal */}
-      <GooglePermissionModal
-        open={showPermissionModal}
-        onConfirm={handlePermissionConfirm}
-        onCancel={handlePermissionCancel}
-      />
     </div>
   );
 }
