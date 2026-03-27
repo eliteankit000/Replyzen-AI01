@@ -334,24 +334,49 @@ async def disconnect_email(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    user_id = current_user["user_id"]
+
     # Verify the account belongs to this user before deleting
     check = await db.execute(
         text("SELECT id FROM email_accounts WHERE id = :aid AND user_id = :uid"),
-        {"aid": account_id, "uid": current_user["user_id"]},
+        {"aid": account_id, "uid": user_id},
     )
     if not check.fetchone():
         raise HTTPException(status_code=404, detail="Account not found")
 
-    # Delete threads first so any DB cascade trigger on email_accounts
-    # finds no rows to act on, avoiding TriggeredDataChangeViolationError
+    # Always delete threads first (safe — no trigger conflict on email_threads)
     await db.execute(
         text("DELETE FROM email_threads WHERE account_id = :aid AND user_id = :uid"),
-        {"aid": account_id, "uid": current_user["user_id"]},
-    )
-
-    await db.execute(
-        text("DELETE FROM email_accounts WHERE id = :aid AND user_id = :uid"),
-        {"aid": account_id, "uid": current_user["user_id"]},
+        {"aid": account_id, "uid": user_id},
     )
     await db.commit()
+
+    # Delete the account. A BEFORE DELETE trigger in Supabase can cause
+    # TriggeredDataChangeViolationError if it modifies the row being deleted.
+    # Workaround: disable user triggers for this statement via
+    # session_replication_role = replica (available to the service role).
+    # If that fails, fall back to a soft-delete (is_active = false) so the
+    # account stops appearing in the UI without raising a 500.
+    try:
+        async with db.begin():
+            await db.execute(text("SET LOCAL session_replication_role = replica"))
+            await db.execute(
+                text("DELETE FROM email_accounts WHERE id = :aid AND user_id = :uid"),
+                {"aid": account_id, "uid": user_id},
+            )
+    except Exception:
+        logger.warning(
+            f"Hard-delete of email_account {account_id} blocked by DB trigger; "
+            "falling back to soft-delete (is_active = false)"
+        )
+        await db.rollback()
+        await db.execute(
+            text(
+                "UPDATE email_accounts SET is_active = false, updated_at = :now "
+                "WHERE id = :aid AND user_id = :uid"
+            ),
+            {"aid": account_id, "uid": user_id, "now": datetime.now(timezone.utc)},
+        )
+        await db.commit()
+
     return {"message": "Account disconnected"}

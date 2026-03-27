@@ -315,7 +315,7 @@ async def list_accounts(
     result = await db.execute(
         text("""
         SELECT id, email_address, provider, is_active, created_at
-        FROM email_accounts WHERE user_id=:uid
+        FROM email_accounts WHERE user_id=:uid AND is_active=true
         """),
         {"uid": current_user["user_id"]},
     )
