@@ -5,11 +5,14 @@ Isolated service for queue-based email sending.
 NO existing services are modified — this is purely additive.
 
 Responsibilities:
-  - CRUD for smart_reply_settings
+  - CRUD for smart_reply_settings (with mode: manual/auto)
   - Queue emails instead of sending immediately
   - Background worker: send due queued emails
   - Cancel queued emails
   - Daily limit enforcement
+  - Generate AI replies on demand
+  - Rate limiting
+  - Reply logging
 """
 
 import uuid
@@ -20,6 +23,48 @@ from typing import Optional
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────
+# Rate Limiting (in-memory, per-user)
+# ─────────────────────────────────────────────
+_rate_limit_store = {}  # user_id -> list of timestamps
+RATE_LIMIT_WINDOW = 60  # seconds
+RATE_LIMIT_MAX = 10     # max replies per window per user
+
+
+def check_rate_limit(user_id: str) -> tuple:
+    """
+    Check if user has exceeded rate limit.
+    Returns (allowed: bool, remaining: int, reset_in: int).
+    """
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(seconds=RATE_LIMIT_WINDOW)
+
+    if user_id not in _rate_limit_store:
+        _rate_limit_store[user_id] = []
+
+    # Clean old entries
+    _rate_limit_store[user_id] = [
+        ts for ts in _rate_limit_store[user_id]
+        if ts > window_start
+    ]
+
+    count = len(_rate_limit_store[user_id])
+    remaining = max(0, RATE_LIMIT_MAX - count)
+
+    if count >= RATE_LIMIT_MAX:
+        oldest = min(_rate_limit_store[user_id])
+        reset_in = int((oldest + timedelta(seconds=RATE_LIMIT_WINDOW) - now).total_seconds())
+        return False, 0, max(1, reset_in)
+
+    return True, remaining, 0
+
+
+def record_rate_limit(user_id: str):
+    """Record a rate limit hit for the user."""
+    if user_id not in _rate_limit_store:
+        _rate_limit_store[user_id] = []
+    _rate_limit_store[user_id].append(datetime.now(timezone.utc))
 
 
 # ─────────────────────────────────────────────
@@ -41,6 +86,7 @@ async def get_smart_reply_settings(db, user_id: str) -> dict:
             "id":                   None,
             "user_id":              user_id,
             "enabled":              False,
+            "smart_reply_mode":     "manual",
             "confidence_threshold": 80,
             "daily_limit":          20,
             "delay_seconds":        120,
@@ -49,7 +95,11 @@ async def get_smart_reply_settings(db, user_id: str) -> dict:
             "created_at":           None,
             "updated_at":           None,
         }
-    return dict(row._mapping)
+    data = dict(row._mapping)
+    # Ensure smart_reply_mode has a default
+    if not data.get("smart_reply_mode"):
+        data["smart_reply_mode"] = "manual"
+    return data
 
 
 async def upsert_smart_reply_settings(db, user_id: str, data: dict) -> dict:
@@ -60,23 +110,25 @@ async def upsert_smart_reply_settings(db, user_id: str, data: dict) -> dict:
     await db.execute(
         text("""
         INSERT INTO smart_reply_settings
-            (id, user_id, enabled, confidence_threshold, daily_limit,
+            (id, user_id, enabled, smart_reply_mode, confidence_threshold, daily_limit,
              delay_seconds, allowed_categories, confirmed_first_use)
         VALUES
-            (:id, :uid, :enabled, :conf, :limit, :delay, :cats, :confirmed)
+            (:id, :uid, :enabled, :mode, :conf, :limit, :delay, :cats, :confirmed)
         ON CONFLICT (user_id) DO UPDATE SET
             enabled              = EXCLUDED.enabled,
+            smart_reply_mode     = EXCLUDED.smart_reply_mode,
             confidence_threshold = EXCLUDED.confidence_threshold,
             daily_limit          = EXCLUDED.daily_limit,
             delay_seconds        = EXCLUDED.delay_seconds,
             allowed_categories   = EXCLUDED.allowed_categories,
             confirmed_first_use  = EXCLUDED.confirmed_first_use,
-            updated_at           = NOW()
+            updated_at           = CURRENT_TIMESTAMP
         """),
         {
             "id":        str(uuid.uuid4()),
             "uid":       user_id,
             "enabled":   data.get("enabled", False),
+            "mode":      data.get("smart_reply_mode", "manual"),
             "conf":      data.get("confidence_threshold", 80),
             "limit":     data.get("daily_limit", 20),
             "delay":     data.get("delay_seconds", 120),
@@ -367,3 +419,128 @@ async def process_email_queue(db, gmail_send_fn) -> dict:
     await db.commit()
     logger.info(f"[SmartReply Worker] Done — sent={sent}, errors={errors}")
     return {"sent": sent, "errors": errors}
+
+
+# ─────────────────────────────────────────────
+# Generate Reply (on-demand, for manual/suggestion mode)
+# ─────────────────────────────────────────────
+
+async def generate_reply(db, message: str, platform: str, user_id: str, user_settings: dict = None) -> dict:
+    """
+    Generate an AI reply for a given message.
+    Used in manual/suggestion mode — does NOT auto-send.
+
+    Args:
+        db: Database session
+        message: The incoming message/comment to reply to
+        platform: Platform name (gmail, instagram, etc.)
+        user_id: User ID
+        user_settings: Optional user settings dict
+
+    Returns:
+        dict with reply text, confidence, tone, status
+    """
+    from services.openai_service import generate_followup_draft
+
+    # Determine tone from user settings or default
+    tone = "professional"
+    if user_settings:
+        # Could be extended with per-platform tone settings
+        tone = user_settings.get("default_tone", "professional")
+
+    try:
+        # Generate reply using existing AI service
+        reply_text = await generate_followup_draft(
+            subject=message[:100],  # Use message as subject context
+            snippet=message,
+            days_silent=1,
+            tone=tone,
+        )
+
+        confidence = 85  # Default confidence for generated replies
+
+        # Log the generated reply
+        await log_smart_reply(db, user_id, message, reply_text, platform, tone, "pending")
+
+        return {
+            "reply": reply_text,
+            "confidence": confidence,
+            "tone": tone,
+            "status": "pending",
+            "platform": platform,
+        }
+
+    except Exception as e:
+        logger.error(f"[SmartReply] Generate reply failed for user {user_id}: {e}")
+        # Fallback reply
+        fallback = f"Hi,\n\nThank you for reaching out. I'll get back to you shortly.\n\nBest regards"
+        await log_smart_reply(db, user_id, message, fallback, platform, tone, "fallback")
+        return {
+            "reply": fallback,
+            "confidence": 50,
+            "tone": tone,
+            "status": "fallback",
+            "platform": platform,
+        }
+
+
+# ─────────────────────────────────────────────
+# Smart Reply Logging
+# ─────────────────────────────────────────────
+
+async def log_smart_reply(db, user_id: str, message: str, reply: str,
+                          platform: str = "gmail", tone: str = "professional",
+                          status: str = "pending", thread_id: str = None):
+    """
+    Log a smart reply for audit trail and history.
+    """
+    try:
+        log_id = str(uuid.uuid4())
+        await db.execute(
+            text("""
+            INSERT INTO smart_reply_logs
+                (id, user_id, thread_id, message_snippet, generated_reply, platform, tone, status, created_at)
+            VALUES
+                (:id, :user_id, :thread_id, :message, :reply, :platform, :tone, :status, :created_at)
+            """),
+            {
+                "id": log_id,
+                "user_id": user_id,
+                "thread_id": thread_id,
+                "message": message[:500],  # Truncate long messages
+                "reply": reply[:2000],
+                "platform": platform,
+                "tone": tone,
+                "status": status,
+                "created_at": datetime.now(timezone.utc),
+            },
+        )
+        await db.commit()
+        return log_id
+    except Exception as e:
+        logger.warning(f"[SmartReply] Log failed: {e}")
+        return None
+
+
+async def get_smart_reply_logs(db, user_id: str, limit: int = 20) -> list:
+    """
+    Get recent smart reply logs for a user.
+    """
+    result = await db.execute(
+        text("""
+        SELECT id, thread_id, message_snippet, generated_reply, platform, tone, status, created_at
+        FROM smart_reply_logs
+        WHERE user_id = :uid
+        ORDER BY created_at DESC
+        LIMIT :limit
+        """),
+        {"uid": user_id, "limit": limit},
+    )
+    rows = result.fetchall()
+    items = []
+    for r in rows:
+        item = dict(r._mapping)
+        if item.get("created_at") and hasattr(item["created_at"], "isoformat"):
+            item["created_at"] = item["created_at"].isoformat()
+        items.append(item)
+    return items

@@ -33,6 +33,15 @@ async def lifespan(app: FastAPI):
     global cron_task
     logger.info("Replyzen AI API starting up...")
 
+    # ── Initialize database tables/migrations ──
+    try:
+        from services.db_init import init_database
+        async with AsyncSessionLocal() as db:
+            await init_database(db)
+        logger.info("Database initialization complete")
+    except Exception as e:
+        logger.warning(f"Database initialization warning: {e}")
+
     config_status = get_config_status()
     for group, status in config_status.items():
         if status["percentage"] < 100:

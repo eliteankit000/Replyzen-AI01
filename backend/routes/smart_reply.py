@@ -27,6 +27,10 @@ from services.smart_reply_service import (
     cancel_queued_email,
     get_queued_emails,
     get_daily_smart_reply_sent_count,
+    generate_reply,
+    get_smart_reply_logs,
+    check_rate_limit,
+    record_rate_limit,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,6 +47,7 @@ if _PYDANTIC_V2:
 
     class SmartReplySettingsPayload(BaseModel):
         enabled:              bool      = False
+        smart_reply_mode:     str       = Field("manual", pattern="^(manual|auto)$")
         confidence_threshold: int       = Field(80,  ge=0,  le=100)
         daily_limit:          int       = Field(20,  ge=1,  le=500)
         delay_seconds:        int       = Field(120, ge=30, le=3600)
@@ -61,6 +66,7 @@ else:
 
     class SmartReplySettingsPayload(BaseModel):
         enabled:              bool      = False
+        smart_reply_mode:     str       = Field("manual", regex="^(manual|auto)$")
         confidence_threshold: int       = Field(80,  ge=0,  le=100)
         daily_limit:          int       = Field(20,  ge=1,  le=500)
         delay_seconds:        int       = Field(120, ge=30, le=3600)
@@ -191,3 +197,91 @@ async def cancel_email(
         )
 
     return {"success": True, "queue_id": queue_id, "message": "Email cancelled successfully."}
+
+
+# ---------------------------------------------------------------------------
+# POST /api/smart-reply/generate — On-demand reply generation
+# ---------------------------------------------------------------------------
+class GenerateReplyRequest(BaseModel):
+    message: str
+    platform: str = "gmail"
+    user_id: Optional[str] = None  # Optional, will use current_user if not provided
+
+
+@router.post("/generate", summary="Generate an AI reply for a message")
+async def generate_smart_reply(
+    payload: GenerateReplyRequest,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = current_user.get("user_id", "") if isinstance(current_user, dict) else getattr(current_user, "id", "")
+
+    # Check rate limit
+    allowed, remaining, reset_in = check_rate_limit(user_id)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded. Try again in {reset_in} seconds.",
+        )
+
+    # Check if Smart Reply is enabled
+    settings = await get_smart_reply_settings(db, user_id)
+    if not settings.get("enabled"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Smart Reply Mode is not enabled. Enable it in Settings first.",
+        )
+
+    # Check daily limit
+    daily_sent = await get_daily_smart_reply_sent_count(db, user_id)
+    if daily_sent >= settings.get("daily_limit", 20):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Daily reply limit reached. Try again tomorrow.",
+        )
+
+    try:
+        # Record rate limit usage
+        record_rate_limit(user_id)
+
+        result = await generate_reply(
+            db=db,
+            message=payload.message,
+            platform=payload.platform,
+            user_id=user_id,
+        )
+
+        return {
+            "data": result,
+            "meta": {
+                "rate_limit_remaining": remaining - 1,
+                "daily_remaining": max(0, settings.get("daily_limit", 20) - daily_sent - 1),
+            },
+        }
+    except Exception as e:
+        logger.error(f"[SmartReply] Generate failed for {user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate reply: {str(e)}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/smart-reply/logs — Recent reply history
+# ---------------------------------------------------------------------------
+@router.get("/logs", summary="Get recent smart reply logs")
+async def get_reply_logs(
+    limit: int = Query(20, ge=1, le=100),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user_id = current_user.get("user_id", "") if isinstance(current_user, dict) else getattr(current_user, "id", "")
+    try:
+        logs = await get_smart_reply_logs(db, user_id, limit)
+        return {"data": logs, "count": len(logs)}
+    except Exception as e:
+        logger.error(f"[SmartReply] GET logs failed for {user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch reply logs: {str(e)}",
+        )

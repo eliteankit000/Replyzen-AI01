@@ -42,6 +42,11 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class ConsentRequest(BaseModel):
+    user_id: str
+    consent: bool
+
+
 async def sync_profile(db: AsyncSession, user_id: str, email: str, full_name: str):
     try:
         await db.execute(
@@ -280,3 +285,72 @@ async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
     token        = create_token(user_id, email)
     redirect_url = f"{FRONTEND_URL}/auth/callback?token={token}"
     return RedirectResponse(redirect_url)
+
+
+# ─── Consent Endpoint ────────────────────────────────────────
+
+@router.post("/consent")
+async def store_consent(
+    req: ConsentRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Store user consent for Google OAuth permissions.
+    Called from frontend after user accepts permission modal.
+    """
+    try:
+        now = datetime.now(timezone.utc)
+        await db.execute(
+            text("""
+            UPDATE users
+            SET user_consent = :consent,
+                consent_accepted_at = :accepted_at,
+                updated_at = :updated
+            WHERE id = :user_id
+            """),
+            {
+                "consent": 1 if req.consent else 0,
+                "accepted_at": now if req.consent else None,
+                "updated": now,
+                "user_id": req.user_id,
+            }
+        )
+
+        # Log consent action for audit trail
+        await log_permission(db, req.user_id, "consent_given" if req.consent else "consent_revoked",
+                           "google_oauth", "auth", "User accepted Google OAuth permissions")
+
+        await db.commit()
+        return {"success": True, "message": "Consent stored successfully"}
+    except Exception as e:
+        logger.error(f"Failed to store consent for user {req.user_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to store consent")
+
+
+# ─── Permission Logging ──────────────────────────────────────
+
+async def log_permission(db: AsyncSession, user_id: str, action: str,
+                         resource: str = None, platform: str = None,
+                         details: str = None):
+    """
+    Log permission usage for audit trail (important for Google review).
+    """
+    try:
+        import uuid as _uuid
+        await db.execute(
+            text("""
+            INSERT INTO permission_logs (id, user_id, action, resource, platform, details, created_at)
+            VALUES (:id, :user_id, :action, :resource, :platform, :details, :created_at)
+            """),
+            {
+                "id": str(_uuid.uuid4()),
+                "user_id": user_id,
+                "action": action,
+                "resource": resource,
+                "platform": platform,
+                "details": details,
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
+    except Exception as e:
+        logger.warning(f"Permission logging failed: {e}")
