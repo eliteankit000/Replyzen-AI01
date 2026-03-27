@@ -79,12 +79,46 @@ export default function AuthCallback() {
       } catch (err) {
         console.error("Auth callback error:", err);
         
-        // Still try to proceed with basic token if user fetch fails
-        if (localStorage.getItem("replyzen_token")) {
-          toast.warning("Signed in, but couldn't load profile.");
+        // Log the full error for debugging
+        console.error("Error details:", {
+          message: err.message,
+          response: err.response,
+          token: localStorage.getItem("replyzen_token") ? "present" : "missing"
+        });
+        
+        // If we have a token, try to use basic user info from URL params
+        const token = localStorage.getItem("replyzen_token");
+        if (token) {
+          // Try to decode token to get basic user info
+          try {
+            const tokenParts = token.split('.');
+            if (tokenParts.length === 3) {
+              const payload = JSON.parse(atob(tokenParts[1]));
+              const basicUserData = {
+                id: payload.user_id,
+                email: payload.email,
+                full_name: "",
+                plan: "free"
+              };
+              localStorage.setItem("replyzen_user", JSON.stringify(basicUserData));
+              
+              console.log("Using basic user data from token:", basicUserData);
+              toast.warning("Profile loaded with basic info. Some features may be limited.");
+              
+              setTimeout(() => {
+                window.location.href = "/dashboard";
+              }, 500);
+              return;
+            }
+          } catch (tokenErr) {
+            console.error("Failed to decode token:", tokenErr);
+          }
+          
+          // Last resort: redirect to dashboard and let it handle missing profile
+          toast.error("Couldn't load profile. Please try refreshing the page.");
           setTimeout(() => {
             window.location.href = "/dashboard";
-          }, 500);
+          }, 1500);
         } else {
           setError("Failed to complete authentication. Please try again.");
           setStatus("error");

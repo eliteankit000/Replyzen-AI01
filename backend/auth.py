@@ -62,48 +62,72 @@ def decode_token(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 # --------------------------------------------------
-# ✅ FIXED: Get Current Authenticated User (OBJECT)
+# ✅ Get Current Authenticated User (Returns dict for compatibility)
 # --------------------------------------------------
 async def get_current_user(
     request: Request,
     db: AsyncSession = Depends(get_db)
-) -> User:
+) -> dict:
     """
-    Returns full User object instead of dict
+    Returns user payload as dict with user_id and email.
+    Compatible with all routes expecting dict format.
     """
+    import logging
+    logger = logging.getLogger(__name__)
 
     auth_header = request.headers.get("Authorization")
 
     if not auth_header:
+        logger.warning("Authorization header missing in request")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authorization header missing"
         )
 
     if not auth_header.startswith("Bearer "):
+        logger.warning(f"Invalid authorization format: {auth_header[:20]}...")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authorization format"
         )
 
     token = auth_header.split(" ")[1]
-    payload = decode_token(token)
+    
+    try:
+        payload = decode_token(token)
+    except HTTPException as e:
+        logger.error(f"Token decode error: {e.detail}")
+        raise
 
     user_id = payload.get("user_id")
+    email = payload.get("email")
 
     if not user_id:
+        logger.error(f"Invalid token payload - no user_id: {payload}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token payload"
         )
 
-    # ✅ Fetch actual user from DB
-    user = await db.get(User, user_id)
+    # ✅ Verify user exists in database
+    from sqlalchemy import text
+    result = await db.execute(
+        text("SELECT id, email FROM users WHERE id = :user_id"),
+        {"user_id": user_id}
+    )
+    user = result.fetchone()
 
     if not user:
+        logger.error(f"User not found in DB: {user_id}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
 
-    return user  # ✅ THIS FIXES YOUR ERROR
+    logger.info(f"Authenticated user: {email}")
+    
+    # Return dict format for compatibility
+    return {
+        "user_id": str(user_id),
+        "email": email or user.email,
+    }

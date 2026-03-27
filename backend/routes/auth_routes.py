@@ -156,18 +156,39 @@ async def get_me(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    result = await db.execute(
-        # ✅ include avatar_url in SELECT
-        text("SELECT id, email, full_name, plan, avatar_url FROM users WHERE id = :id"),
-        {"id": current_user["user_id"]}
-    )
-    user = result.fetchone()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    """
+    Get current user profile.
+    Returns user data including onboarding status and Gmail connection.
+    """
+    try:
+        result = await db.execute(
+            text("""
+                SELECT id, email, full_name, plan, avatar_url, is_onboarded, gmail_connected 
+                FROM users 
+                WHERE id = :id
+            """),
+            {"id": current_user["user_id"]}
+        )
+        user = result.fetchone()
+        
+        if not user:
+            logger.error(f"User not found in DB: {current_user['user_id']}")
+            raise HTTPException(status_code=404, detail="User not found")
 
-    user_dict = dict(user._mapping)
-    user_dict["id"] = str(user_dict["id"])
-    return user_dict
+        user_dict = dict(user._mapping)
+        user_dict["id"] = str(user_dict["id"])
+        
+        logger.info(f"Successfully fetched profile for user: {user_dict['email']}")
+        return user_dict
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch user profile: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch user profile: {str(e)}"
+        )
 
 
 # ─── Google OAuth URL ─────────────────────────────────────────
