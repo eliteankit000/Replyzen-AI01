@@ -16,6 +16,7 @@ Responsibilities:
 """
 
 import uuid
+import json
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -71,6 +72,31 @@ def record_rate_limit(user_id: str):
 # Settings CRUD
 # ─────────────────────────────────────────────
 
+def _deserialize_settings(data: dict) -> dict:
+    """
+    Normalize a smart_reply_settings row from the DB.
+    - allowed_categories: stored as JSON TEXT string → deserialize to list
+    - enabled / confirmed_first_use: stored as INTEGER (0/1) → convert to bool
+    """
+    # allowed_categories is stored as a JSON string in the TEXT column
+    cats = data.get("allowed_categories", '["faq","inquiry"]')
+    if isinstance(cats, str):
+        try:
+            cats = json.loads(cats)
+        except (json.JSONDecodeError, TypeError):
+            cats = ["faq", "inquiry"]
+    data["allowed_categories"] = cats if isinstance(cats, list) else ["faq", "inquiry"]
+
+    # Booleans stored as INTEGER
+    data["enabled"] = bool(data.get("enabled", 0))
+    data["confirmed_first_use"] = bool(data.get("confirmed_first_use", 0))
+
+    if not data.get("smart_reply_mode"):
+        data["smart_reply_mode"] = "manual"
+
+    return data
+
+
 async def get_smart_reply_settings(db, user_id: str) -> dict:
     """
     Fetch Smart Reply settings for a user.
@@ -95,18 +121,19 @@ async def get_smart_reply_settings(db, user_id: str) -> dict:
             "created_at":           None,
             "updated_at":           None,
         }
-    data = dict(row._mapping)
-    # Ensure smart_reply_mode has a default
-    if not data.get("smart_reply_mode"):
-        data["smart_reply_mode"] = "manual"
-    return data
+    return _deserialize_settings(dict(row._mapping))
 
 
 async def upsert_smart_reply_settings(db, user_id: str, data: dict) -> dict:
     """
     Create or update Smart Reply settings for a user.
-    Only updates fields explicitly passed in `data`.
+    - allowed_categories is serialized to a JSON string (TEXT column).
+    - enabled / confirmed_first_use are stored as INTEGER (0/1).
     """
+    cats = data.get("allowed_categories", ["faq", "inquiry"])
+    if isinstance(cats, list):
+        cats = json.dumps(cats)  # TEXT column expects JSON string
+
     await db.execute(
         text("""
         INSERT INTO smart_reply_settings
@@ -127,13 +154,13 @@ async def upsert_smart_reply_settings(db, user_id: str, data: dict) -> dict:
         {
             "id":        str(uuid.uuid4()),
             "uid":       user_id,
-            "enabled":   data.get("enabled", False),
+            "enabled":   1 if data.get("enabled") else 0,
             "mode":      data.get("smart_reply_mode", "manual"),
             "conf":      data.get("confidence_threshold", 80),
             "limit":     data.get("daily_limit", 20),
             "delay":     data.get("delay_seconds", 120),
-            "cats":      data.get("allowed_categories", ["faq", "inquiry"]),
-            "confirmed": data.get("confirmed_first_use", False),
+            "cats":      cats,
+            "confirmed": 1 if data.get("confirmed_first_use") else 0,
         },
     )
     await db.commit()
