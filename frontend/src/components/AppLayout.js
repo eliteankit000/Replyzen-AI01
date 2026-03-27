@@ -16,15 +16,16 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
   LayoutDashboard, MessageSquare, BarChart3, CreditCard,
   Settings, LogOut, Mail, ChevronLeft, ChevronRight, User, Menu, Lock,
-  ShieldCheck
+  ShieldCheck, Inbox
 } from "lucide-react";
 
 const NAV_ITEMS = [
-  { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { path: "/followups", label: "Follow-ups", icon: MessageSquare },
-  { path: "/analytics", label: "Analytics",  icon: BarChart3, gated: true },
-  { path: "/billing",   label: "Billing",    icon: CreditCard },
-  { path: "/settings",  label: "Settings",   icon: Settings },
+  { path: "/dashboard",      label: "Dashboard",      icon: LayoutDashboard },
+  { path: "/inbox-preview",  label: "Inbox Preview",  icon: Inbox },
+  { path: "/followups",      label: "Follow-ups",     icon: MessageSquare },
+  { path: "/analytics",      label: "Analytics",      icon: BarChart3, gated: true },
+  { path: "/billing",        label: "Billing",        icon: CreditCard },
+  { path: "/settings",       label: "Settings",       icon: Settings },
 ];
 
 function SidebarNav({ collapsed, items, userPlan, onNavigate }) {

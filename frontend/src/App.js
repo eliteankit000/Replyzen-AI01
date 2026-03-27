@@ -17,6 +17,7 @@ const FollowupQueue  = lazy(() => import("@/pages/FollowupQueue"));
 const Analytics      = lazy(() => import("@/pages/Analytics"));
 const Billing        = lazy(() => import("@/pages/Billing"));
 const Settings       = lazy(() => import("@/pages/Settings"));
+const InboxPreview   = lazy(() => import("@/pages/InboxPreview")); // ← NEW
 const PrivacyPolicy  = lazy(() => import("@/pages/PrivacyPolicy"));
 const TermsOfService = lazy(() => import("@/pages/TermsOfService"));
 const Admin          = lazy(() => import("@/pages/Admin"));
@@ -82,12 +83,13 @@ function App() {
 
             {/* Protected routes — unchanged */}
             <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
-              <Route path="/dashboard"  element={<Dashboard />} />
-              <Route path="/followups"  element={<FollowupQueue />} />
-              <Route path="/analytics"  element={<Analytics />} />
-              <Route path="/billing"    element={<Billing />} />
-              <Route path="/settings"   element={<Settings />} />
-              <Route path="/admin"      element={<Admin />} />
+              <Route path="/dashboard"      element={<Dashboard />} />
+              <Route path="/inbox-preview"  element={<InboxPreview />} />
+              <Route path="/followups"      element={<FollowupQueue />} />
+              <Route path="/analytics"      element={<Analytics />} />
+              <Route path="/billing"        element={<Billing />} />
+              <Route path="/settings"       element={<Settings />} />
+              <Route path="/admin"          element={<Admin />} />
             </Route>
 
             {/* Fallback */}

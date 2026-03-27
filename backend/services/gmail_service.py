@@ -348,3 +348,55 @@ def get_message_details(
         "body": body,
         "snippet": message.get("snippet", ""),
     }
+
+
+
+async def send_gmail_reply(
+    db,
+    user_id: str,
+    thread_id: str,
+    subject: str,
+    body: str,
+    to: str,
+) -> Dict[str, Any]:
+    """
+    Send a Gmail reply (wrapper for inbox service).
+    Fetches user's Gmail tokens and sends via Gmail API.
+    """
+    from sqlalchemy import text
+    
+    # Get user's Gmail tokens
+    result = await db.execute(
+        text("""
+            SELECT access_token, refresh_token, token_expiry
+            FROM email_accounts
+            WHERE user_id = :user_id AND is_active = 1
+            LIMIT 1
+        """),
+        {"user_id": user_id}
+    )
+    account = result.fetchone()
+    
+    if not account:
+        raise ValueError("No active Gmail account found for user")
+    
+    db_tokens = {
+        "access_token": account.access_token,
+        "refresh_token": account.refresh_token,
+        "token_expiry": account.token_expiry,
+    }
+    
+    # Ensure subject has "Re:" prefix
+    if not subject.lower().startswith("re:"):
+        subject = f"Re: {subject}"
+    
+    # Send via Gmail API
+    result = send_email(
+        db_tokens=db_tokens,
+        to=to,
+        subject=subject,
+        body=body,
+        thread_id=thread_id,
+    )
+    
+    return result

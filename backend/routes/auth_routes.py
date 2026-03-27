@@ -28,7 +28,15 @@ GOOGLE_AUTH_URL   = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL  = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
-GOOGLE_SCOPES = "openid email profile"
+# ✅ Updated scopes for Gmail read + send access
+GOOGLE_SCOPES = " ".join([
+    "openid",
+    "email",
+    "profile",
+    "https://www.googleapis.com/auth/gmail.readonly",      # Read Gmail messages
+    "https://www.googleapis.com/auth/gmail.send",          # Send emails on behalf of user
+    "https://www.googleapis.com/auth/gmail.modify",        # Modify messages (mark as read, etc.)
+])
 
 
 class RegisterRequest(BaseModel):

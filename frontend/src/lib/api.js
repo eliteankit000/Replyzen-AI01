@@ -170,4 +170,21 @@ export const settingsAPI = {
   getBlockedSenders:  ()            => api.get("/settings/blocked-senders"),
 };
 
+/*
+|--------------------------------------------------------------------------
+|| Inbox Preview (Google-reviewer-friendly)
+||--------------------------------------------------------------------------
+*/
+
+export const inboxAPI = {
+  getMessages:    (limit = 20, status = null) => 
+    api.get("/inbox/messages", { params: { limit, status } }),
+  generateReply:  (data) => 
+    api.post("/inbox/generate-reply", data),
+  sendReply:      (data) => 
+    api.post("/inbox/send", data),
+  getStats:       () => 
+    api.get("/inbox/stats"),
+};
+
 export default api;

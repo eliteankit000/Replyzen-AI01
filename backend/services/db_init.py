@@ -243,6 +243,22 @@ async def init_database(db):
         )
     """))
 
+    # ─── NEW: Inbox messages (Google-reviewer-friendly inbox preview) ───
+    await db.execute(text("""
+        CREATE TABLE IF NOT EXISTS inbox_messages (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            thread_id TEXT,
+            message TEXT,
+            reply TEXT,
+            status TEXT DEFAULT 'pending',
+            platform TEXT DEFAULT 'gmail',
+            tone TEXT DEFAULT 'professional',
+            sent_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+
     await db.commit()
 
     # ── Try to add new columns to existing tables (safe for both SQLite and PG) ──
