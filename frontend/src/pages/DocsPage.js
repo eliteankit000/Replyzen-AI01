@@ -419,7 +419,7 @@ const DOCS_CONTENT = {
       { type: "intro", text: "Can't find what you're looking for? Our support team is here to help." },
       { type: "heading", text: "Support channels" },
       { type: "bullets", items: [
-        "Email — support@replyzen.ai (response within 24h)",
+        "Email — hello@replyzenai.com (response within 24h)",
         "Live chat — available in-dashboard for Pro & Business users",
         "Help center — this documentation site",
       ]},

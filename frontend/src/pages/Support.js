@@ -30,8 +30,8 @@ export default function Support() {
                 <p className="text-sm text-muted-foreground mb-3">
                   Send us an email and we'll respond within 24 hours.
                 </p>
-                <a href="mailto:support@replyzenai.com" className="text-sm text-primary font-medium hover:underline">
-                  support@replyzenai.com
+                <a href="mailto:hello@replyzenai.com" className="text-sm text-primary font-medium hover:underline">
+                  hello@replyzenai.com
                 </a>
               </div>
             </CardContent>

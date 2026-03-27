@@ -147,7 +147,7 @@ export default function TermsOfService() {
               <ul className="list-disc list-inside ml-4 space-y-2">
                 <li>Annual subscriptions: Pro-rated refund available within 14 days of purchase</li>
                 <li>Monthly subscriptions: No refunds (cancel before renewal to avoid charges)</li>
-                <li>Refund requests should be sent to billing@replyzen.ai</li>
+                <li>Refund requests should be sent to hello@replyzenai.com</li>
               </ul>
               <p><strong className="text-foreground">Account Termination:</strong> We may terminate accounts that violate these terms. In cases of serious violations, refunds will not be provided.</p>
             </div>
@@ -211,9 +211,9 @@ export default function TermsOfService() {
           <section className="mb-10">
             <h2 className="text-xl font-semibold mb-4">Contact Information</h2>
             <div className="bg-accent/50 p-4 rounded-lg border border-border text-muted-foreground">
-              <p><strong className="text-foreground">General Inquiries:</strong> support@replyzen.ai</p>
-              <p><strong className="text-foreground">Billing Questions:</strong> billing@replyzen.ai</p>
-              <p><strong className="text-foreground">Legal:</strong> legal@replyzen.ai</p>
+              <p><strong className="text-foreground">General Inquiries:</strong> hello@replyzenai.com</p>
+              <p><strong className="text-foreground">Billing Questions:</strong> hello@replyzenai.com</p>
+              <p><strong className="text-foreground">Legal:</strong> hello@replyzenai.com</p>
             </div>
           </section>
         </div>

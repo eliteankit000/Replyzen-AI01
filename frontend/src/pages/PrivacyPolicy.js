@@ -146,7 +146,7 @@ export default function PrivacyPolicy() {
                 <li><strong className="text-foreground">Revocation:</strong> Revoke Gmail access at any time through Google Account settings</li>
                 <li><strong className="text-foreground">Export:</strong> Request an export of your data in a portable format</li>
               </ul>
-              <p>To exercise any of these rights, please contact us at privacy@replyzen.ai</p>
+              <p>To exercise any of these rights, please contact us at hello@replyzenai.com</p>
             </div>
           </section>
 
@@ -161,8 +161,8 @@ export default function PrivacyPolicy() {
             <div className="space-y-4 text-muted-foreground leading-relaxed">
               <p>If you have any questions or concerns about this Privacy Policy, please contact us:</p>
               <div className="bg-accent/50 p-4 rounded-lg border border-border">
-                <p><strong className="text-foreground">Email:</strong> privacy@replyzen.ai</p>
-                <p><strong className="text-foreground">Support:</strong> support@replyzen.ai</p>
+                <p><strong className="text-foreground">Email:</strong> hello@replyzenai.com</p>
+                <p><strong className="text-foreground">Support:</strong> hello@replyzenai.com</p>
               </div>
             </div>
           </section>
