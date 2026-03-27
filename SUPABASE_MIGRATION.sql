@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════
--- REPLYZEN AI - PRODUCTION DATABASE MIGRATION
+-- REPLYZEN AI - PRODUCTION DATABASE MIGRATION (FIXED)
 -- ═══════════════════════════════════════════════════════════════════════════
 -- Run this in your Supabase SQL Editor
 -- Go to: https://app.supabase.com/project/_/sql
@@ -13,12 +13,13 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS gmail_connected INTEGER DEFAULT 0;
 UPDATE users SET is_onboarded = 1 WHERE is_onboarded IS NULL OR is_onboarded = 0;
 
 -- Mark users with active email accounts as gmail_connected
+-- ✅ FIXED: Use TRUE instead of 1 for boolean comparison
 UPDATE users 
 SET gmail_connected = 1 
 WHERE id IN (
   SELECT DISTINCT user_id 
   FROM email_accounts 
-  WHERE is_active = 1
+  WHERE is_active = TRUE
 );
 
 -- Verify columns were added
