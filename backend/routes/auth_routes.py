@@ -28,8 +28,15 @@ GOOGLE_AUTH_URL   = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL  = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
-# ✅ Updated scopes for Gmail read + send access
-GOOGLE_SCOPES = " ".join([
+# ✅ FLOW 1: Login/Signup - Authentication ONLY (no Gmail access)
+GOOGLE_AUTH_SCOPES = " ".join([
+    "openid",
+    "email",
+    "profile",
+])
+
+# ✅ FLOW 2: Gmail Connection - Full Gmail access (separate flow)
+GOOGLE_GMAIL_SCOPES = " ".join([
     "openid",
     "email",
     "profile",
@@ -181,10 +188,15 @@ async def google_url(redirect_uri: Optional[str] = None):
     return {"url": GOOGLE_AUTH_URL + "?" + urllib.parse.urlencode(params)}
 
 
-# ─── Google OAuth Login ───────────────────────────────────────
+# ─── Google OAuth Login (Authentication ONLY - No Gmail) ───────
 
 @router.get("/google/login")
 async def google_login():
+    """
+    Google OAuth login for authentication ONLY.
+    Uses basic scopes: openid, email, profile
+    Does NOT request Gmail access.
+    """
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=500, detail="Google OAuth not configured")
 
@@ -192,7 +204,7 @@ async def google_login():
         "client_id":     GOOGLE_CLIENT_ID,
         "redirect_uri":  GOOGLE_REDIRECT_URI,
         "response_type": "code",
-        "scope":         GOOGLE_SCOPES,
+        "scope":         GOOGLE_AUTH_SCOPES,  # ✅ Auth only (no Gmail)
         "access_type":   "offline",
         "prompt":        "consent",
     }
@@ -427,4 +439,254 @@ async def complete_onboarding(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to complete onboarding"
+        )
+
+
+
+# ═══════════════════════════════════════════════════════════════
+# FLOW 2: Gmail Connection (Separate from Login)
+# ═══════════════════════════════════════════════════════════════
+
+# ─── Connect Gmail - Step 1: Redirect to Google ─────────────────
+
+@router.get("/google/connect-gmail")
+async def connect_gmail(current_user=Depends(get_current_user)):
+    """
+    Start Gmail connection flow (SEPARATE from login).
+    Requests Gmail scopes: readonly, send, modify
+    
+    This is triggered AFTER user is logged in.
+    User must explicitly click "Connect Gmail" button.
+    """
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="Google OAuth not configured")
+    
+    user_id = current_user.get("user_id", "") if isinstance(current_user, dict) else getattr(current_user, "id", "")
+    
+    # Create a state token with user_id for security
+    import secrets
+    state = secrets.token_urlsafe(32)
+    
+    # Store state in session or temporary storage (for validation in callback)
+    # For simplicity, we'll encode user_id in state
+    state_with_user = f"{state}:{user_id}"
+    
+    params = {
+        "client_id":     GOOGLE_CLIENT_ID,
+        "redirect_uri":  f"{FRONTEND_URL}/auth/gmail-callback",  # Different callback
+        "response_type": "code",
+        "scope":         GOOGLE_GMAIL_SCOPES,  # ✅ Gmail scopes
+        "access_type":   "offline",
+        "prompt":        "consent",
+        "state":         state_with_user,
+    }
+    
+    logger.info(f"User {user_id} initiating Gmail connection")
+    return RedirectResponse(GOOGLE_AUTH_URL + "?" + urllib.parse.urlencode(params))
+
+
+# ─── Gmail Connection - Step 2: Callback ─────────────────────────
+
+@router.get("/google/gmail-callback")
+async def gmail_callback(
+    code: str,
+    state: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Handle Gmail connection OAuth callback.
+    Stores Gmail tokens and marks user as gmail_connected.
+    """
+    if not code:
+        logger.error("Gmail callback: no code provided")
+        return RedirectResponse(f"{FRONTEND_URL}/settings?error=gmail_connection_failed")
+    
+    # Extract user_id from state
+    try:
+        if state and ":" in state:
+            _, user_id = state.rsplit(":", 1)
+        else:
+            raise ValueError("Invalid state parameter")
+    except Exception as e:
+        logger.error(f"Gmail callback: invalid state - {e}")
+        return RedirectResponse(f"{FRONTEND_URL}/settings?error=invalid_state")
+    
+    try:
+        # Exchange code for tokens
+        async with httpx.AsyncClient() as client:
+            token_response = await client.post(
+                GOOGLE_TOKEN_URL,
+                data={
+                    "code":          code,
+                    "client_id":     GOOGLE_CLIENT_ID,
+                    "client_secret": GOOGLE_CLIENT_SECRET,
+                    "redirect_uri":  f"{FRONTEND_URL}/auth/gmail-callback",
+                    "grant_type":    "authorization_code",
+                }
+            )
+        
+        if token_response.status_code != 200:
+            logger.error(f"Gmail token exchange failed: {token_response.text}")
+            return RedirectResponse(f"{FRONTEND_URL}/settings?error=token_exchange_failed")
+        
+        tokens = token_response.json()
+        access_token = tokens.get("access_token")
+        refresh_token = tokens.get("refresh_token")
+        expires_in = tokens.get("expires_in", 3600)
+        
+        if not access_token:
+            return RedirectResponse(f"{FRONTEND_URL}/settings?error=no_access_token")
+        
+        # Get user info
+        async with httpx.AsyncClient() as client:
+            userinfo_response = await client.get(
+                GOOGLE_USERINFO_URL,
+                headers={"Authorization": f"Bearer {access_token}"}
+            )
+        
+        if userinfo_response.status_code != 200:
+            return RedirectResponse(f"{FRONTEND_URL}/settings?error=userinfo_failed")
+        
+        google_user = userinfo_response.json()
+        email = google_user.get("email")
+        
+        # Store Gmail tokens in email_accounts table
+        from datetime import timedelta
+        import uuid as _uuid
+        
+        now = datetime.now(timezone.utc)
+        token_expiry = now + timedelta(seconds=expires_in)
+        
+        # Check if email account already exists
+        result = await db.execute(
+            text("""
+                SELECT id FROM email_accounts 
+                WHERE user_id = :user_id AND email_address = :email
+            """),
+            {"user_id": user_id, "email": email}
+        )
+        existing = result.fetchone()
+        
+        if existing:
+            # Update existing
+            await db.execute(
+                text("""
+                    UPDATE email_accounts
+                    SET access_token = :access_token,
+                        refresh_token = :refresh_token,
+                        token_expiry = :token_expiry,
+                        is_active = 1,
+                        updated_at = :updated_at
+                    WHERE user_id = :user_id AND email_address = :email
+                """),
+                {
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                    "token_expiry": token_expiry,
+                    "updated_at": now,
+                    "user_id": user_id,
+                    "email": email,
+                }
+            )
+        else:
+            # Insert new
+            await db.execute(
+                text("""
+                    INSERT INTO email_accounts
+                    (id, user_id, email_address, access_token, refresh_token, token_expiry, is_active, created_at, updated_at)
+                    VALUES
+                    (:id, :user_id, :email, :access_token, :refresh_token, :token_expiry, 1, :created_at, :updated_at)
+                """),
+                {
+                    "id": str(_uuid.uuid4()),
+                    "user_id": user_id,
+                    "email": email,
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                    "token_expiry": token_expiry,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+        
+        # Mark user as gmail_connected
+        await db.execute(
+            text("""
+                UPDATE users
+                SET gmail_connected = 1, updated_at = :updated_at
+                WHERE id = :user_id
+            """),
+            {"user_id": user_id, "updated_at": now}
+        )
+        
+        await db.commit()
+        
+        logger.info(f"Gmail connected successfully for user {user_id}")
+        
+        # Redirect to settings with success message
+        return RedirectResponse(f"{FRONTEND_URL}/settings?gmail_connected=success")
+        
+    except Exception as e:
+        logger.error(f"Gmail connection error: {e}", exc_info=True)
+        await db.rollback()
+        return RedirectResponse(f"{FRONTEND_URL}/settings?error=connection_error")
+
+
+# ─── Check Gmail Connection Status ────────────────────────────────
+
+@router.get("/gmail/status")
+async def gmail_status(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Check if user has Gmail connected.
+    Returns connection status and email address if connected.
+    """
+    user_id = current_user.get("user_id", "") if isinstance(current_user, dict) else getattr(current_user, "id", "")
+    
+    try:
+        # Check user's gmail_connected flag
+        result = await db.execute(
+            text("SELECT gmail_connected FROM users WHERE id = :user_id"),
+            {"user_id": user_id}
+        )
+        user = result.fetchone()
+        
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        gmail_connected = bool(user.gmail_connected) if user.gmail_connected else False
+        
+        # Get connected email account info
+        connected_email = None
+        if gmail_connected:
+            result = await db.execute(
+                text("""
+                    SELECT email_address, is_active, created_at
+                    FROM email_accounts
+                    WHERE user_id = :user_id AND is_active = 1
+                    LIMIT 1
+                """),
+                {"user_id": user_id}
+            )
+            email_account = result.fetchone()
+            if email_account:
+                connected_email = {
+                    "email": email_account.email_address,
+                    "connected_at": email_account.created_at.isoformat() if email_account.created_at else None,
+                }
+        
+        return {
+            "gmail_connected": gmail_connected,
+            "connected_email": connected_email,
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get Gmail status for {user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to check Gmail connection status"
         )

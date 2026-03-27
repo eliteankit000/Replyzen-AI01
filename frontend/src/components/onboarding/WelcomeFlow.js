@@ -203,6 +203,14 @@ const STEPS = [
     requiresConsent: true,
     content: null, // Will be handled specially
   },
+  {
+    id: 7,
+    title: "Connect Your Gmail",
+    subtitle: "Final step - enable smart replies",
+    icon: Mail,
+    requiresGmailConnection: true,
+    content: null, // Will be handled specially
+  },
 ];
 
 export default function WelcomeFlow({ open, onComplete }) {
@@ -222,6 +230,7 @@ export default function WelcomeFlow({ open, onComplete }) {
   const step = STEPS[currentStep];
   const isLastStep = currentStep === STEPS.length - 1;
   const isConsentStep = step?.requiresConsent;
+  const isGmailConnectionStep = step?.requiresGmailConnection;
 
   const handleNext = () => {
     if (currentStep < STEPS.length - 1) {
@@ -236,7 +245,7 @@ export default function WelcomeFlow({ open, onComplete }) {
   };
 
   const handleComplete = async () => {
-    if (!consentChecked) {
+    if (!consentChecked && isConsentStep) {
       toast.error("Please confirm that you understand and consent");
       return;
     }
@@ -256,13 +265,30 @@ export default function WelcomeFlow({ open, onComplete }) {
       );
 
       toast.success("Welcome aboard! 🎉");
-      onComplete();
+      
+      // If not on Gmail connection step, complete onboarding
+      if (!isGmailConnectionStep) {
+        onComplete();
+      } else {
+        // Move to Gmail connection step
+        handleNext();
+      }
     } catch (error) {
       console.error("Onboarding completion error:", error);
       toast.error("Failed to complete onboarding. Please try again.");
     } finally {
       setCompleting(false);
     }
+  };
+
+  const handleConnectGmail = () => {
+    // Redirect to Gmail connection OAuth flow
+    window.location.href = `${API_URL}/api/auth/google/connect-gmail`;
+  };
+
+  const handleSkipGmail = () => {
+    toast.info("You can connect Gmail later from Settings");
+    onComplete();
   };
 
   if (!step) return null;
@@ -310,7 +336,40 @@ export default function WelcomeFlow({ open, onComplete }) {
 
         {/* Step Content */}
         <div className="min-h-[250px] max-h-[400px] overflow-y-auto px-2">
-          {isConsentStep ? (
+          {isGmailConnectionStep ? (
+            <div className="space-y-6 py-6 text-center">
+              <div className="w-20 h-20 mx-auto rounded-full bg-primary/10 flex items-center justify-center">
+                <Mail className="w-10 h-10 text-primary" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold mb-2">Connect Your Gmail</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  To enable smart reply features, we need access to your Gmail account. 
+                  Click the button below to securely connect your Gmail.
+                </p>
+              </div>
+              
+              <div className="rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-900/40 p-4">
+                <div className="flex gap-2">
+                  <AlertCircle className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+                  <div className="text-left">
+                    <p className="text-xs text-blue-700 dark:text-blue-400 leading-relaxed">
+                      <strong>Why do we need this?</strong><br />
+                      Gmail access allows us to read your messages, detect which ones need replies, 
+                      and send AI-generated responses on your behalf (only after your approval).
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2 text-xs text-muted-foreground">
+                <p className="flex items-center justify-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                  You can skip this step and connect later from Settings
+                </p>
+              </div>
+            </div>
+          ) : isConsentStep ? (
             <div className="space-y-6 py-6">
               <div className="rounded-lg border border-border bg-muted/30 p-4">
                 <p className="text-sm text-foreground leading-relaxed mb-4">
@@ -368,14 +427,28 @@ export default function WelcomeFlow({ open, onComplete }) {
         <div className="flex items-center justify-between pt-4 border-t">
           <Button
             variant="outline"
-            onClick={handleBack}
+            onClick={isGmailConnectionStep ? handleSkipGmail : handleBack}
             disabled={currentStep === 0 || completing}
           >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back
+            {isGmailConnectionStep ? (
+              <>Skip for Now</>
+            ) : (
+              <>
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back
+              </>
+            )}
           </Button>
 
-          {isLastStep ? (
+          {isGmailConnectionStep ? (
+            <Button
+              onClick={handleConnectGmail}
+              className="bg-primary hover:bg-primary/90"
+            >
+              <Mail className="w-4 h-4 mr-2" />
+              Connect Gmail
+            </Button>
+          ) : isLastStep ? (
             <Button
               onClick={handleComplete}
               disabled={!consentChecked || completing}
@@ -388,8 +461,8 @@ export default function WelcomeFlow({ open, onComplete }) {
                 </>
               ) : (
                 <>
-                  Get Started
-                  <Sparkles className="w-4 h-4 ml-2" />
+                  Continue
+                  <ArrowRight className="w-4 h-4 ml-2" />
                 </>
               )}
             </Button>

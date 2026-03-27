@@ -32,6 +32,7 @@ async def init_database(db):
             user_consent INTEGER DEFAULT 0,
             consent_accepted_at TIMESTAMP,
             is_onboarded INTEGER DEFAULT 0,
+            gmail_connected INTEGER DEFAULT 0,
             created_at TIMESTAMP,
             updated_at TIMESTAMP
         )
@@ -266,6 +267,7 @@ async def init_database(db):
     await _safe_add_column(db, "users", "user_consent", "INTEGER DEFAULT 0")
     await _safe_add_column(db, "users", "consent_accepted_at", "TIMESTAMP")
     await _safe_add_column(db, "users", "is_onboarded", "INTEGER DEFAULT 0")
+    await _safe_add_column(db, "users", "gmail_connected", "INTEGER DEFAULT 0")
     await _safe_add_column(db, "smart_reply_settings", "smart_reply_mode", "TEXT DEFAULT 'manual'")
 
     await db.commit()
