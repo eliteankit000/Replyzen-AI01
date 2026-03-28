@@ -5,7 +5,10 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import WelcomeFlow from "@/components/onboarding/WelcomeFlow";
 
-const BACKEND_URL = "https://replyzen-ai01-production.up.railway.app";
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL ||
+  (process.env.REACT_APP_REPLIT_DEV_DOMAIN
+    ? `https://${process.env.REACT_APP_REPLIT_DEV_DOMAIN}:8000`
+    : "https://replyzen-ai01-production.up.railway.app");
 
 export default function AuthCallback() {
   const navigate = useNavigate();
