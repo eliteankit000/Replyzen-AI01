@@ -240,8 +240,8 @@ async def send_approved_reply(
                 gmail_sent = True
                 logger.info(f"[Inbox] Gmail reply sent for user {user_id}, message {message_id}")
             except Exception as gmail_err:
-                # Gmail not connected or send failed — log but don't block the UI success
-                logger.warning(f"[Inbox] Gmail send skipped (not connected?): {gmail_err}")
+                # Gmail send failed — log full traceback so we can see the real error
+                logger.error(f"[Inbox] Gmail send FAILED for user {user_id}: {gmail_err}", exc_info=True)
 
         # Update inbox_messages status (best-effort)
         try:
