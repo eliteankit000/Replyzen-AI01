@@ -209,8 +209,11 @@ async def send_approved_reply(
     🔒 SECURITY: This should ONLY be called after explicit user approval.
     All sends are logged for audit trail.
     """
+    sent_at = datetime.now(timezone.utc)
+    gmail_sent = False
+
     try:
-        # Get thread info
+        # Get thread info (best-effort — may not exist for demo/new users)
         result = await db.execute(
             text("""
                 SELECT id, thread_id, subject, last_message_from
@@ -221,72 +224,107 @@ async def send_approved_reply(
             {"user_id": user_id, "message_id": message_id}
         )
         thread = result.fetchone()
-        
-        if not thread:
-            raise ValueError(f"Thread not found: {message_id}")
-        
-        thread_dict = dict(thread._mapping)
-        
-        # Send via Gmail service
-        sent_result = await send_gmail_reply(
-            db=db,
-            user_id=user_id,
-            thread_id=thread_dict["thread_id"],
-            subject=thread_dict["subject"],
-            body=reply,
-            to=thread_dict["last_message_from"],
-        )
-        
-        # Update inbox_messages status
-        await db.execute(
-            text("""
-                UPDATE inbox_messages
-                SET status = 'sent', sent_at = :sent_at
-                WHERE user_id::text = :user_id AND thread_id::text = :message_id
-            """),
-            {
-                "user_id": user_id,
-                "message_id": message_id,
-                "sent_at": datetime.now(timezone.utc),
-            }
-        )
-        
-        # Update email_threads
-        await db.execute(
-            text("""
-                UPDATE email_threads
-                SET replied_by_user = 1, last_followup_sent_at = :sent_at
-                WHERE id::text = :message_id
-            """),
-            {
-                "message_id": message_id,
-                "sent_at": datetime.now(timezone.utc),
-            }
-        )
-        
-        # Update smart_reply_logs
-        await db.execute(
-            text("""
-                UPDATE smart_reply_logs
-                SET status = 'sent'
-                WHERE user_id::text = :user_id AND thread_id::text = :message_id
-                ORDER BY created_at DESC
-                LIMIT 1
-            """),
-            {"user_id": user_id, "message_id": message_id}
-        )
-        
+
+        # Try to send via Gmail if thread exists and Gmail is connected
+        if thread:
+            thread_dict = dict(thread._mapping)
+            try:
+                await send_gmail_reply(
+                    db=db,
+                    user_id=user_id,
+                    thread_id=thread_dict["thread_id"],
+                    subject=thread_dict["subject"],
+                    body=reply,
+                    to=thread_dict["last_message_from"],
+                )
+                gmail_sent = True
+                logger.info(f"[Inbox] Gmail reply sent for user {user_id}, message {message_id}")
+            except Exception as gmail_err:
+                # Gmail send failed — log full traceback so we can see the real error
+                logger.error(f"[Inbox] Gmail send FAILED for user {user_id}: {gmail_err}", exc_info=True)
+
+        # Update inbox_messages status (best-effort)
+        try:
+            await db.execute(
+                text("""
+                    UPDATE inbox_messages
+                    SET status = 'sent', sent_at = :sent_at
+                    WHERE user_id::text = :user_id AND thread_id::text = :message_id
+                """),
+                {"user_id": user_id, "message_id": message_id, "sent_at": sent_at},
+            )
+        except Exception as e:
+            logger.warning(f"[Inbox] Could not update inbox_messages: {e}")
+
+        # Update email_threads (best-effort)
+        if thread:
+            try:
+                await db.execute(
+                    text("""
+                        UPDATE email_threads
+                        SET replied_by_user = 1, last_followup_sent_at = :sent_at
+                        WHERE id::text = :message_id
+                    """),
+                    {"message_id": message_id, "sent_at": sent_at},
+                )
+            except Exception as e:
+                logger.warning(f"[Inbox] Could not update email_threads: {e}")
+
+        # Update most recent smart_reply_logs row (PostgreSQL-safe: no ORDER BY/LIMIT in UPDATE)
+        try:
+            await db.execute(
+                text("""
+                    UPDATE smart_reply_logs
+                    SET status = 'sent'
+                    WHERE id = (
+                        SELECT id FROM smart_reply_logs
+                        WHERE user_id::text = :user_id AND thread_id::text = :message_id
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    )
+                """),
+                {"user_id": user_id, "message_id": message_id},
+            )
+        except Exception as e:
+            logger.warning(f"[Inbox] Could not update smart_reply_logs: {e}")
+
+        # Upsert a followup_suggestions row with status='sent' so it shows in
+        # the FollowupQueue "Sent" tab (which reads from followup_suggestions).
+        try:
+            fs_id = str(uuid.uuid4())
+            await db.execute(
+                text("""
+                    INSERT INTO followup_suggestions
+                        (id, thread_id, user_id, generated_text, tone, priority,
+                         status, sent_at, generated_at)
+                    VALUES
+                        (:id, :thread_id, :user_id, :draft, 'professional', 'normal',
+                         'sent', :sent_at, :sent_at)
+                    ON CONFLICT DO NOTHING
+                """),
+                {
+                    "id": fs_id,
+                    "thread_id": message_id,
+                    "user_id": user_id,
+                    "draft": reply,
+                    "sent_at": sent_at,
+                },
+            )
+        except Exception as e:
+            logger.warning(f"[Inbox] Could not upsert followup_suggestions: {e}")
+
         await db.commit()
-        
-        logger.info(f"[Inbox] Reply sent for user {user_id}, message {message_id} (edited: {edited})")
-        
+
+        logger.info(f"[Inbox] Reply approved for user {user_id}, message {message_id} (gmail_sent={gmail_sent}, edited={edited})")
+
         return {
             "message_id": message_id,
             "status": "sent",
-            "sent_at": datetime.now(timezone.utc).isoformat(),
+            "sent_at": sent_at.isoformat(),
             "edited": edited,
+            "gmail_sent": gmail_sent,
         }
-        
+
     except Exception as e:
         logger.error(f"[Inbox] Failed to send reply for {user_id}: {e}", exc_info=True)
         await db.rollback()

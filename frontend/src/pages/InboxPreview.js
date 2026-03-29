@@ -23,6 +23,7 @@ import {
   Clock,
   AlertCircle,
   Sparkles,
+  WifiOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { inboxAPI } from "@/lib/api";
@@ -47,6 +48,7 @@ import { inboxAPI } from "@/lib/api";
 export default function InboxPreview() {
   const [loading, setLoading] = useState(true);
   const [messages, setMessages] = useState([]);
+  const [activeTab, setActiveTab] = useState("pending"); // "pending" | "sent"
   const [selectedMessage, setSelectedMessage] = useState(null);
   const [aiReply, setAiReply] = useState("");
   const [editedReply, setEditedReply] = useState("");
@@ -57,16 +59,23 @@ export default function InboxPreview() {
   const [generatingReply, setGeneratingReply] = useState(false);
   const [sendingReply, setSendingReply] = useState(false);
 
-  // Load inbox messages on mount
+  // Load inbox messages on mount and whenever the active tab changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    loadMessages();
+    loadMessages(activeTab);
     loadStats();
-  }, []);
+  }, [activeTab]);
 
-  const loadMessages = async () => {
+  const loadMessages = async (tab = activeTab) => {
     try {
       setLoading(true);
-      const response = await inboxAPI.getMessages();
+      setSelectedMessage(null);
+      setAiReply("");
+      setEditedReply("");
+      // "pending" tab → no status filter (shows non-dismissed)
+      // "sent" tab   → filter by replied_by_user=true
+      const statusFilter = tab === "sent" ? "replied" : "pending";
+      const response = await inboxAPI.getMessages(50, statusFilter);
       setMessages(response.data.data || []);
     } catch (error) {
       console.error("Failed to load messages:", error);
@@ -138,29 +147,27 @@ export default function InboxPreview() {
 
     try {
       setSendingReply(true);
-      await inboxAPI.sendReply({
+      const res = await inboxAPI.sendReply({
         message_id: selectedMessage.id,
         reply: editedReply,
         approved: true,
         edited: editedReply !== aiReply,
       });
 
-      toast.success("Reply sent successfully! ✅");
+      const gmailSent = res?.data?.data?.gmail_sent ?? res?.data?.gmail_sent ?? false;
+
+      if (gmailSent) {
+        toast.success("Reply sent via Gmail! ✅");
+      } else {
+        toast.success("Reply recorded ✅", {
+          description: "Gmail not connected — go to Settings to connect Gmail so replies are actually delivered.",
+          duration: 6000,
+        });
+      }
       
-      // Update message status
-      setMessages(prev =>
-        prev.map(msg =>
-          msg.id === selectedMessage.id
-            ? { ...msg, status: "replied" }
-            : msg
-        )
-      );
-      
-      // Clear selection
-      setSelectedMessage(null);
-      setAiReply("");
-      setEditedReply("");
-      setIsEditing(false);
+      // Switch to Sent tab to show the sent message there
+      setActiveTab("sent");
+      // loadMessages will be triggered by the useEffect on activeTab change
       
       // Reload stats
       loadStats();
@@ -236,6 +243,30 @@ export default function InboxPreview() {
               <Inbox className="w-5 h-5" />
               Inbox Messages
             </CardTitle>
+            {/* Pending / Sent tab switcher */}
+            <div className="flex gap-1 mt-1 p-1 bg-muted rounded-lg w-fit">
+              <button
+                onClick={() => setActiveTab("pending")}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                  activeTab === "pending"
+                    ? "bg-background shadow-sm text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Pending
+              </button>
+              <button
+                onClick={() => setActiveTab("sent")}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all flex items-center gap-1 ${
+                  activeTab === "sent"
+                    ? "bg-background shadow-sm text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <CheckCircle2 className="w-3 h-3" />
+                Sent
+              </button>
+            </div>
           </CardHeader>
           <CardContent>
             {loading ? (
@@ -246,23 +277,38 @@ export default function InboxPreview() {
               </div>
             ) : messages.length === 0 ? (
               <div className="text-center py-12">
-                <Inbox className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-                <p className="text-muted-foreground">No messages found</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Connect your Gmail account in Settings to see messages
-                </p>
+                {activeTab === "sent" ? (
+                  <>
+                    <CheckCircle2 className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                    <p className="text-muted-foreground">No sent replies yet</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Replies you approve will appear here
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <Inbox className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                    <p className="text-muted-foreground">No messages found</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Connect your Gmail account in Settings to see messages
+                    </p>
+                  </>
+                )}
               </div>
             ) : (
               <div className="space-y-2 max-h-[600px] overflow-y-auto">
                 {messages.map((message) => (
                   <div
                     key={message.id}
-                    onClick={() => handleSelectMessage(message)}
+                    onClick={() => activeTab === "pending" ? handleSelectMessage(message) : undefined}
                     className={`
-                      p-4 rounded-lg border cursor-pointer transition-all
+                      p-4 rounded-lg border transition-all
+                      ${activeTab === "pending" ? "cursor-pointer" : "cursor-default"}
                       ${selectedMessage?.id === message.id
                         ? "border-primary bg-primary/5"
-                        : "border-border hover:border-primary/50 hover:bg-muted/50"
+                        : activeTab === "pending"
+                          ? "border-border hover:border-primary/50 hover:bg-muted/50"
+                          : "border-emerald-200 bg-emerald-50/30 dark:bg-emerald-950/10"
                       }
                     `}
                   >
@@ -270,7 +316,10 @@ export default function InboxPreview() {
                       <p className="font-medium text-sm truncate flex-1">
                         {message.subject || "(No Subject)"}
                       </p>
-                      {getStatusBadge(message.status)}
+                      {activeTab === "sent"
+                        ? <Badge variant="outline" className="text-emerald-600 border-emerald-300 shrink-0">Replied</Badge>
+                        : getStatusBadge(message.status)
+                      }
                     </div>
                     <p className="text-xs text-muted-foreground truncate mb-2">
                       From: {message.sender}

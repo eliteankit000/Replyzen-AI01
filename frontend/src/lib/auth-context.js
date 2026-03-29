@@ -3,7 +3,10 @@ import { authAPI } from "./api";
 
 const AuthContext = createContext(null);
 
-const BACKEND_URL = "https://replyzen-ai01-production.up.railway.app";
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL ||
+  (process.env.REACT_APP_REPLIT_DEV_DOMAIN
+    ? `https://${process.env.REACT_APP_REPLIT_DEV_DOMAIN}:8000`
+    : "https://replyzen-ai01-production.up.railway.app");
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);

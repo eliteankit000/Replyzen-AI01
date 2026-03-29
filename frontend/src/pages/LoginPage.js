@@ -11,7 +11,10 @@ import { Separator } from "@/components/ui/separator";
 import { Mail, ArrowRight, Eye, EyeOff, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
-const API_URL = "https://replyzen-ai01-production.up.railway.app";
+const API_URL = process.env.REACT_APP_BACKEND_URL ||
+  (process.env.REACT_APP_REPLIT_DEV_DOMAIN
+    ? `https://${process.env.REACT_APP_REPLIT_DEV_DOMAIN}:8000`
+    : "https://replyzen-ai01-production.up.railway.app");
 
 function GoogleIcon({ className }) {
   return (

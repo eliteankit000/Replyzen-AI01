@@ -6,14 +6,16 @@ import axios from "axios";
 |--------------------------------------------------------------------------
 */
 
-let BACKEND_URL = "https://replyzen-ai01-production.up.railway.app";
+let BACKEND_URL;
 
 if (process.env.REACT_APP_BACKEND_URL) {
   BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-}
-
-if (process.env.NEXT_PUBLIC_API_URL) {
+} else if (process.env.REACT_APP_REPLIT_DEV_DOMAIN) {
+  BACKEND_URL = `https://${process.env.REACT_APP_REPLIT_DEV_DOMAIN}:8000`;
+} else if (process.env.NEXT_PUBLIC_API_URL) {
   BACKEND_URL = process.env.NEXT_PUBLIC_API_URL;
+} else {
+  BACKEND_URL = "https://replyzen-ai01-production.up.railway.app";
 }
 
 const API_BASE = BACKEND_URL + "/api";
@@ -154,17 +156,12 @@ export const analyticsAPI = {
 */
 
 export const settingsAPI = {
-  // Existing
   get:               ()     => api.get("/settings"),
   update:            (data) => api.put("/settings", data),
   updateProfile:     (data) => api.put("/settings/profile", data),
   updateSilenceRules:(data) => api.put("/settings/silence-rules", data),
   disconnectEmail:   (id)   => api.delete(`/settings/email-account/${id}`),
-
-  // NEW: Follow-up scope
   updateFollowUpScope: (data) => api.put("/settings/followup-scope", data),
-
-  // NEW: Block / unblock sender
   blockSender:        (senderEmail) => api.post("/settings/block-sender",   { sender_email: senderEmail }),
   unblockSender:      (senderEmail) => api.post("/settings/unblock-sender", { sender_email: senderEmail }),
   getBlockedSenders:  ()            => api.get("/settings/blocked-senders"),
@@ -172,8 +169,8 @@ export const settingsAPI = {
 
 /*
 |--------------------------------------------------------------------------
-|| Inbox Preview (Google-reviewer-friendly)
-||--------------------------------------------------------------------------
+| Inbox Preview
+|--------------------------------------------------------------------------
 */
 
 export const inboxAPI = {

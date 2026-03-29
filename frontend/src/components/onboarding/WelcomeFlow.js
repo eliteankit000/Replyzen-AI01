@@ -10,7 +10,10 @@ import {
 import { toast } from "sonner";
 import axios from "axios";
 
-const API_URL = process.env.REACT_APP_BACKEND_URL || "https://replyzen-ai01-production.up.railway.app";
+const API_URL = process.env.REACT_APP_BACKEND_URL ||
+  (process.env.REACT_APP_REPLIT_DEV_DOMAIN
+    ? `https://${process.env.REACT_APP_REPLIT_DEV_DOMAIN}:8000`
+    : "https://replyzen-ai01-production.up.railway.app");
 
 /**
  * WelcomeFlow - Multi-step onboarding popup
