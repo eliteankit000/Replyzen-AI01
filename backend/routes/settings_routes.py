@@ -63,7 +63,7 @@ async def get_settings(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        text("SELECT * FROM user_settings WHERE user_id = :uid LIMIT 1"),
+        text("SELECT * FROM user_settings WHERE user_id::text = :uid LIMIT 1"),
         {"uid": current_user["user_id"]},
     )
     settings = result.fetchone()
@@ -72,7 +72,7 @@ async def get_settings(
     user_result = await db.execute(
         text("""
         SELECT follow_up_scope, allowed_contacts, allowed_domains, blocked_senders
-        FROM users WHERE id = :uid
+        FROM users WHERE id::text = :uid
         """),
         {"uid": current_user["user_id"]},
     )
@@ -127,7 +127,7 @@ async def update_profile(
     params = {**update_fields, "uid": current_user["user_id"]}
 
     await db.execute(
-        text(f"UPDATE users SET {', '.join(query_parts)} WHERE id = :uid"),
+        text(f"UPDATE users SET {', '.join(query_parts)} WHERE id::text = :uid"),
         params,
     )
     await db.commit()
@@ -167,7 +167,7 @@ async def update_settings(
         {"uid": current_user["user_id"], "now": datetime.now(timezone.utc)},
     )
     await db.execute(
-        text(f"UPDATE user_settings SET {set_clause} WHERE user_id = :uid"),
+        text(f"UPDATE user_settings SET {set_clause} WHERE user_id::text = :uid"),
         params,
     )
     await db.commit()
@@ -201,7 +201,7 @@ async def update_silence_rules(
         {"uid": current_user["user_id"], "now": datetime.now(timezone.utc)},
     )
     await db.execute(
-        text(f"UPDATE user_settings SET {set_clause} WHERE user_id = :uid"),
+        text(f"UPDATE user_settings SET {set_clause} WHERE user_id::text = :uid"),
         params,
     )
     await db.commit()
@@ -244,7 +244,7 @@ async def update_followup_scope(
     params["updated"] = datetime.now(timezone.utc)
 
     await db.execute(
-        text(f"UPDATE users SET {', '.join(update_parts)} WHERE id = :uid"),
+        text(f"UPDATE users SET {', '.join(update_parts)} WHERE id::text = :uid"),
         params,
     )
     await db.commit()
@@ -272,7 +272,7 @@ async def block_sender(
             :sender
         ),
         updated_at = :updated
-        WHERE id = :uid
+        WHERE id::text = :uid
           AND NOT (:sender = ANY(COALESCE(blocked_senders, '{}')))
         """),
         {
@@ -299,7 +299,7 @@ async def unblock_sender(
         UPDATE users
         SET blocked_senders = array_remove(COALESCE(blocked_senders, '{}'), :sender),
             updated_at = :updated
-        WHERE id = :uid
+        WHERE id::text = :uid
         """),
         {
             "sender":  sender,
@@ -317,7 +317,7 @@ async def get_blocked_senders(
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        text("SELECT COALESCE(blocked_senders, '{}') AS blocked_senders FROM users WHERE id = :uid"),
+        text("SELECT COALESCE(blocked_senders, '{}') AS blocked_senders FROM users WHERE id::text = :uid"),
         {"uid": current_user["user_id"]},
     )
     row = result.fetchone()
@@ -338,7 +338,7 @@ async def disconnect_email(
 
     # Verify the account belongs to this user before deleting
     check = await db.execute(
-        text("SELECT id FROM email_accounts WHERE id = :aid AND user_id = :uid"),
+        text("SELECT id FROM email_accounts WHERE id::text = :aid AND user_id::text = :uid"),
         {"aid": account_id, "uid": user_id},
     )
     if not check.fetchone():
@@ -346,7 +346,7 @@ async def disconnect_email(
 
     # Always delete threads first (safe — no trigger conflict on email_threads)
     await db.execute(
-        text("DELETE FROM email_threads WHERE account_id = :aid AND user_id = :uid"),
+        text("DELETE FROM email_threads WHERE account_id::text = :aid AND user_id::text = :uid"),
         {"aid": account_id, "uid": user_id},
     )
     await db.commit()
@@ -361,7 +361,7 @@ async def disconnect_email(
         async with db.begin():
             await db.execute(text("SET LOCAL session_replication_role = replica"))
             await db.execute(
-                text("DELETE FROM email_accounts WHERE id = :aid AND user_id = :uid"),
+                text("DELETE FROM email_accounts WHERE id::text = :aid AND user_id::text = :uid"),
                 {"aid": account_id, "uid": user_id},
             )
     except Exception:
@@ -373,7 +373,7 @@ async def disconnect_email(
         await db.execute(
             text(
                 "UPDATE email_accounts SET is_active = false, updated_at = :now "
-                "WHERE id = :aid AND user_id = :uid"
+                "WHERE id::text = :aid AND user_id::text = :uid"
             ),
             {"aid": account_id, "uid": user_id, "now": datetime.now(timezone.utc)},
         )

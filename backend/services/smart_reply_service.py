@@ -103,7 +103,7 @@ async def get_smart_reply_settings(db, user_id: str) -> dict:
     Returns safe defaults if no row exists yet.
     """
     result = await db.execute(
-        text("SELECT * FROM smart_reply_settings WHERE user_id = :uid"),
+        text("SELECT * FROM smart_reply_settings WHERE user_id::text = :uid"),
         {"uid": user_id},
     )
     row = result.fetchone()
@@ -233,8 +233,8 @@ async def cancel_queued_email(db, queue_id: str, user_id: str) -> bool:
         SET status = 'cancelled',
             cancelled = true,
             cancelled_at = NOW()
-        WHERE id = :id
-          AND user_id = :uid
+        WHERE id::text = :id
+          AND user_id::text = :uid
           AND status = 'queued'
           AND cancelled = false
         RETURNING id
@@ -259,7 +259,7 @@ async def get_queued_emails(db, user_id: str, status: Optional[str] = None) -> l
             SELECT id, user_id, followup_id, to_email, subject,
                    status, scheduled_at, cancelled, created_at, sent_at, cancelled_at
             FROM email_queue
-            WHERE user_id = :uid AND status = :status
+            WHERE user_id::text = :uid AND status = :status
             ORDER BY created_at DESC
             LIMIT 50
             """),
@@ -271,7 +271,7 @@ async def get_queued_emails(db, user_id: str, status: Optional[str] = None) -> l
             SELECT id, user_id, followup_id, to_email, subject,
                    status, scheduled_at, cancelled, created_at, sent_at, cancelled_at
             FROM email_queue
-            WHERE user_id = :uid
+            WHERE user_id::text = :uid
             ORDER BY created_at DESC
             LIMIT 50
             """),
@@ -303,7 +303,7 @@ async def get_daily_smart_reply_sent_count(db, user_id: str) -> int:
         text("""
         SELECT COUNT(*)
         FROM email_queue
-        WHERE user_id = :uid
+        WHERE user_id::text = :uid
           AND status = 'sent'
           AND created_at >= CURRENT_DATE
         """),
@@ -411,7 +411,7 @@ async def process_email_queue(db, gmail_send_fn) -> dict:
                 text("""
                 UPDATE email_queue
                 SET status = 'sent', sent_at = NOW()
-                WHERE id = :id
+                WHERE id::text = :id
                 """),
                 {"id": item["id"]},
             )
@@ -436,7 +436,7 @@ async def process_email_queue(db, gmail_send_fn) -> dict:
                 text("""
                 UPDATE email_queue
                 SET error_message = :err
-                WHERE id = :id
+                WHERE id::text = :id
                 """),
                 {"id": item["id"], "err": str(e)},
             )
@@ -557,7 +557,7 @@ async def get_smart_reply_logs(db, user_id: str, limit: int = 20) -> list:
         text("""
         SELECT id, thread_id, message_snippet, generated_reply, platform, tone, status, created_at
         FROM smart_reply_logs
-        WHERE user_id = :uid
+        WHERE user_id::text = :uid
         ORDER BY created_at DESC
         LIMIT :limit
         """),

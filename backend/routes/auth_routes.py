@@ -165,7 +165,7 @@ async def get_me(
             text("""
                 SELECT id, email, full_name, plan, avatar_url, is_onboarded, gmail_connected 
                 FROM users 
-                WHERE id = :id
+                WHERE id::text = :id
             """),
             {"id": current_user["user_id"]}
         )
@@ -291,7 +291,7 @@ async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
             text("""
             UPDATE users
             SET avatar_url = :avatar_url, updated_at = :updated
-            WHERE id = :id
+            WHERE id::text = :id
             """),
             {
                 "avatar_url": avatar_url,
@@ -329,7 +329,7 @@ async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
 
     # Get final user data with is_onboarded status
     result = await db.execute(
-        text("SELECT id, email, full_name, plan, avatar_url, is_onboarded FROM users WHERE id = :user_id"),
+        text("SELECT id, email, full_name, plan, avatar_url, is_onboarded FROM users WHERE id::text = :user_id"),
         {"user_id": user_id}
     )
     user_row = result.fetchone()
@@ -359,7 +359,7 @@ async def store_consent(
             SET user_consent = :consent,
                 consent_accepted_at = :accepted_at,
                 updated_at = :updated
-            WHERE id = :user_id
+            WHERE id::text = :user_id
             """),
             {
                 "consent": 1 if req.consent else 0,
@@ -438,7 +438,7 @@ async def complete_onboarding(
                     consent_accepted_at = :now,
                     user_consent = 1,
                     updated_at = :now
-                WHERE id = :user_id
+                WHERE id::text = :user_id
             """),
             {
                 "user_id": user_id,
@@ -582,7 +582,7 @@ async def gmail_callback(
         result = await db.execute(
             text("""
                 SELECT id FROM email_accounts 
-                WHERE user_id = :user_id AND email_address = :email
+                WHERE user_id::text = :user_id AND email_address = :email
             """),
             {"user_id": user_id, "email": email}
         )
@@ -598,7 +598,7 @@ async def gmail_callback(
                         token_expiry = :token_expiry,
                         is_active = 1,
                         updated_at = :updated_at
-                    WHERE user_id = :user_id AND email_address = :email
+                    WHERE user_id::text = :user_id AND email_address = :email
                 """),
                 {
                     "access_token": access_token,
@@ -635,7 +635,7 @@ async def gmail_callback(
             text("""
                 UPDATE users
                 SET gmail_connected = 1, updated_at = :updated_at
-                WHERE id = :user_id
+                WHERE id::text = :user_id
             """),
             {"user_id": user_id, "updated_at": now}
         )
@@ -669,7 +669,7 @@ async def gmail_status(
     try:
         # Check user's gmail_connected flag
         result = await db.execute(
-            text("SELECT gmail_connected FROM users WHERE id = :user_id"),
+            text("SELECT gmail_connected FROM users WHERE id::text = :user_id"),
             {"user_id": user_id}
         )
         user = result.fetchone()
@@ -686,7 +686,7 @@ async def gmail_status(
                 text("""
                     SELECT email_address, is_active, created_at
                     FROM email_accounts
-                    WHERE user_id = :user_id AND is_active = 1
+                    WHERE user_id::text = :user_id AND is_active::boolean = true
                     LIMIT 1
                 """),
                 {"user_id": user_id}

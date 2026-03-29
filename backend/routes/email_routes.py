@@ -50,7 +50,7 @@ class DismissThreadRequest(BaseModel):
 
 async def verify_user_exists(user_id: str, db: AsyncSession):
     result = await db.execute(
-        text("SELECT id FROM users WHERE id = :uid"), {"uid": user_id}
+        text("SELECT id FROM users WHERE id::text = :uid"), {"uid": user_id}
     )
     if not result.fetchone():
         raise HTTPException(
@@ -61,7 +61,7 @@ async def verify_user_exists(user_id: str, db: AsyncSession):
 
 async def get_user_settings(user_id: str, db: AsyncSession) -> dict:
     result = await db.execute(
-        text("SELECT ignore_newsletters, ignore_notifications FROM user_settings WHERE user_id = :uid"),
+        text("SELECT ignore_newsletters, ignore_notifications FROM user_settings WHERE user_id::text = :uid"),
         {"uid": user_id},
     )
     row = result.fetchone()
@@ -70,7 +70,7 @@ async def get_user_settings(user_id: str, db: AsyncSession) -> dict:
 
 async def get_user_email_address(user_id: str, db: AsyncSession) -> str:
     result = await db.execute(
-        text("SELECT email FROM users WHERE id = :uid"), {"uid": user_id}
+        text("SELECT email FROM users WHERE id::text = :uid"), {"uid": user_id}
     )
     row = result.fetchone()
     return row[0] if row else ""
@@ -84,7 +84,7 @@ async def get_full_user(user_id: str, db: AsyncSession) -> dict:
                COALESCE(allowed_contacts, '{}')          AS allowed_contacts,
                COALESCE(allowed_domains, '{}')           AS allowed_domains,
                COALESCE(blocked_senders, '{}')           AS blocked_senders
-        FROM users WHERE id = :uid
+        FROM users WHERE id::text = :uid
         """),
         {"uid": user_id},
     )
@@ -94,7 +94,7 @@ async def get_full_user(user_id: str, db: AsyncSession) -> dict:
     settings_result = await db.execute(
         text("""
         SELECT COALESCE(silence_delay_days, 3) AS silence_delay_days
-        FROM user_settings WHERE user_id = :uid
+        FROM user_settings WHERE user_id::text = :uid
         """),
         {"uid": user_id},
     )
@@ -138,13 +138,13 @@ async def batch_mark_recovered(user_id: str, db: AsyncSession) -> int:
                     fs.thread_id,
                     fs.sent_at AS followup_sent_at
                 FROM followup_suggestions fs
-                WHERE fs.user_id = :uid
+                WHERE fs.user_id::text = :uid
                   AND fs.status  = 'sent'
                   AND fs.sent_at IS NOT NULL
                 ORDER BY fs.thread_id, fs.sent_at DESC
             ) latest_followup
             WHERE et.id                  = latest_followup.thread_id
-              AND et.user_id             = :uid
+              AND et.user_id::text        = :uid
               AND et.is_recovered        = FALSE
               AND et.last_sender_is_user = FALSE
               AND et.last_message_at     > latest_followup.followup_sent_at
@@ -584,10 +584,10 @@ async def get_silent_threads(
     cutoff        = datetime.utcnow() - timedelta(days=days)
 
     if show_filtered:
-        where_clause = "et.user_id = :uid AND et.last_message_at < :cutoff"
+        where_clause = "et.user_id::text = :uid AND et.last_message_at < :cutoff"
     else:
         where_clause = """
-            et.user_id = :uid
+            et.user_id::text = :uid
             AND et.last_message_at < :cutoff
             AND et.is_dismissed = false
             AND (et.is_opportunity = true)
@@ -695,7 +695,7 @@ async def dismiss_thread(
         SET is_dismissed = true, is_opportunity = false,
             is_filtered = true, filter_reason = 'dismissed',
             updated_at = :updated
-        WHERE id = :tid AND user_id = :uid
+        WHERE id = :tid AND user_id::text = :uid
         """),
         {"tid": thread_id, "uid": user_id, "updated": datetime.utcnow()},
     )
@@ -716,7 +716,7 @@ async def undismiss_thread(
         text("""
         UPDATE email_threads
         SET is_dismissed = false, updated_at = :updated
-        WHERE id = :tid AND user_id = :uid
+        WHERE id = :tid AND user_id::text = :uid
         """),
         {"tid": thread_id, "uid": user_id, "updated": datetime.utcnow()},
     )
@@ -743,7 +743,7 @@ async def get_thread_reply_status(
         FROM email_threads et
         LEFT JOIN followup_suggestions fs
           ON fs.thread_id = et.id AND fs.user_id = et.user_id
-        WHERE et.id = :tid AND et.user_id = :uid
+        WHERE et.id = :tid AND et.user_id::text = :uid
         """),
         {"tid": thread_id, "uid": user_id},
     )

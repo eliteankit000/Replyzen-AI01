@@ -56,27 +56,27 @@ async def get_overview(
     user_id = current_user["user_id"]
 
     total_threads = (await db.execute(
-        text("SELECT COUNT(*) FROM email_threads WHERE user_id = :uid"),
+        text("SELECT COUNT(*) FROM email_threads WHERE user_id::text = :uid"),
         {"uid": user_id},
     )).scalar() or 0
 
     silent_threads = (await db.execute(
-        text("SELECT COUNT(*) FROM email_threads WHERE user_id = :uid AND is_silent = TRUE"),
+        text("SELECT COUNT(*) FROM email_threads WHERE user_id::text = :uid AND is_silent = TRUE"),
         {"uid": user_id},
     )).scalar() or 0
 
     followups_sent = (await db.execute(
-        text("SELECT COUNT(*) FROM followup_suggestions WHERE user_id = :uid AND status='sent'"),
+        text("SELECT COUNT(*) FROM followup_suggestions WHERE user_id::text = :uid AND status='sent'"),
         {"uid": user_id},
     )).scalar() or 0
 
     followups_pending = (await db.execute(
-        text("SELECT COUNT(*) FROM followup_suggestions WHERE user_id = :uid AND status='pending'"),
+        text("SELECT COUNT(*) FROM followup_suggestions WHERE user_id::text = :uid AND status='pending'"),
         {"uid": user_id},
     )).scalar() or 0
 
     followups_dismissed = (await db.execute(
-        text("SELECT COUNT(*) FROM followup_suggestions WHERE user_id = :uid AND status='dismissed'"),
+        text("SELECT COUNT(*) FROM followup_suggestions WHERE user_id::text = :uid AND status='dismissed'"),
         {"uid": user_id},
     )).scalar() or 0
 
@@ -84,7 +84,7 @@ async def get_overview(
     response_rate   = round((followups_sent / total_followups * 100) if total_followups > 0 else 0, 1)
 
     accounts_count = (await db.execute(
-        text("SELECT COUNT(*) FROM email_accounts WHERE user_id = :uid"),
+        text("SELECT COUNT(*) FROM email_accounts WHERE user_id::text = :uid"),
         {"uid": user_id},
     )).scalar() or 0
 
@@ -129,7 +129,7 @@ async def followups_over_time(
         text("""
         SELECT date, followups_generated, followups_sent
         FROM usage_tracking
-        WHERE user_id = :uid AND date >= :start
+        WHERE user_id::text = :uid AND date >= :start
         ORDER BY date ASC
         """),
         {"uid": user_id, "start": start_date.date()},
@@ -169,7 +169,7 @@ async def top_contacts(
         text("""
         SELECT last_message_from, COUNT(*) as count
         FROM email_threads
-        WHERE user_id = :uid
+        WHERE user_id::text = :uid
           AND is_automated = false
           AND last_message_from IS NOT NULL
           AND last_message_from != ''
@@ -276,7 +276,7 @@ async def tone_performance(
                 ) AS replies_received
             FROM followup_suggestions fs
             JOIN email_threads et ON et.id = fs.thread_id
-            WHERE fs.user_id = :uid
+            WHERE fs.user_id::text = :uid
               AND fs.status = 'sent'
               AND fs.sent_at IS NOT NULL
             GROUP BY fs.tone
@@ -324,7 +324,7 @@ async def timing_performance(
                 ) AS replies
             FROM followup_suggestions fs
             JOIN email_threads et ON et.id = fs.thread_id
-            WHERE fs.user_id = :uid
+            WHERE fs.user_id::text = :uid
               AND fs.status = 'sent'
               AND fs.sent_at IS NOT NULL
               AND et.last_message_at IS NOT NULL
@@ -367,7 +367,7 @@ async def missed_opportunities(
         count = (await db.execute(
             text("""
             SELECT COUNT(*) FROM email_threads et
-            WHERE et.user_id = :uid
+            WHERE et.user_id::text = :uid
               AND et.is_dismissed = false
               AND et.replied_by_user = false
               AND et.is_opportunity = true
@@ -408,7 +408,7 @@ async def followup_score(
                 text("""
                 SELECT COUNT(*) FROM followup_suggestions fs
                 JOIN email_threads et ON et.id = fs.thread_id
-                WHERE fs.user_id = :uid AND fs.status = 'sent'
+                WHERE fs.user_id::text = :uid AND fs.status = 'sent'
                   AND et.last_sender_is_user = false
                   AND et.updated_at > fs.sent_at
                 """),
@@ -433,7 +433,7 @@ async def followup_score(
             text("""
             SELECT COUNT(*) FROM followup_suggestions fs
             JOIN email_threads et ON et.id = fs.thread_id
-            WHERE fs.user_id = :uid AND fs.status = 'sent'
+            WHERE fs.user_id::text = :uid AND fs.status = 'sent'
               AND fs.sent_at IS NOT NULL AND et.last_message_at IS NOT NULL
             """),
             {"uid": user_id},
@@ -443,7 +443,7 @@ async def followup_score(
             text("""
             SELECT COUNT(*) FROM followup_suggestions fs
             JOIN email_threads et ON et.id = fs.thread_id
-            WHERE fs.user_id = :uid AND fs.status = 'sent'
+            WHERE fs.user_id::text = :uid AND fs.status = 'sent'
               AND fs.sent_at IS NOT NULL AND et.last_message_at IS NOT NULL
               AND EXTRACT(DAY FROM (fs.sent_at - et.last_message_at)) BETWEEN 2 AND 6
             """),
@@ -509,7 +509,7 @@ async def get_insights(
                 AVG(EXTRACT(EPOCH FROM (et.updated_at - fs.sent_at)) / 3600.0) AS avg_hours
             FROM followup_suggestions fs
             JOIN email_threads et ON et.id = fs.thread_id
-            WHERE fs.user_id = :uid
+            WHERE fs.user_id::text = :uid
               AND fs.status = 'sent'
               AND fs.sent_at IS NOT NULL
               AND et.updated_at IS NOT NULL
@@ -542,7 +542,7 @@ async def get_insights(
                    ) * 100.0 / NULLIF(COUNT(*), 0) AS rate
             FROM followup_suggestions fs
             JOIN email_threads et ON et.id = fs.thread_id
-            WHERE fs.user_id = :uid AND fs.status = 'sent'
+            WHERE fs.user_id::text = :uid AND fs.status = 'sent'
             GROUP BY fs.tone
             ORDER BY rate DESC NULLS LAST
             LIMIT 1
@@ -568,7 +568,7 @@ async def get_insights(
                 ) * 100.0 / NULLIF(COUNT(*), 0) AS rate
             FROM followup_suggestions fs
             JOIN email_threads et ON et.id = fs.thread_id
-            WHERE fs.user_id = :uid AND fs.status = 'sent'
+            WHERE fs.user_id::text = :uid AND fs.status = 'sent'
               AND fs.sent_at IS NOT NULL AND et.last_message_at IS NOT NULL
             GROUP BY days_waited
             HAVING COUNT(*) >= 2
@@ -589,7 +589,7 @@ async def get_insights(
         missed = (await db.execute(
             text("""
             SELECT COUNT(*) FROM email_threads et
-            WHERE et.user_id = :uid
+            WHERE et.user_id::text = :uid
               AND et.is_dismissed = false
               AND et.replied_by_user = false
               AND et.is_opportunity = true
@@ -608,7 +608,7 @@ async def get_insights(
             missed = (await db.execute(
                 text("""
                 SELECT COUNT(*) FROM email_threads et
-                WHERE et.user_id = :uid
+                WHERE et.user_id::text = :uid
                   AND et.is_dismissed = false
                   AND et.replied_by_user = false
                   AND et.last_sender_is_user = true

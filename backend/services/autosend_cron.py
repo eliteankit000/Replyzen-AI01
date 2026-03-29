@@ -67,7 +67,7 @@ async def get_user_send_window(db, user_id: str) -> dict:
         text("""
         SELECT auto_send, send_window_start, send_window_end,
                daily_send_limit, timezone
-        FROM user_settings WHERE user_id = :uid
+        FROM user_settings WHERE user_id::text = :uid
         """),
         {"uid": user_id},
     )
@@ -96,7 +96,7 @@ async def get_daily_send_count(db, user_id: str) -> int:
     result = await db.execute(
         text("""
         SELECT COUNT(*) FROM auto_send_logs
-        WHERE user_id = :uid AND status = 'sent' AND sent_at >= CURRENT_DATE
+        WHERE user_id::text = :uid AND status = 'sent' AND sent_at >= CURRENT_DATE
         """),
         {"uid": user_id},
     )
@@ -187,7 +187,7 @@ async def classify_and_score_threads(db, user_id: str):
                     is_actionable = false, priority_score = 0,
                     priority_level = 'low', is_filtered = true,
                     updated_at = NOW()
-                WHERE id = :tid
+                WHERE id::text = :tid
                 """),
                 {"tid": thread_id},
             )
@@ -215,7 +215,7 @@ async def classify_and_score_threads(db, user_id: str):
                 priority_level = :level,
                 is_filtered = :filtered,
                 updated_at = NOW()
-            WHERE id = :tid
+            WHERE id::text = :tid
             """),
             {
                 "type":       thread_type,
@@ -249,7 +249,7 @@ async def auto_send_safety_check(db, followup: dict) -> tuple[bool, str]:
         text("""
         SELECT last_sender_is_user, is_dismissed, replied_by_user,
                priority_level, last_message_at
-        FROM email_threads WHERE id = :tid
+        FROM email_threads WHERE id::text = :tid
         """),
         {"tid": followup.get("thread_id")},
     )
@@ -363,7 +363,7 @@ async def route_followup_via_smart_reply_or_direct(
 
     # Mark followup as queued (not sent yet) so cron won't pick it up again
     await db.execute(
-        text("UPDATE followup_suggestions SET status = 'queued' WHERE id = :id"),
+        text("UPDATE followup_suggestions SET status = 'queued' WHERE id::text = :id"),
         {"id": followup_dict["id"]},
     )
 

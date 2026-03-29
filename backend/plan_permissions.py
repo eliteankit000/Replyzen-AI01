@@ -36,7 +36,7 @@ def get_plan_limits(plan: str) -> dict:
 
 async def get_user_plan(user_id: str, db: AsyncSession) -> str:
     result = await db.execute(
-        text("SELECT plan FROM users WHERE id = :uid"),
+        text("SELECT plan FROM users WHERE id::text = :uid"),
         {"uid": user_id},
     )
     user = result.fetchone()
@@ -51,7 +51,7 @@ async def get_monthly_followup_count(user_id: str, db: AsyncSession) -> int:
         text("""
         SELECT COALESCE(SUM(followups_generated),0)
         FROM usage_tracking
-        WHERE user_id = :uid
+        WHERE user_id::text = :uid
         AND date >= :month_start
         """),
         {"uid": user_id, "month_start": month_start},
@@ -63,7 +63,7 @@ async def get_monthly_followup_count(user_id: str, db: AsyncSession) -> int:
 
 async def get_email_account_count(user_id: str, db: AsyncSession) -> int:
     result = await db.execute(
-        text("SELECT COUNT(*) FROM email_accounts WHERE user_id = :uid"),
+        text("SELECT COUNT(*) FROM email_accounts WHERE user_id::text = :uid"),
         {"uid": user_id},
     )
     return result.scalar()

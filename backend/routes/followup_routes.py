@@ -41,7 +41,7 @@ class UpdateDraftRequest(BaseModel):
 async def get_user_email_address(user_id: str, db: AsyncSession) -> str:
     """Get the user's primary email address."""
     result = await db.execute(
-        text("SELECT email FROM users WHERE id = :uid"),
+        text("SELECT email FROM users WHERE id::text = :uid"),
         {"uid": user_id}
     )
     row = result.fetchone()
@@ -51,7 +51,7 @@ async def get_user_email_address(user_id: str, db: AsyncSession) -> str:
 async def get_user_settings(user_id: str, db: AsyncSession) -> dict:
     """Get user settings for thread filtering."""
     result = await db.execute(
-        text("SELECT ignore_newsletters, ignore_notifications FROM user_settings WHERE user_id = :uid"),
+        text("SELECT ignore_newsletters, ignore_notifications FROM user_settings WHERE user_id::text = :uid"),
         {"uid": user_id}
     )
     row = result.fetchone()
@@ -90,7 +90,7 @@ async def generate_smart_replies(
 
     # Fetch thread
     result = await db.execute(
-        text("SELECT * FROM email_threads WHERE id = :id AND user_id = :uid"),
+        text("SELECT * FROM email_threads WHERE id = :id AND user_id::text = :uid"),
         {"id": req.thread_id, "uid": user_id},
     )
     thread = result.fetchone()
@@ -183,7 +183,7 @@ async def save_smart_reply_draft(
 
     # Verify the thread belongs to this user
     result = await db.execute(
-        text("SELECT id FROM email_threads WHERE id = :id AND user_id = :uid"),
+        text("SELECT id FROM email_threads WHERE id = :id AND user_id::text = :uid"),
         {"id": req.thread_id, "uid": user_id},
     )
     if not result.fetchone():
@@ -195,7 +195,7 @@ async def save_smart_reply_draft(
     existing_result = await db.execute(
         text("""
         SELECT id FROM followup_suggestions
-        WHERE thread_id = :tid AND user_id = :uid AND status = 'pending'
+        WHERE thread_id = :tid AND user_id::text = :uid AND status = 'pending'
         LIMIT 1
         """),
         {"tid": req.thread_id, "uid": user_id},
@@ -209,7 +209,7 @@ async def save_smart_reply_draft(
             text("""
             UPDATE followup_suggestions
             SET generated_text = :draft, tone = :tone, updated_at = :updated
-            WHERE id = :id AND user_id = :uid
+            WHERE id = :id AND user_id::text = :uid
             """),
             {
                 "draft": req.draft.strip(),
@@ -243,7 +243,7 @@ async def save_smart_reply_draft(
             text("""
             UPDATE email_threads
             SET reply_generated = true, updated_at = :updated
-            WHERE id = :tid AND user_id = :uid
+            WHERE id = :tid AND user_id::text = :uid
             """),
             {"tid": req.thread_id, "uid": user_id, "updated": now},
         )
@@ -404,7 +404,7 @@ async def generate_followup(
             text("""
             UPDATE email_threads
             SET reply_generated = true, updated_at = :updated
-            WHERE id = :tid AND user_id = :uid
+            WHERE id = :tid AND user_id::text = :uid
             """),
             {"tid": thread_id, "uid": user_id, "updated": now}
         )
@@ -531,7 +531,7 @@ async def send_followup(
         FROM followup_suggestions fs
         JOIN email_threads et ON et.id = fs.thread_id
         JOIN email_accounts ea ON ea.user_id = fs.user_id AND ea.is_active = true
-        WHERE fs.id = :id AND fs.user_id = :uid AND fs.status = 'pending'
+        WHERE fs.id = :id AND fs.user_id::text = :uid AND fs.status = 'pending'
         LIMIT 1
         """),
         {"id": followup_id, "uid": user_id}
@@ -583,7 +583,7 @@ async def send_followup(
         SET replied_by_user = true, last_sender_is_user = true,
             last_followup_sent_at = :sent_at,
             updated_at = :updated
-        WHERE id = :tid AND user_id = :uid
+        WHERE id = :tid AND user_id::text = :uid
         """),
         {"tid": followup_dict["thread_id"], "uid": user_id, "sent_at": now, "updated": now}
     )
@@ -638,7 +638,7 @@ async def dismiss_followup(
         text("""
         UPDATE email_threads
         SET reply_generated = false, updated_at = :updated
-        WHERE id = :tid AND user_id = :uid
+        WHERE id = :tid AND user_id::text = :uid
         """),
         {"tid": thread_id, "uid": current_user["user_id"], "updated": now}
     )

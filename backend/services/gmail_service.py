@@ -370,7 +370,7 @@ async def send_gmail_reply(
         text("""
             SELECT access_token, refresh_token, token_expiry
             FROM email_accounts
-            WHERE user_id = :user_id AND is_active = 1
+            WHERE user_id::text = :user_id AND is_active::boolean = true
             LIMIT 1
         """),
         {"user_id": user_id}

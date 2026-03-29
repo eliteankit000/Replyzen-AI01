@@ -238,7 +238,7 @@ async def get_plan_limits(
     user_id = current_user["user_id"]
 
     result = await db.execute(
-        text("SELECT plan FROM public.users WHERE id = :uid"),
+        text("SELECT plan FROM public.users WHERE id::text = :uid"),
         {"uid": user_id}
     )
     row = result.fetchone()
@@ -250,7 +250,7 @@ async def get_plan_limits(
         usage_result = await db.execute(
             text("""
                 SELECT COUNT(*) FROM public.followup_suggestions
-                WHERE user_id = :uid
+                WHERE user_id::text = :uid
                 AND generated_at >= date_trunc('month', now())
             """),
             {"uid": user_id}
@@ -276,7 +276,7 @@ async def get_subscription(
         # Always read users.plan as the authoritative source of truth.
         # Admin updates go to users.plan first (via PATCH /admin/users/{id}/plan).
         result2 = await db.execute(
-            text("SELECT plan FROM public.users WHERE id = :uid"),
+            text("SELECT plan FROM public.users WHERE id::text = :uid"),
             {"uid": user_id}
         )
         user_row = result2.fetchone()
@@ -286,7 +286,7 @@ async def get_subscription(
             text("""
             SELECT plan, status, provider
             FROM public.subscriptions
-            WHERE user_id = :uid
+            WHERE user_id::text = :uid
             AND status IN ('active', 'trialing')
             ORDER BY created_at DESC
             LIMIT 1
@@ -307,7 +307,7 @@ async def get_subscription(
                         text("""
                             UPDATE public.subscriptions
                             SET plan = :plan
-                            WHERE user_id = :uid
+                            WHERE user_id::text = :uid
                             AND status IN ('active', 'trialing')
                         """),
                         {"plan": user_plan, "uid": user_id}
@@ -343,7 +343,7 @@ async def cancel_subscription(
 ):
     user_id = current_user["user_id"]
     result = await db.execute(
-        text("SELECT id, provider, subscription_id FROM public.subscriptions WHERE user_id = :uid AND status = 'active' LIMIT 1"),
+        text("SELECT id, provider, subscription_id FROM public.subscriptions WHERE user_id::text = :uid AND status = 'active' LIMIT 1"),
         {"uid": user_id}
     )
     sub = result.fetchone()
@@ -359,11 +359,11 @@ async def cancel_subscription(
 
     now = datetime.now(timezone.utc)
     await db.execute(
-        text("UPDATE public.subscriptions SET status = 'cancelled' WHERE id = :id"),
+        text("UPDATE public.subscriptions SET status = 'cancelled' WHERE id::text = :id"),
         {"id": sub["id"]}
     )
     await db.execute(
-        text("UPDATE public.users SET plan = 'free' WHERE id = :uid"),
+        text("UPDATE public.users SET plan = 'free' WHERE id::text = :uid"),
         {"uid": user_id}
     )
     await db.commit()
@@ -407,7 +407,7 @@ async def razorpay_webhook(request: Request, db: AsyncSession = Depends(get_db))
             }
         )
         await db.execute(
-            text("UPDATE public.users SET plan=:plan WHERE id=:uid"),
+            text("UPDATE public.users SET plan=:plan WHERE id::text = :uid"),
             {"plan": plan, "uid": user_id}
         )
         await db.commit()

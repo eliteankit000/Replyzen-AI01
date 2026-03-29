@@ -122,7 +122,7 @@ async def update_user_plan(
 
     try:
         await db.execute(
-            text("UPDATE public.users SET plan = :plan, updated_at = NOW() WHERE id = :id"),
+            text("UPDATE public.users SET plan = :plan, updated_at = NOW() WHERE id::text = :id"),
             {"plan": plan, "id": user_id}
         )
 
@@ -155,7 +155,7 @@ async def delete_user(
 ):
     try:
         await db.execute(
-            text("DELETE FROM public.users WHERE id = :id"),
+            text("DELETE FROM public.users WHERE id::text = :id"),
             {"id": user_id}
         )
         await db.commit()
