@@ -288,6 +288,31 @@ async def send_approved_reply(
         except Exception as e:
             logger.warning(f"[Inbox] Could not update smart_reply_logs: {e}")
 
+        # Upsert a followup_suggestions row with status='sent' so it shows in
+        # the FollowupQueue "Sent" tab (which reads from followup_suggestions).
+        try:
+            fs_id = str(uuid.uuid4())
+            await db.execute(
+                text("""
+                    INSERT INTO followup_suggestions
+                        (id, thread_id, user_id, generated_text, tone, priority,
+                         status, sent_at, generated_at)
+                    VALUES
+                        (:id, :thread_id, :user_id, :draft, 'professional', 'normal',
+                         'sent', :sent_at, :sent_at)
+                    ON CONFLICT DO NOTHING
+                """),
+                {
+                    "id": fs_id,
+                    "thread_id": message_id,
+                    "user_id": user_id,
+                    "draft": reply,
+                    "sent_at": sent_at,
+                },
+            )
+        except Exception as e:
+            logger.warning(f"[Inbox] Could not upsert followup_suggestions: {e}")
+
         await db.commit()
 
         logger.info(f"[Inbox] Reply approved for user {user_id}, message {message_id} (gmail_sent={gmail_sent}, edited={edited})")
