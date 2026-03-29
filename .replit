@@ -51,6 +51,10 @@ localPort = 5000
 externalPort = 80
 
 [[ports]]
+localPort = 5001
+externalPort = 3000
+
+[[ports]]
 localPort = 8000
 externalPort = 8000
 
@@ -58,3 +62,5 @@ externalPort = 8000
 
 [userenv.shared]
 REACT_APP_REPLIT_DEV_DOMAIN = "ad4abe02-ef9e-49d9-9fd7-13755e3ab12a-00-2aw2o8y2tl9fy.worf.replit.dev"
+FRONTEND_URL = "https://ad4abe02-ef9e-49d9-9fd7-13755e3ab12a-00-2aw2o8y2tl9fy.worf.replit.dev:5000"
+GMAIL_REDIRECT_URI = "https://ad4abe02-ef9e-49d9-9fd7-13755e3ab12a-00-2aw2o8y2tl9fy.worf.replit.dev:8000/api/emails/gmail/callback"
