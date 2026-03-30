@@ -84,6 +84,9 @@ ALLOWED_ORIGINS = [
     "https://www.replyzenai.com",
     "https://replyzen-ai-01-wjzx.vercel.app",
     "https://replyzen-ai-01-3boy.vercel.app",
+    # Emergent production domains
+    "https://email-insight-hub.preview.emergentagent.com",
+    "https://email-insight-hub.emergent.host",
 ]
 
 REPLIT_DEV_DOMAIN = os.environ.get("REPLIT_DEV_DOMAIN", "")
@@ -101,7 +104,14 @@ class CORSErrorMiddleware(BaseHTTPMiddleware):
                 status_code=500,
                 content={"detail": str(exc)}
             )
-        if origin and (origin in ALLOWED_ORIGINS or ".vercel.app" in origin or ".replit.dev" in origin):
+        # Allow Emergent domains, Vercel, Replit, and explicitly listed origins
+        if origin and (
+            origin in ALLOWED_ORIGINS or 
+            ".vercel.app" in origin or 
+            ".replit.dev" in origin or
+            ".emergentagent.com" in origin or
+            ".emergent.host" in origin
+        ):
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Credentials"] = "true"
         return response
