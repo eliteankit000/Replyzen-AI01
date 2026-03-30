@@ -16,7 +16,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
   LayoutDashboard, BarChart3, CreditCard,
   LogOut, Mail, ChevronLeft, ChevronRight, User, Menu, Lock,
-  ShieldCheck, Inbox, PenSquare, Cpu
+  ShieldCheck, Inbox, PenSquare, Cpu, Settings
 } from "lucide-react";
 import NotificationBell from "@/components/NotificationBell";
 
@@ -27,6 +27,7 @@ const NAV_ITEMS = [
   { path: "/analytics",      label: "Analytics",        icon: BarChart3 },
   { path: "/control-center", label: "AI Control",       icon: Cpu },
   { path: "/billing",        label: "Billing",          icon: CreditCard },
+  { path: "/settings",       label: "Settings",         icon: Settings },
 ];
 
 function SidebarNav({ collapsed, items, userPlan, onNavigate }) {
