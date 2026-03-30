@@ -17,12 +17,16 @@ const FollowupQueue  = lazy(() => import("@/pages/FollowupQueue"));
 const Analytics      = lazy(() => import("@/pages/Analytics"));
 const Billing        = lazy(() => import("@/pages/Billing"));
 const Settings       = lazy(() => import("@/pages/Settings"));
-const InboxPreview   = lazy(() => import("@/pages/InboxPreview")); // ← NEW
+const InboxPreview   = lazy(() => import("@/pages/InboxPreview")); // Legacy
 const PrivacyPolicy  = lazy(() => import("@/pages/PrivacyPolicy"));
 const TermsOfService = lazy(() => import("@/pages/TermsOfService"));
 const Admin          = lazy(() => import("@/pages/Admin"));
 const Support        = lazy(() => import("@/pages/Support"));
 const Contact        = lazy(() => import("@/pages/Contact"));
+
+// ✅ NEW: Unified Inbox & Composer
+const UnifiedInbox   = lazy(() => import("@/pages/UnifiedInbox"));
+const EmailComposer  = lazy(() => import("@/pages/EmailComposer"));
 
 // ✅ NEW: SEO pages (lazy loaded, zero impact on existing bundle)
 const AIFollowUpGenerator  = lazy(() => import("@/pages/seo/AIFollowUpGenerator"));
@@ -85,6 +89,8 @@ function App() {
             <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
               <Route path="/dashboard"      element={<Dashboard />} />
               <Route path="/inbox-preview"  element={<InboxPreview />} />
+              <Route path="/inbox"          element={<UnifiedInbox />} />
+              <Route path="/compose"        element={<EmailComposer />} />
               <Route path="/followups"      element={<FollowupQueue />} />
               <Route path="/analytics"      element={<Analytics />} />
               <Route path="/billing"        element={<Billing />} />

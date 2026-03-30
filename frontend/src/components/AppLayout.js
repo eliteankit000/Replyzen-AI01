@@ -16,12 +16,13 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
   LayoutDashboard, MessageSquare, BarChart3, CreditCard,
   Settings, LogOut, Mail, ChevronLeft, ChevronRight, User, Menu, Lock,
-  ShieldCheck, Inbox
+  ShieldCheck, Inbox, PenSquare
 } from "lucide-react";
 
 const NAV_ITEMS = [
   { path: "/dashboard",      label: "Dashboard",      icon: LayoutDashboard },
-  { path: "/inbox-preview",  label: "Inbox Preview",  icon: Inbox },
+  { path: "/inbox",          label: "AI Inbox",       icon: Inbox },
+  { path: "/compose",        label: "Composer",       icon: PenSquare },
   { path: "/followups",      label: "Follow-ups",     icon: MessageSquare },
   { path: "/analytics",      label: "Analytics",      icon: BarChart3, gated: true },
   { path: "/billing",        label: "Billing",        icon: CreditCard },
