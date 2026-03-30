@@ -89,7 +89,7 @@ async def init_database(db):
         )
     """))
 
-    # ── Email threads ──
+    # ── Email threads (with AI intelligence fields) ──
     await db.execute(text("""
         CREATE TABLE IF NOT EXISTS email_threads (
             id TEXT PRIMARY KEY,
@@ -113,7 +113,16 @@ async def init_database(db):
             days_silent INTEGER DEFAULT 0,
             last_followup_sent_at TIMESTAMP,
             created_at TIMESTAMP,
-            updated_at TIMESTAMP
+            updated_at TIMESTAMP,
+            -- AI Intelligence Fields --
+            ai_summary TEXT,
+            ai_category TEXT DEFAULT 'Personal',
+            ai_opportunity_type TEXT DEFAULT 'None',
+            ai_urgency_score INTEGER DEFAULT 5,
+            ai_priority_label TEXT DEFAULT 'LOW',
+            ai_needs_followup INTEGER DEFAULT 0,
+            ai_followup_suggested TEXT,
+            ai_analyzed_at TIMESTAMP
         )
     """))
 
@@ -261,6 +270,21 @@ async def init_database(db):
         )
     """))
 
+    # ─── NEW: Email templates (for saved email templates) ───
+    await db.execute(text("""
+        CREATE TABLE IF NOT EXISTS email_templates (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            subject TEXT,
+            body TEXT,
+            email_type TEXT DEFAULT 'general',
+            tone TEXT DEFAULT 'professional',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+
     await db.commit()
 
     # ── Try to add new columns to existing tables (safe for both SQLite and PG) ──
@@ -269,6 +293,16 @@ async def init_database(db):
     await _safe_add_column(db, "users", "is_onboarded", "INTEGER DEFAULT 0")
     await _safe_add_column(db, "users", "gmail_connected", "INTEGER DEFAULT 0")
     await _safe_add_column(db, "smart_reply_settings", "smart_reply_mode", "TEXT DEFAULT 'manual'")
+    
+    # AI Intelligence columns for email_threads
+    await _safe_add_column(db, "email_threads", "ai_summary", "TEXT")
+    await _safe_add_column(db, "email_threads", "ai_category", "TEXT DEFAULT 'Personal'")
+    await _safe_add_column(db, "email_threads", "ai_opportunity_type", "TEXT DEFAULT 'None'")
+    await _safe_add_column(db, "email_threads", "ai_urgency_score", "INTEGER DEFAULT 5")
+    await _safe_add_column(db, "email_threads", "ai_priority_label", "TEXT DEFAULT 'LOW'")
+    await _safe_add_column(db, "email_threads", "ai_needs_followup", "INTEGER DEFAULT 0")
+    await _safe_add_column(db, "email_threads", "ai_followup_suggested", "TEXT")
+    await _safe_add_column(db, "email_threads", "ai_analyzed_at", "TIMESTAMP")
 
     await db.commit()
     logger.info("[DB Init] Database initialization complete")

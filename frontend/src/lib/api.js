@@ -169,19 +169,80 @@ export const settingsAPI = {
 
 /*
 |--------------------------------------------------------------------------
-| Inbox Preview
+| Inbox Preview (Enhanced with AI Intelligence)
 |--------------------------------------------------------------------------
 */
 
 export const inboxAPI = {
-  getMessages:    (limit = 20, status = null) => 
-    api.get("/inbox/messages", { params: { limit, status } }),
-  generateReply:  (data) => 
+  // Get messages with AI analysis
+  getMessages: (limit = 20, status = null, category = null, priority = null) => 
+    api.get("/inbox/messages", { params: { limit, status, category, priority } }),
+  
+  // Get daily summary (top 5 priority emails)
+  getDailySummary: () => 
+    api.get("/inbox/daily-summary"),
+  
+  // Generate single reply
+  generateReply: (data) => 
     api.post("/inbox/generate-reply", data),
-  sendReply:      (data) => 
-    api.post("/inbox/send", data),
-  getStats:       () => 
+  
+  // Generate 3 reply options (Professional, Friendly, Concise)
+  generateReplies: (data) => 
+    api.post("/inbox/generate-replies", data),
+  
+  // Get Gmail compose URL (opens Gmail in new tab)
+  getGmailComposeUrl: (data) => 
+    api.post("/inbox/gmail-compose-url", data),
+  
+  // Get inbox statistics
+  getStats: () => 
     api.get("/inbox/stats"),
+};
+
+/*
+|--------------------------------------------------------------------------
+| Email Composer (NEW)
+|--------------------------------------------------------------------------
+*/
+
+export const composerAPI = {
+  // Generate email from topic/goal
+  generate: (data) => 
+    api.post("/composer/generate", data),
+  
+  // Generate subject line suggestions
+  getSubjectSuggestions: (data) => 
+    api.post("/composer/subjects", data),
+  
+  // Check email quality score
+  checkQuality: (body) => 
+    api.post("/composer/quality", { body }),
+  
+  // Generate email from uploaded file (PDF/Image)
+  generateFromFile: (formData) => 
+    api.post("/composer/from-file", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }),
+  
+  // Check available file processors
+  getProcessors: () => 
+    api.get("/composer/processors"),
+  
+  // Template management
+  listTemplates: () => 
+    api.get("/composer/templates"),
+  
+  getTemplate: (id) => 
+    api.get(`/composer/templates/${id}`),
+  
+  saveTemplate: (data) => 
+    api.post("/composer/templates", data),
+  
+  updateTemplate: (id, data) => 
+    api.put(`/composer/templates/${id}`, data),
+  
+  deleteTemplate: (id) => 
+    api.delete(`/composer/templates/${id}`),
 };
 
 export default api;

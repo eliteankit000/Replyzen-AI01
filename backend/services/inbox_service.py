@@ -1,14 +1,14 @@
 """
-Inbox Service - Google-reviewer-friendly inbox management
-==========================================================
-Handles inbox message retrieval, AI reply generation, and sending.
+Inbox Service - Google-compliant inbox management
+==================================================
+Handles inbox message retrieval, AI reply generation.
 All actions are logged for Google OAuth audit trail.
 
-SAFETY FEATURES:
-  - All sends require explicit approval
+COMPLIANCE:
+  - READ-ONLY Gmail access (gmail.readonly)
+  - NO programmatic email sending
+  - All sends via Gmail compose URL (user-initiated)
   - Comprehensive action logging
-  - Read-only message access by default
-  - User controls all sending actions
 """
 
 import uuid
@@ -20,13 +20,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.openai_service import generate_ai_reply
-from services.gmail_service import send_gmail_reply
 
 logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════
-# Get Inbox Messages (Read-Only)
+# Get Inbox Messages (Read-Only) with AI Intelligence
 # ═══════════════════════════════════════════════════════════════
 
 async def get_inbox_messages(
@@ -36,22 +35,22 @@ async def get_inbox_messages(
     status: Optional[str] = None,
 ) -> List[Dict]:
     """
-    Get inbox messages from email threads.
+    Get inbox messages from email threads with AI intelligence fields.
     Returns messages that need replies (read-only view).
     
     Status filter: 'pending' | 'replied' | 'dismissed'
     """
     try:
         # Build query based on status filter
-        # ::boolean cast works for both INTEGER (0→false, 1→true) and BOOLEAN columns
+        # Cast to boolean for SQLite compatibility
         if status == "pending":
-            condition = "AND t.reply_generated::boolean = false AND t.is_dismissed::boolean = false AND t.replied_by_user::boolean = false"
+            condition = "AND t.reply_generated = 0 AND t.is_dismissed = 0 AND t.replied_by_user = 0"
         elif status == "replied":
-            condition = "AND t.replied_by_user::boolean = true"
+            condition = "AND t.replied_by_user = 1"
         elif status == "dismissed":
-            condition = "AND t.is_dismissed::boolean = true"
+            condition = "AND t.is_dismissed = 1"
         else:
-            condition = "AND t.is_dismissed::boolean = false"  # Default: show non-dismissed
+            condition = "AND t.is_dismissed = 0"  # Default: show non-dismissed
 
         query = f"""
             SELECT 
@@ -64,17 +63,27 @@ async def get_inbox_messages(
                 t.reply_generated,
                 t.replied_by_user,
                 t.is_dismissed,
+                t.priority_score,
+                t.days_silent,
+                -- AI Intelligence fields
+                t.ai_summary as summary,
+                t.ai_category as category,
+                t.ai_opportunity_type as opportunity_type,
+                t.ai_urgency_score as urgency_score,
+                t.ai_priority_label as priority_label,
+                t.ai_needs_followup as needs_followup,
+                t.ai_followup_suggested as followup_suggested,
                 CASE 
-                    WHEN t.replied_by_user::boolean = true THEN 'replied'
-                    WHEN t.is_dismissed::boolean = true THEN 'dismissed'
-                    WHEN t.reply_generated::boolean = true THEN 'generated'
+                    WHEN t.replied_by_user = 1 THEN 'replied'
+                    WHEN t.is_dismissed = 1 THEN 'dismissed'
+                    WHEN t.reply_generated = 1 THEN 'generated'
                     ELSE 'pending'
                 END as status
             FROM email_threads t
-            WHERE t.user_id::text = :user_id
-              AND t.is_automated::boolean = false
+            WHERE t.user_id = :user_id
+              AND t.is_automated = 0
               {condition}
-            ORDER BY t.last_message_at DESC
+            ORDER BY t.priority_score DESC, t.last_message_at DESC
             LIMIT :limit
         """
         
@@ -89,6 +98,8 @@ async def get_inbox_messages(
             # Format timestamp
             if msg.get("timestamp"):
                 msg["timestamp"] = msg["timestamp"].isoformat() if hasattr(msg["timestamp"], "isoformat") else msg["timestamp"]
+            # Convert boolean fields
+            msg["needs_followup"] = bool(msg.get("needs_followup"))
             messages.append(msg)
         
         logger.info(f"[Inbox] Loaded {len(messages)} messages for user {user_id}")
@@ -193,156 +204,17 @@ async def generate_reply_suggestion(
 
 
 # ═══════════════════════════════════════════════════════════════
-# Send Approved Reply
-# ═══════════════════════════════════════════════════════════════
-
-async def send_approved_reply(
-    db: AsyncSession,
-    user_id: str,
-    message_id: str,
-    reply: str,
-    edited: bool = False,
-) -> Dict:
-    """
-    Send an approved reply.
-    
-    🔒 SECURITY: This should ONLY be called after explicit user approval.
-    All sends are logged for audit trail.
-    """
-    sent_at = datetime.now(timezone.utc)
-    gmail_sent = False
-
-    try:
-        # Get thread info (best-effort — may not exist for demo/new users)
-        result = await db.execute(
-            text("""
-                SELECT id, thread_id, subject, last_message_from
-                FROM email_threads
-                WHERE user_id::text = :user_id AND id::text = :message_id
-                LIMIT 1
-            """),
-            {"user_id": user_id, "message_id": message_id}
-        )
-        thread = result.fetchone()
-
-        # Try to send via Gmail if thread exists and Gmail is connected
-        if thread:
-            thread_dict = dict(thread._mapping)
-            try:
-                await send_gmail_reply(
-                    db=db,
-                    user_id=user_id,
-                    thread_id=thread_dict["thread_id"],
-                    subject=thread_dict["subject"],
-                    body=reply,
-                    to=thread_dict["last_message_from"],
-                )
-                gmail_sent = True
-                logger.info(f"[Inbox] Gmail reply sent for user {user_id}, message {message_id}")
-            except Exception as gmail_err:
-                # Gmail send failed — log full traceback so we can see the real error
-                logger.error(f"[Inbox] Gmail send FAILED for user {user_id}: {gmail_err}", exc_info=True)
-
-        # Update inbox_messages status (best-effort)
-        try:
-            await db.execute(
-                text("""
-                    UPDATE inbox_messages
-                    SET status = 'sent', sent_at = :sent_at
-                    WHERE user_id::text = :user_id AND thread_id::text = :message_id
-                """),
-                {"user_id": user_id, "message_id": message_id, "sent_at": sent_at},
-            )
-        except Exception as e:
-            logger.warning(f"[Inbox] Could not update inbox_messages: {e}")
-
-        # Update email_threads (best-effort)
-        if thread:
-            try:
-                await db.execute(
-                    text("""
-                        UPDATE email_threads
-                        SET replied_by_user = 1, last_followup_sent_at = :sent_at
-                        WHERE id::text = :message_id
-                    """),
-                    {"message_id": message_id, "sent_at": sent_at},
-                )
-            except Exception as e:
-                logger.warning(f"[Inbox] Could not update email_threads: {e}")
-
-        # Update most recent smart_reply_logs row (PostgreSQL-safe: no ORDER BY/LIMIT in UPDATE)
-        try:
-            await db.execute(
-                text("""
-                    UPDATE smart_reply_logs
-                    SET status = 'sent'
-                    WHERE id = (
-                        SELECT id FROM smart_reply_logs
-                        WHERE user_id::text = :user_id AND thread_id::text = :message_id
-                        ORDER BY created_at DESC
-                        LIMIT 1
-                    )
-                """),
-                {"user_id": user_id, "message_id": message_id},
-            )
-        except Exception as e:
-            logger.warning(f"[Inbox] Could not update smart_reply_logs: {e}")
-
-        # Upsert a followup_suggestions row with status='sent' so it shows in
-        # the FollowupQueue "Sent" tab (which reads from followup_suggestions).
-        try:
-            fs_id = str(uuid.uuid4())
-            await db.execute(
-                text("""
-                    INSERT INTO followup_suggestions
-                        (id, thread_id, user_id, generated_text, tone, priority,
-                         status, sent_at, generated_at)
-                    VALUES
-                        (:id, :thread_id, :user_id, :draft, 'professional', 'normal',
-                         'sent', :sent_at, :sent_at)
-                    ON CONFLICT DO NOTHING
-                """),
-                {
-                    "id": fs_id,
-                    "thread_id": message_id,
-                    "user_id": user_id,
-                    "draft": reply,
-                    "sent_at": sent_at,
-                },
-            )
-        except Exception as e:
-            logger.warning(f"[Inbox] Could not upsert followup_suggestions: {e}")
-
-        await db.commit()
-
-        logger.info(f"[Inbox] Reply approved for user {user_id}, message {message_id} (gmail_sent={gmail_sent}, edited={edited})")
-
-        return {
-            "message_id": message_id,
-            "status": "sent",
-            "sent_at": sent_at.isoformat(),
-            "edited": edited,
-            "gmail_sent": gmail_sent,
-        }
-
-    except Exception as e:
-        logger.error(f"[Inbox] Failed to send reply for {user_id}: {e}", exc_info=True)
-        await db.rollback()
-        raise
-
-
-# ═══════════════════════════════════════════════════════════════
-# Get Inbox Statistics
+# Get Inbox Statistics (Enhanced with AI insights)
 # ═══════════════════════════════════════════════════════════════
 
 async def get_inbox_stats(db: AsyncSession, user_id: str) -> Dict:
     """
-    Get inbox statistics for the user.
+    Get inbox statistics for the user including AI priority breakdown.
     """
     try:
         # Total messages
         result = await db.execute(
-            text("SELECT COUNT(*) FROM email_threads WHERE user_id::text = :user_id AND is_automated::boolean = false"),
+            text("SELECT COUNT(*) FROM email_threads WHERE user_id = :user_id AND is_automated = 0"),
             {"user_id": user_id}
         )
         total_messages = result.scalar() or 0
@@ -351,56 +223,86 @@ async def get_inbox_stats(db: AsyncSession, user_id: str) -> Dict:
         result = await db.execute(
             text("""
                 SELECT COUNT(*) FROM email_threads 
-                WHERE user_id::text = :user_id 
-                  AND is_dismissed::boolean = false
-                  AND replied_by_user::boolean = false
-                  AND is_automated::boolean = false
+                WHERE user_id = :user_id 
+                  AND is_dismissed = 0
+                  AND replied_by_user = 0
+                  AND is_automated = 0
             """),
             {"user_id": user_id}
         )
         pending_replies = result.scalar() or 0
         
-        # Sent today
+        # HOT priority count
         result = await db.execute(
             text("""
-                SELECT COUNT(*) FROM inbox_messages
-                WHERE user_id::text = :user_id
-                  AND status = 'sent'
-                  AND sent_at >= CURRENT_DATE
+                SELECT COUNT(*) FROM email_threads 
+                WHERE user_id = :user_id 
+                  AND is_dismissed = 0
+                  AND is_automated = 0
+                  AND ai_priority_label = 'HOT'
             """),
             {"user_id": user_id}
         )
-        sent_today = result.scalar() or 0
+        hot_count = result.scalar() or 0
         
-        # Total sent
+        # WARM priority count
         result = await db.execute(
             text("""
-                SELECT COUNT(*) FROM inbox_messages
-                WHERE user_id::text = :user_id AND status = 'sent'
+                SELECT COUNT(*) FROM email_threads 
+                WHERE user_id = :user_id 
+                  AND is_dismissed = 0
+                  AND is_automated = 0
+                  AND ai_priority_label = 'WARM'
             """),
             {"user_id": user_id}
         )
-        total_sent = result.scalar() or 0
+        warm_count = result.scalar() or 0
         
-        # Approval rate (sent / generated)
+        # Needs follow-up count
+        result = await db.execute(
+            text("""
+                SELECT COUNT(*) FROM email_threads 
+                WHERE user_id = :user_id 
+                  AND is_dismissed = 0
+                  AND is_automated = 0
+                  AND ai_needs_followup = 1
+            """),
+            {"user_id": user_id}
+        )
+        needs_followup = result.scalar() or 0
+        
+        # Total AI-generated replies
         result = await db.execute(
             text("""
                 SELECT COUNT(*) FROM inbox_messages
-                WHERE user_id::text = :user_id
+                WHERE user_id = :user_id
             """),
             {"user_id": user_id}
         )
         total_generated = result.scalar() or 0
         
-        approval_rate = (total_sent / total_generated * 100) if total_generated > 0 else 0
+        # Category breakdown
+        result = await db.execute(
+            text("""
+                SELECT ai_category as category, COUNT(*) as count
+                FROM email_threads
+                WHERE user_id = :user_id
+                  AND is_dismissed = 0
+                  AND is_automated = 0
+                GROUP BY ai_category
+            """),
+            {"user_id": user_id}
+        )
+        category_breakdown = {row.category or "Personal": row.count for row in result.fetchall()}
         
         return {
             "total_messages": total_messages,
             "pending_replies": pending_replies,
-            "sent_today": sent_today,
-            "total_sent": total_sent,
+            "hot_priority": hot_count,
+            "warm_priority": warm_count,
+            "needs_followup": needs_followup,
             "total_generated": total_generated,
-            "approval_rate": round(approval_rate, 1),
+            "category_breakdown": category_breakdown,
         }
         
     except Exception as e:

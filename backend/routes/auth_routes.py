@@ -35,14 +35,14 @@ GOOGLE_AUTH_SCOPES = " ".join([
     "profile",
 ])
 
-# ✅ FLOW 2: Gmail Connection - Full Gmail access (separate flow)
+# ✅ FLOW 2: Gmail Connection - READ-ONLY Gmail access (Google Compliant)
+# IMPORTANT: Only gmail.readonly is used - NO sending capabilities
+# All email sending is done via Gmail compose URL (user-initiated)
 GOOGLE_GMAIL_SCOPES = " ".join([
     "openid",
     "email",
     "profile",
-    "https://www.googleapis.com/auth/gmail.readonly",      # Read Gmail messages
-    "https://www.googleapis.com/auth/gmail.send",          # Send emails on behalf of user
-    "https://www.googleapis.com/auth/gmail.modify",        # Modify messages (mark as read, etc.)
+    "https://www.googleapis.com/auth/gmail.readonly",      # Read Gmail messages ONLY
 ])
 
 
@@ -165,7 +165,7 @@ async def get_me(
             text("""
                 SELECT id, email, full_name, plan, avatar_url, is_onboarded, gmail_connected 
                 FROM users 
-                WHERE id::text = :id
+                WHERE id = :id
             """),
             {"id": current_user["user_id"]}
         )
@@ -329,7 +329,7 @@ async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
 
     # Get final user data with is_onboarded status
     result = await db.execute(
-        text("SELECT id, email, full_name, plan, avatar_url, is_onboarded FROM users WHERE id::text = :user_id"),
+        text("SELECT id, email, full_name, plan, avatar_url, is_onboarded FROM users WHERE id = :user_id"),
         {"user_id": user_id}
     )
     user_row = result.fetchone()
@@ -359,7 +359,7 @@ async def store_consent(
             SET user_consent = :consent,
                 consent_accepted_at = :accepted_at,
                 updated_at = :updated
-            WHERE id::text = :user_id
+            WHERE id = :user_id
             """),
             {
                 "consent": 1 if req.consent else 0,
@@ -438,7 +438,7 @@ async def complete_onboarding(
                     consent_accepted_at = :now,
                     user_consent = 1,
                     updated_at = :now
-                WHERE id::text = :user_id
+                WHERE id = :user_id
             """),
             {
                 "user_id": user_id,
@@ -635,7 +635,7 @@ async def gmail_callback(
             text("""
                 UPDATE users
                 SET gmail_connected = 1, updated_at = :updated_at
-                WHERE id::text = :user_id
+                WHERE id = :user_id
             """),
             {"user_id": user_id, "updated_at": now}
         )

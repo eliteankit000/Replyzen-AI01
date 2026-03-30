@@ -112,7 +112,7 @@ async def get_current_user(
     # ✅ Verify user exists in database
     from sqlalchemy import text
     result = await db.execute(
-        text("SELECT id, email FROM users WHERE id::text = :user_id"),
+        text("SELECT id, email FROM users WHERE id = :user_id"),
         {"user_id": user_id}
     )
     user = result.fetchone()
