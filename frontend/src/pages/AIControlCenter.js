@@ -701,8 +701,10 @@ function SmartReplyCard({
   onToggle, onConfirm, onSaveConfig, onFieldChange, onCategoryToggle,
   onCancelQueueItem, onQueueTabChange,
 }) {
+  // ✅ useNavigate called unconditionally at the top — fixes the ESLint error
+  const navigate = useNavigate();
+
   if (!autoSendAllowed) {
-    const navigate = useNavigate();
     return (
       <Card>
         <CardHeader className="pb-2">
