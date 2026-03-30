@@ -135,9 +135,11 @@ from routes.billing_routes import router as billing_router
 from routes.analytics_routes import router as analytics_router
 from routes.settings_routes import router as settings_router
 from routes.admin_routes import router as admin_router
-from routes.inbox_routes import router as inbox_router        # ← Inbox Preview
-from routes.contact_routes import router as contact_router    # ← Contact Form
-from routes.composer_routes import router as composer_router  # ← Email Composer
+from routes.inbox_routes import router as inbox_router
+from routes.contact_routes import router as contact_router
+from routes.composer_routes import router as composer_router
+from routes.notification_routes import router as notification_router
+from routes.ai_settings_routes import router as ai_settings_router
 
 app.include_router(auth_router)
 app.include_router(smart_reply_router)
@@ -149,7 +151,9 @@ app.include_router(settings_router)
 app.include_router(admin_router)
 app.include_router(inbox_router)
 app.include_router(contact_router)
-app.include_router(composer_router)                           # ← Email Composer
+app.include_router(composer_router)
+app.include_router(notification_router)
+app.include_router(ai_settings_router)
 
 @app.get("/api/health")
 async def health_check():

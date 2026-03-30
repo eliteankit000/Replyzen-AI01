@@ -285,6 +285,63 @@ async def init_database(db):
         )
     """))
 
+    # ─── NEW: Notifications table ───
+    await db.execute(text("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            title TEXT,
+            message TEXT,
+            email_id TEXT,
+            is_read INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+
+    # ─── NEW: Activity logs table ───
+    await db.execute(text("""
+        CREATE TABLE IF NOT EXISTS activity_logs (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            type TEXT NOT NULL,
+            description TEXT,
+            metadata TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+
+    # ─── NEW: AI Settings table ───
+    await db.execute(text("""
+        CREATE TABLE IF NOT EXISTS ai_settings (
+            id TEXT PRIMARY KEY,
+            user_id TEXT UNIQUE NOT NULL,
+            sensitivity TEXT DEFAULT 'medium',
+            followup_timing TEXT DEFAULT '48h',
+            tracked_categories TEXT DEFAULT '["client","lead","payment","support","partnership"]',
+            notify_potential_client INTEGER DEFAULT 1,
+            notify_followup INTEGER DEFAULT 1,
+            notify_urgent INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+
+    # ─── NEW: Sync status table ───
+    await db.execute(text("""
+        CREATE TABLE IF NOT EXISTS sync_status (
+            id TEXT PRIMARY KEY,
+            user_id TEXT UNIQUE NOT NULL,
+            last_sync_at TIMESTAMP,
+            last_history_id TEXT,
+            sync_status TEXT DEFAULT 'idle',
+            error_message TEXT,
+            emails_synced INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """))
+
     await db.commit()
 
     # ── Try to add new columns to existing tables (safe for both SQLite and PG) ──

@@ -201,7 +201,7 @@ export const inboxAPI = {
 
 /*
 |--------------------------------------------------------------------------
-| Email Composer (NEW)
+| Email Composer
 |--------------------------------------------------------------------------
 */
 
@@ -243,6 +243,54 @@ export const composerAPI = {
   
   deleteTemplate: (id) => 
     api.delete(`/composer/templates/${id}`),
+};
+
+/*
+|--------------------------------------------------------------------------
+| Notifications
+|--------------------------------------------------------------------------
+*/
+
+export const notificationsAPI = {
+  // Get all notifications
+  getAll: (limit = 50, unreadOnly = false) =>
+    api.get("/notifications", { params: { limit, unread_only: unreadOnly } }),
+  
+  // Get unread count
+  getUnreadCount: () =>
+    api.get("/notifications/unread"),
+  
+  // Mark as read
+  markAsRead: (notificationId = null, markAll = false) =>
+    api.post("/notifications/read", { notification_id: notificationId, mark_all: markAll }),
+  
+  // Delete notification
+  delete: (id) =>
+    api.delete(`/notifications/${id}`),
+};
+
+/*
+|--------------------------------------------------------------------------
+| AI Settings
+|--------------------------------------------------------------------------
+*/
+
+export const aiSettingsAPI = {
+  // Get AI settings
+  get: () =>
+    api.get("/ai-settings"),
+  
+  // Update AI settings
+  update: (data) =>
+    api.put("/ai-settings", data),
+  
+  // Get activity log
+  getActivity: (limit = 50, type = null) =>
+    api.get("/ai-settings/activity", { params: { limit, activity_type: type } }),
+  
+  // Get AI stats
+  getStats: (days = 7) =>
+    api.get("/ai-settings/stats", { params: { days } }),
 };
 
 export default api;

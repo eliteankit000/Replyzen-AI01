@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { inboxAPI, settingsAPI, authAPI } from "@/lib/api";
+import { inboxAPI, authAPI, aiSettingsAPI } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -31,7 +31,6 @@ import {
   CheckCircle2,
   Sparkles,
   Activity,
-  Settings,
   RefreshCw,
   Loader2,
 } from "lucide-react";
@@ -393,15 +392,14 @@ export default function AIControlCenter() {
   const [saving, setSaving] = useState(false);
   const [gmailConnected, setGmailConnected] = useState(false);
   const [stats, setStats] = useState(null);
+  const [activityLog, setActivityLog] = useState([]);
   const [settings, setSettings] = useState({
     sensitivity: "medium",
-    followupTiming: "48h",
-    trackedCategories: ["client", "lead", "payment", "support", "partnership"],
-    notifications: {
-      potentialClient: true,
-      followupAlert: true,
-      urgentEmail: true,
-    },
+    followup_timing: "48h",
+    tracked_categories: ["client", "lead", "payment", "support", "partnership"],
+    notify_potential_client: true,
+    notify_followup: true,
+    notify_urgent: true,
   });
 
   useEffect(() => {
@@ -411,9 +409,11 @@ export default function AIControlCenter() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [statsRes, connectionRes] = await Promise.allSettled([
+      const [statsRes, connectionRes, settingsRes, activityRes] = await Promise.allSettled([
         inboxAPI.getStats(),
         authAPI.getGmailConnectionStatus(),
+        aiSettingsAPI.get(),
+        aiSettingsAPI.getActivity(20),
       ]);
 
       if (statsRes.status === "fulfilled") {
@@ -421,6 +421,12 @@ export default function AIControlCenter() {
       }
       if (connectionRes.status === "fulfilled") {
         setGmailConnected(connectionRes.value.data.connected);
+      }
+      if (settingsRes.status === "fulfilled" && settingsRes.value.data.data) {
+        setSettings(settingsRes.value.data.data);
+      }
+      if (activityRes.status === "fulfilled" && activityRes.value.data.data) {
+        setActivityLog(activityRes.value.data.data.activities || []);
       }
     } catch (err) {
       console.error(err);
@@ -430,15 +436,34 @@ export default function AIControlCenter() {
   };
 
   const handleUpdateSettings = async (updates) => {
+    // Convert frontend format to backend format
+    const backendUpdates = {};
+    if (updates.sensitivity) backendUpdates.sensitivity = updates.sensitivity;
+    if (updates.followupTiming) backendUpdates.followup_timing = updates.followupTiming;
+    if (updates.trackedCategories) backendUpdates.tracked_categories = updates.trackedCategories;
+    if (updates.notifications) {
+      if (updates.notifications.potentialClient !== undefined) {
+        backendUpdates.notify_potential_client = updates.notifications.potentialClient;
+      }
+      if (updates.notifications.followupAlert !== undefined) {
+        backendUpdates.notify_followup = updates.notifications.followupAlert;
+      }
+      if (updates.notifications.urgentEmail !== undefined) {
+        backendUpdates.notify_urgent = updates.notifications.urgentEmail;
+      }
+    }
+    
+    // Update local state immediately for responsiveness
     const newSettings = { ...settings, ...updates };
     setSettings(newSettings);
     
-    // Save to backend (if endpoint exists)
+    // Save to backend
     try {
-      // await settingsAPI.updateAISettings(newSettings);
+      await aiSettingsAPI.update(backendUpdates);
       toast.success("Settings updated");
     } catch (err) {
       console.error(err);
+      toast.error("Failed to save settings");
     }
   };
 

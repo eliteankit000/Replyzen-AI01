@@ -15,9 +15,10 @@ import {
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
   LayoutDashboard, BarChart3, CreditCard,
-  Settings, LogOut, Mail, ChevronLeft, ChevronRight, User, Menu, Lock,
-  ShieldCheck, Inbox, PenSquare, Cpu, Bell
+  LogOut, Mail, ChevronLeft, ChevronRight, User, Menu, Lock,
+  ShieldCheck, Inbox, PenSquare, Cpu
 } from "lucide-react";
+import NotificationBell from "@/components/NotificationBell";
 
 const NAV_ITEMS = [
   { path: "/dashboard",      label: "Action Center",    icon: LayoutDashboard },
@@ -229,9 +230,7 @@ export default function AppLayout() {
             </div>
             <div className="flex items-center gap-2">
               {/* Notification bell */}
-              <Button variant="ghost" size="icon" className="relative">
-                <Bell className="w-5 h-5" />
-              </Button>
+              <NotificationBell />
               <UserAvatar user={user} size="w-8 h-8" />
             </div>
           </header>
