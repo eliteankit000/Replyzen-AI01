@@ -52,20 +52,21 @@ async def lifespan(app: FastAPI):
                 f"({status['percentage']}%)"
             )
 
-    from services.autosend_cron import set_database, run_cron_loop
-    set_database(AsyncSessionLocal)
-    cron_task = asyncio.create_task(run_cron_loop(interval_minutes=30))
-    logger.info("Auto-send cron job started")
+    # NOTE: Auto-send cron disabled - all sending is now user-initiated via Gmail compose
+    # from services.autosend_cron import set_database, run_cron_loop
+    # set_database(AsyncSessionLocal)
+    # cron_task = asyncio.create_task(run_cron_loop(interval_minutes=30))
+    # logger.info("Auto-send cron job started")
 
     yield
 
     logger.info("Replyzen AI API shutting down...")
-    if cron_task:
-        cron_task.cancel()
-        try:
-            await cron_task
-        except asyncio.CancelledError:
-            pass
+    # if cron_task:
+    #     cron_task.cancel()
+    #     try:
+    #         await cron_task
+    #     except asyncio.CancelledError:
+    #         pass
     await engine.dispose()
 
 

@@ -8,25 +8,23 @@ import DocsPage   from "./pages/DocsPage";
 import GuidesPage from "./pages/GuidesPage";
 import BlogPage   from "./pages/BlogPage";
 
-// Existing pages (unchanged)
+// Existing pages
 const LandingPage    = lazy(() => import("@/pages/LandingPage"));
 const LoginPage      = lazy(() => import("@/pages/LoginPage"));
 const AuthCallback   = lazy(() => import("@/pages/AuthCallback"));
-const Dashboard      = lazy(() => import("@/pages/Dashboard"));
-const FollowupQueue  = lazy(() => import("@/pages/FollowupQueue"));
-const Analytics      = lazy(() => import("@/pages/Analytics"));
 const Billing        = lazy(() => import("@/pages/Billing"));
-const Settings       = lazy(() => import("@/pages/Settings"));
-const InboxPreview   = lazy(() => import("@/pages/InboxPreview")); // Legacy
 const PrivacyPolicy  = lazy(() => import("@/pages/PrivacyPolicy"));
 const TermsOfService = lazy(() => import("@/pages/TermsOfService"));
 const Admin          = lazy(() => import("@/pages/Admin"));
 const Support        = lazy(() => import("@/pages/Support"));
 const Contact        = lazy(() => import("@/pages/Contact"));
 
-// ✅ NEW: Unified Inbox & Composer
-const UnifiedInbox   = lazy(() => import("@/pages/UnifiedInbox"));
-const EmailComposer  = lazy(() => import("@/pages/EmailComposer"));
+// AI Inbox Operating System - Core Pages
+const ActionCenter       = lazy(() => import("@/pages/ActionCenter"));       // Dashboard
+const AIInbox            = lazy(() => import("@/pages/AIInbox"));            // Main Inbox
+const EmailComposer      = lazy(() => import("@/pages/EmailComposer"));      // Composer
+const IntelligenceCenter = lazy(() => import("@/pages/IntelligenceCenter")); // Analytics
+const AIControlCenter    = lazy(() => import("@/pages/AIControlCenter"));    // Settings
 
 // ✅ NEW: SEO pages (lazy loaded, zero impact on existing bundle)
 const AIFollowUpGenerator  = lazy(() => import("@/pages/seo/AIFollowUpGenerator"));
@@ -85,16 +83,14 @@ function App() {
             <Route path="/problems/client-not-replying"    element={<ClientNotReplying />} />
             <Route path="/problems/missed-follow-up-emails" element={<MissedFollowUpEmails />} />
 
-            {/* Protected routes — unchanged */}
+            {/* Protected routes - AI Inbox Operating System */}
             <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
-              <Route path="/dashboard"      element={<Dashboard />} />
-              <Route path="/inbox-preview"  element={<InboxPreview />} />
-              <Route path="/inbox"          element={<UnifiedInbox />} />
+              <Route path="/dashboard"      element={<ActionCenter />} />
+              <Route path="/inbox"          element={<AIInbox />} />
               <Route path="/compose"        element={<EmailComposer />} />
-              <Route path="/followups"      element={<FollowupQueue />} />
-              <Route path="/analytics"      element={<Analytics />} />
+              <Route path="/analytics"      element={<IntelligenceCenter />} />
+              <Route path="/control-center" element={<AIControlCenter />} />
               <Route path="/billing"        element={<Billing />} />
-              <Route path="/settings"       element={<Settings />} />
               <Route path="/admin"          element={<Admin />} />
             </Route>
 

@@ -14,19 +14,18 @@ import {
 } from "@/components/ui/tooltip";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
-  LayoutDashboard, MessageSquare, BarChart3, CreditCard,
+  LayoutDashboard, BarChart3, CreditCard,
   Settings, LogOut, Mail, ChevronLeft, ChevronRight, User, Menu, Lock,
-  ShieldCheck, Inbox, PenSquare
+  ShieldCheck, Inbox, PenSquare, Cpu, Bell
 } from "lucide-react";
 
 const NAV_ITEMS = [
-  { path: "/dashboard",      label: "Dashboard",      icon: LayoutDashboard },
-  { path: "/inbox",          label: "AI Inbox",       icon: Inbox },
-  { path: "/compose",        label: "Composer",       icon: PenSquare },
-  { path: "/followups",      label: "Follow-ups",     icon: MessageSquare },
-  { path: "/analytics",      label: "Analytics",      icon: BarChart3, gated: true },
-  { path: "/billing",        label: "Billing",        icon: CreditCard },
-  { path: "/settings",       label: "Settings",       icon: Settings },
+  { path: "/dashboard",      label: "Action Center",    icon: LayoutDashboard },
+  { path: "/inbox",          label: "AI Inbox",         icon: Inbox },
+  { path: "/compose",        label: "Composer",         icon: PenSquare },
+  { path: "/analytics",      label: "Analytics",        icon: BarChart3 },
+  { path: "/control-center", label: "AI Control",       icon: Cpu },
+  { path: "/billing",        label: "Billing",          icon: CreditCard },
 ];
 
 function SidebarNav({ collapsed, items, userPlan, onNavigate }) {
@@ -228,8 +227,13 @@ export default function AppLayout() {
                 <span className="text-sm font-bold">Replyzen AI</span>
               </div>
             </div>
-            {/* ✅ Show avatar in mobile top bar too */}
-            <UserAvatar user={user} size="w-8 h-8" />
+            <div className="flex items-center gap-2">
+              {/* Notification bell */}
+              <Button variant="ghost" size="icon" className="relative">
+                <Bell className="w-5 h-5" />
+              </Button>
+              <UserAvatar user={user} size="w-8 h-8" />
+            </div>
           </header>
 
           {/* Page content */}

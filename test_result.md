@@ -753,13 +753,16 @@ agent_communication:
       message: "🎯 AI INBOX OPERATING SYSTEM - PHASE 1 BACKEND COMPLETE: 1) Updated OAuth scopes to gmail.readonly ONLY (removed gmail.send, gmail.modify for Google compliance). 2) Created email_intelligence_service.py with AI analysis (summary, category, priority_score, urgency_score, priority_label, needs_followup). 3) Created file_processing_service.py for PDF/image text extraction (PyMuPDF, pytesseract). 4) Created composer_routes.py for email generation, subject suggestions, templates. 5) Updated inbox_routes.py with generate-replies (3 tones), gmail-compose-url, daily-summary. 6) Updated inbox_service.py with AI intelligence fields. 7) Updated database schema with AI fields. 8) All sending now uses Gmail compose URL (user-initiated, Google compliant)."
     - agent: "testing"
       message: "🎯 AI INBOX OPERATING SYSTEM BACKEND TESTING COMPLETE - 88.2% SUCCESS RATE! ✅ Comprehensive testing of 17 test scenarios completed. PASSED (15/17): Health check, authentication, all composer routes (generate, subjects, quality, processors, templates), most inbox routes (messages, daily-summary, generate-replies, gmail-compose-url, stats), Google OAuth compliance verification. ✅ CRITICAL FINDINGS: All core functionality working correctly. Google OAuth compliance verified - ONLY gmail.readonly scope used. All email sending via user-initiated Gmail compose URLs. File processing capabilities confirmed (PDF, image OCR). Database compatibility issues resolved (fixed PostgreSQL→SQLite syntax). ✅ MINOR ISSUES: One endpoint (generate-reply) has intermittent connection issues but core functionality works. Protected endpoint authentication test has script-level issues but actual endpoints properly secured. Backend is production-ready for AI Inbox Operating System."
+    - agent: "main"
+      message: "🚀 AI INBOX OS COMPLETE REFACTOR: REMOVED Follow-ups page and Smart Reply Mode. NEW pages: ActionCenter (Dashboard with Today's Focus, Action Queues), AIInbox (filters, 3-tone replies), IntelligenceCenter (Analytics with metrics & insights), AIControlCenter (Settings with detection configs). Updated nav, disabled autosend_cron. ALL sending via Gmail compose URL only - Google compliant."
 
 test_plan:
   current_focus:
-    - "Email Intelligence Service"
-    - "Composer Routes (generate, subjects, from-file, templates)"
-    - "Updated Inbox Routes (generate-replies, gmail-compose-url, daily-summary)"
-    - "Gmail Compose URL method (no programmatic sending)"
+    - "Action Center (Dashboard) functionality"
+    - "AI Inbox with filters and reply system"  
+    - "Intelligence Center (Analytics)"
+    - "AI Control Center (Settings)"
+    - "Gmail compose URL method"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
